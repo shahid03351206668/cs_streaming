@@ -2,22 +2,16 @@ package controllers
 
 import (
 	"net/http"
-	"os"
 	"tasksy/db"
+	"tasksy/lib"
 	"tasksy/models"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
-type AuthTokens struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-}
-
-func Login(c *gin.Context) {
+func LoginController(c *gin.Context) {
 	var body struct {
 		Email    string
 		Password string
@@ -40,6 +34,7 @@ func Login(c *gin.Context) {
 	}
 
 	err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(body.Password))
+
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": "Invalid email or password",
@@ -47,7 +42,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	tokens, err := generateTokens(user.ID)
+	tokens, err := lib.GenerateAuthTokens(user.ID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -62,39 +57,71 @@ func Login(c *gin.Context) {
 	})
 }
 
-func generateTokens(userID string) (*AuthTokens, error) {
-
-	jwtSecret := []byte(os.Getenv("JWT_SECRET"))
-	if len(jwtSecret) == 0 {
-		jwtSecret = []byte("your-secret-key")
+func RefreshTokenController(c *gin.Context) {
+	var body struct {
+		RefreshToken string
 	}
 
-	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": userID,
-		"type":    "access",
-		"exp":     time.Now().Add(time.Minute * 15).Unix(),
-		"iat":     time.Now().Unix(),
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusForbidden, gin.H{
+			"message": "Please provide valid body",
+		})
+		return
+	}
+
+	token, err := jwt.ParseWithClaims(body.RefreshToken, &lib.Claims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return lib.GetJWTSecret(), nil
 	})
 
-	accessTokenString, err := accessToken.SignedString(jwtSecret)
-	if err != nil {
-		return nil, err
+	
+	claims, ok := token.Claims.(*lib.Claims)
+	if !ok || !token.Valid {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":   "Invalid token claims",
+			"message": "Please login again",
+		})
+		return
+	}
+	if claims.Type != "refresh" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":   "Invalid token type",
+			"message": "Please provide a refresh token",
+		})
+		return
 	}
 
-	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": userID,
-		"type":    "refresh",
-		"exp":     time.Now().Add(time.Hour * 24 * 7).Unix(),
-		"iat":     time.Now().Unix(),
+	var user models.User
+	if err := db.DB.Where("id = ?", claims.UserID).First(&user).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":   "User not found",
+			"message": "Please login again",
+		})
+		return
+	}
+
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":   "Invalid or expired refresh token",
+			"message": "Please login again",
+		})
+		return
+	}
+	tokens, err := lib.GenerateAuthTokens(claims.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to generate tokens",
+			"message": "Please try again",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Tokens refreshed successfully",
+		"tokens":  tokens,
+		// "accessToken":  tokens.AccessToken,
+		// "refreshToken": tokens.RefreshToken,
 	})
-
-	refreshTokenString, err := refreshToken.SignedString(jwtSecret)
-	if err != nil {
-		return nil, err
-	}
-
-	return &AuthTokens{
-		AccessToken:  accessTokenString,
-		RefreshToken: refreshTokenString,
-	}, nil
 }

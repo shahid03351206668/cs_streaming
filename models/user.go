@@ -2,26 +2,30 @@ package models
 
 import (
 	"time"
-
-	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
-type User struct {
-	gorm.Model
-	ID          string `gorm:"type:uuid;primaryKey"`
-	FirstName   string
-	LastName    string
-	Email       string `gorm:"uniqueIndex"`
-	Password    string
-	PhoneNumber string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+type Role struct {
+	Name string `gorm:"primaryKey;not null;uniqueIndex"`
 }
 
-func (u *User) BeforeCreate(tx *gorm.DB) (err error) {
-	if u.ID == "" {
-		u.ID = uuid.New().String()
-	}
-	return
+type User struct {
+	BaseModel
+	FirstName     string
+	LastName      string
+	Email         string `gorm:"uniqueIndex"`
+	Password      string
+	PhoneNumber   string `gorm:"uniqueIndex"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	PhoneVerified bool   `gorm:"default:false"`
+	EmailVerfied  bool   `gorm:"default:false"`
+	ProfilePhoto  string `gorm:"size:255"`
+}
+
+type UserRoles struct {
+	UserID string `gorm:"primaryKey"`
+	RoleID string `gorm:"primaryKey"`
+
+	User User
+	Role Role
 }
