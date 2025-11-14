@@ -9,26 +9,55 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 func LoginController(c *gin.Context) {
 	var body struct {
-		Email    string
-		Password string
+		Email       string `json:"email"`
+		PhoneNumber string `json:"phone_number"`
+		Password    string `json:"password"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "Please provide a request body",
+			"message": "Please provide a valid request body",
 		})
+		return
+	}
+
+	if body.Email == "" && body.PhoneNumber == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Please provide either email or phone number",
+		})
+		return
+	}
+	if body.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Password is required",
+		})
+		return
 	}
 
 	var user models.User
-	result := db.DB.Where("email = ?", body.Email).First(&user)
+	var result *gorm.DB
+
+	if body.Email != "" {
+		result = db.DB.Where("email = ?", body.Email).First(&user)
+	} else {
+		result = db.DB.Where("phone_number = ?", body.PhoneNumber).First(&user)
+	}
 
 	if result.Error != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "Invalid email or password",
+			"error": "Invalid credentials",
+		})
+		return
+	}
+
+	if user.Password == "" && user.GoogleID != "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "This account uses Google Sign-In. Please login with Google.",
 		})
 		return
 	}
@@ -37,7 +66,7 @@ func LoginController(c *gin.Context) {
 
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "Invalid email or password",
+			"error": "Invalid credentials",
 		})
 		return
 	}
@@ -51,8 +80,8 @@ func LoginController(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusAccepted, gin.H{
-		"message": "logged in",
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
 		"tokens":  tokens,
 	})
 }
@@ -64,7 +93,7 @@ func RefreshTokenController(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusForbidden, gin.H{
-			"message": "Please provide valid body",
+			"error": "Please provide valid body",
 		})
 		return
 	}
@@ -76,7 +105,6 @@ func RefreshTokenController(c *gin.Context) {
 		return lib.GetJWTSecret(), nil
 	})
 
-	
 	claims, ok := token.Claims.(*lib.Claims)
 	if !ok || !token.Valid {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -109,6 +137,7 @@ func RefreshTokenController(c *gin.Context) {
 		})
 		return
 	}
+
 	tokens, err := lib.GenerateAuthTokens(claims.UserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -121,7 +150,5 @@ func RefreshTokenController(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Tokens refreshed successfully",
 		"tokens":  tokens,
-		// "accessToken":  tokens.AccessToken,
-		// "refreshToken": tokens.RefreshToken,
 	})
 }

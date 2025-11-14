@@ -13,11 +13,11 @@ import (
 
 func RegisterUser(c *gin.Context) {
 	var body struct {
-		FirstName   string `json:"firstName" binding:"required"`
-		LastName    string `json:"lastName" binding:"required"`
-		Email       string `json:"email" binding:"required,email"`
+		FirstName   string `json:"first_name" binding:"required"`
+		LastName    string `json:"last_name"`
+		Email       string `json:"email"`
 		Password    string `json:"password" binding:"required,min=6"`
-		PhoneNumber string `json:"phoneNumber"`
+		PhoneNumber string `json:"phone_number"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -28,8 +28,33 @@ func RegisterUser(c *gin.Context) {
 		return
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
+	if body.Email == "" && body.PhoneNumber == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "Please provide a valid json object",
+		})
+		return
+	}
 
+	// Checking if user already exists
+	var existingUser models.User
+	if body.Email != "" {
+		if err := db.DB.Where("email = ?", body.Email).First(&existingUser).Error; err == nil {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "User with this email already exists",
+			})
+			return
+		}
+
+	} else {
+		if err := db.DB.Where("phone_number = ?", body.PhoneNumber).First(&existingUser).Error; err == nil {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "User with this phone number already exists",
+			})
+			return
+		}
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to hash password",
@@ -54,9 +79,18 @@ func RegisterUser(c *gin.Context) {
 	}
 
 	user.Password = ""
+	tokens, err := lib.GenerateAuthTokens(user.ID)
+
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
-		"message": "User created successfully",
+		"message": "success",
 		"user":    user,
+		"tokens":  tokens,
 	})
 }
 
@@ -85,49 +119,49 @@ func GetUsers(c *gin.Context) {
 		"users":   users,
 	})
 }
-
 func ChangePassword(c *gin.Context) {
 	var body struct {
-		NewPassword     string
-		CurrentPassword string
+		NewPassword     string `json:"new_password" binding:"required,min=6"`
+		CurrentPassword string `json:"current_password" binding:"required"`
 	}
 
 	user, _ := lib.GetUser(c)
 	if user == nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "Please provide a valid body",
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "Unauthorized",
 		})
 		return
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "Please provide a valid body",
+			"error": "Please provide a valid body",
 		})
 		return
 	}
 
-	err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(body.CurrentPassword))
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": "internal server error",
-			"error":   err.Error(),
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(body.CurrentPassword)); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "Current password is incorrect",
 		})
+		return
 	}
 
+	// Hash new password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(body.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "Current password is incorrect",
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "Failed to hash password",
+			"error":   err.Error(),
 		})
 		return
 	}
 
-	if err := db.DB.Model(&user).Update("password", string(hashedPassword)).Error; err != nil {
+	// Update password
+	if err := db.DB.Model(user).Update("password", string(hashedPassword)).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   err.Error(),
 			"message": "Failed to update password",
+			"error":   err.Error(),
 		})
 		return
 	}
@@ -157,13 +191,13 @@ func GetProfile(c *gin.Context) {
 
 func UpdateProfile(c *gin.Context) {
 	var body struct {
-		FirstName   string `json:"firstName"`
-		LastName    string `json:"lastName"`
-		PhoneNumber string `json:"phoneNumber"`
-		// ProfilePhoto string `json:"profilePhoto"`
+		FirstName   string `json:"first_name"`
+		LastName    string `json:"last_name"`
+		PhoneNumber string `json:"phone_number"`
 	}
 
 	user, exists := lib.GetUser(c)
+
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"message": "User not authenticated",
@@ -227,5 +261,54 @@ func UpdateProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Profile updated successfully",
 		"user":    updatedUser,
+	})
+}
+func VerifyUser(c *gin.Context) {
+	var body struct {
+		PhoneNumber string `json:"phone_number"`
+		Email       string `json:"email"`
+	}
+
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "Provide a valid JSON object",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if body.Email == "" && body.PhoneNumber == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "Please provide either email or phone_number",
+		})
+		return
+	}
+
+	var user models.User
+	query := db.DB
+
+	if body.Email != "" {
+		query = query.Where("email = ?", body.Email)
+	}
+
+	if body.PhoneNumber != "" {
+		query = query.Where("phone_number = ?", body.PhoneNumber)
+	}
+
+	if err := query.First(&user).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"message": "User not found",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "User verified",
+		"user": gin.H{
+			"id":           user.ID,
+			"email":        user.Email,
+			"phone_number": user.PhoneNumber,
+		},
 	})
 }

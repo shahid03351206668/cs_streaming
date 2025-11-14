@@ -39,7 +39,7 @@ func GenerateAuthTokens(userID string) (*AuthTokens, error) {
 		UserID: userID,
 		Type:   "access",
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute * 15)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute * 43200)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	})
