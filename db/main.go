@@ -31,17 +31,21 @@ func ApplyMigrations() {
 	if err := DB.AutoMigrate(&models.User{}); err != nil {
 		log.Fatalf("Error while applying migration for User model: %v", err)
 	}
-	log.Println("User model migration applied successfully!")
-
 	if err := DB.AutoMigrate(&models.Role{}); err != nil {
 		log.Fatalf("Error while applying migration for Role model: %v", err)
 	}
-	log.Println("Role model migration applied successfully!")
-
 	if err := DB.AutoMigrate(&models.UserRoles{}); err != nil {
 		log.Fatalf("Error while applying migration for UserRoles model: %v", err)
 	}
-	log.Println("UserRoles model migration applied successfully!")
+	if err := DB.AutoMigrate(&models.Category{}); err != nil {
+		log.Fatalf("Error while applying migrations for Category model: %v", err)
+	}
+	if err := DB.AutoMigrate(&models.JobPost{}); err != nil {
+		log.Fatalf("Error while applying migrations for JobPost model: %v", err)
+	}
+	if err := DB.AutoMigrate(&models.JobMedia{}); err != nil {
+		log.Fatalf("Error while applying migrations for JobMedia model: %v", err)
+	}
 
 	log.Println("All migrations applied successfully!")
 }
