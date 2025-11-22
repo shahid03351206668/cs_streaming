@@ -4,7 +4,6 @@ type Role struct {
 	Name string `gorm:"primaryKey;not null;uniqueIndex"`
 }
 
-// gorm:"uniqueIndex"
 type User struct {
 	BaseModel
 	FirstName     string `gorm:"column:first_name" json:"first_name"`
@@ -12,8 +11,8 @@ type User struct {
 	Email         string `gorm:"column:email" json:"email"`
 	Password      string
 	PhoneNumber   string `gorm:"column:phone_number" json:"phone_number"`
-	PhoneVerified bool   `gorm:"default:false;column:phone_verfied" json:"phone_verfied"`
-	EmailVerfied  bool   `gorm:"default:false;column:email_verfied" json:"email_verfied"`
+	PhoneVerified bool   `gorm:"default:false;column:phone_verified" json:"phone_verified"`
+	EmailVerfied  bool   `gorm:"default:false;column:email_verified" json:"email_verified"`
 	ProfilePhoto  string `gorm:"size:255;column:profile_photo" json:"profile_photo"`
 	GoogleID      string
 }

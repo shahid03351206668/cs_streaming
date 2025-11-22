@@ -50,6 +50,7 @@ func main() {
 	protected := router.Group("/")
 	protected.Use(lib.AuthenticatedHandler)
 	{
+		protected.POST("/api/user/verify-credentials", controllers.VerifyUserCredential)
 		protected.POST("/api/jobs/create", controllers.CreateJob)
 		protected.POST("/api/jobs/update/:id", controllers.UpdateJob)
 		protected.GET("/api/user/profile", controllers.GetProfile)
