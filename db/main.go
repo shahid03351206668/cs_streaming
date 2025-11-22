@@ -22,6 +22,9 @@ func ConnectDB() {
 		return
 	}
 
+	var version string
+	DB.Raw("SHOW server_version;").Scan(&version)
+	log.Println("DB VERSION:", version)
 	log.Println("database connected")
 }
 
@@ -45,6 +48,12 @@ func ApplyMigrations() {
 	}
 	if err := DB.AutoMigrate(&models.JobMedia{}); err != nil {
 		log.Fatalf("Error while applying migrations for JobMedia model: %v", err)
+	}
+	if err := DB.AutoMigrate(&models.Proposal{}); err != nil {
+		log.Fatalf("Error while applying migrations for Proposal model: %v", err)
+	}
+	if err := DB.AutoMigrate(&models.ProposalAttachment{}); err != nil {
+		log.Fatalf("Error while applying migrations for ProposalAttachment model: %v", err)
 	}
 
 	log.Println("All migrations applied successfully!")

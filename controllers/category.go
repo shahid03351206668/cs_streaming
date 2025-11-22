@@ -13,6 +13,7 @@ func GetCategories(c *gin.Context) {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
+	
 	var categories []Response
 
 	err := db.DB.

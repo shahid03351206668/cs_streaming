@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 const ALLOWED_JOB_POST_MEDIA int = 6
@@ -37,9 +39,7 @@ func getMediaType(file *multipart.FileHeader) string {
 	}
 }
 
-// Serializer structs
 type JobMediaResponse struct {
-	// ID        string `json:"id"`
 	URL       string `json:"url"`
 	MediaType string `json:"media_type"`
 	FileName  string `json:"file_name"`
@@ -77,11 +77,9 @@ type JobPostResponse struct {
 }
 
 func serializeJobPost(job models.JobPost) JobPostResponse {
-	// Serialize media
 	media := make([]JobMediaResponse, 0, len(job.JobMedia))
 	for _, m := range job.JobMedia {
 		media = append(media, JobMediaResponse{
-			// ID:        fmt.Sprintf("%v", m.ID),
 			URL:       m.URL,
 			MediaType: m.MediaType,
 			FileName:  m.FileName,
@@ -89,7 +87,6 @@ func serializeJobPost(job models.JobPost) JobPostResponse {
 		})
 	}
 
-	// Serialize user
 	user := UserResponse{
 		ID:           fmt.Sprintf("%v", job.CreatedBy.ID),
 		FirstName:    job.CreatedBy.FirstName,
@@ -103,7 +100,6 @@ func serializeJobPost(job models.JobPost) JobPostResponse {
 	category := CategoryResponse{
 		ID:   fmt.Sprintf("%v", job.Category.ID),
 		Name: job.Category.Name,
-		// Description: job.Category.Description,
 	}
 
 	return JobPostResponse{
@@ -168,13 +164,14 @@ func GetJobs(c *gin.Context) {
 	if status != "" {
 		query = query.Where("status = ?", status)
 	}
+
 	if categoryID != "" {
 		query = query.Where("category_id = ?", categoryID)
 	}
 
 	var total int64
 	query.Model(&models.JobPost{}).Count(&total)
-
+	fmt.Println(query)
 	offset := 0
 	if page != "1" {
 		offset = (10 * (int(page[0]) - '0')) - 10
@@ -188,7 +185,6 @@ func GetJobs(c *gin.Context) {
 		return
 	}
 
-	// Serialize the response
 	serializedJobs := make([]JobPostResponse, 0, len(jobs))
 	for _, job := range jobs {
 		serializedJobs = append(serializedJobs, serializeJobPost(job))
@@ -216,6 +212,7 @@ func CreateJob(c *gin.Context) {
 	var DB = *db.DB
 
 	user, exists := lib.GetUser(c)
+
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"message": "error",
@@ -352,4 +349,213 @@ func CreateJob(c *gin.Context) {
 		"message": "created",
 		"data":    serializeJobPost(createdJob),
 	})
+}
+
+func UpdateJob(c *gin.Context) {
+	user, exists := lib.GetUser(c)
+	id := c.Param("id")
+
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"message": "error",
+			"error":   "invalid user",
+		})
+		return
+	}
+
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "error",
+			"error":   "job ID is required",
+		})
+		return
+	}
+
+	// Find the job post - FIXED: Correct GORM syntax
+	jobPost := models.JobPost{}
+	if err := db.DB.Where("id = ?", id).First(&jobPost).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"message": "error",
+				"error":   "job post not found",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "error",
+			"error":   "failed to fetch job post: " + err.Error(),
+		})
+		return
+	}
+
+	// Check if user is the creator of the job post
+	if jobPost.CreatedByID != user.ID {
+		c.JSON(http.StatusForbidden, gin.H{
+			"message": "error",
+			"error":   "you are not authorized to update this job post",
+		})
+		return
+	}
+
+	var body struct {
+		CategoryID  string  `form:"category_id"`
+		Title       string  `form:"title"`
+		Description string  `form:"description"`
+		Budget      float64 `form:"budget"`
+		OpenBudget  bool    `form:"open_budget"`
+		Address     string  `form:"address"`
+		Status      string  `form:"status"`
+	}
+
+	if err := c.ShouldBind(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "error",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Validate status if provided
+	if body.Status != "" {
+		validStatuses := []string{
+			models.JobStatusDraft,
+			models.JobStatusOpen,
+			models.JobStatusInProgress,
+			models.JobStatusCompleted,
+			models.JobStatusCancelled,
+			models.JobStatusClosed,
+			models.JobStatusOnHold,
+		}
+		isValidStatus := false
+		for _, status := range validStatuses {
+			if body.Status == status {
+				isValidStatus = true
+				break
+			}
+		}
+		if !isValidStatus {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"message": "error",
+				"error":   "invalid status value",
+			})
+			return
+		}
+	}
+
+	// Validate category if provided
+	if body.CategoryID != "" {
+		category := models.Category{}
+		if err := db.DB.Where("id = ?", body.CategoryID).First(&category).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"message": "error",
+					"error":   "category not found",
+				})
+				return
+			}
+		}
+		// Check if category is disabled
+		if category.Disable {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"message": "error",
+				"error":   "selected category is disabled",
+			})
+			return
+		}
+	}
+
+	// Prepare updates map
+	updates := make(map[string]interface{})
+
+	if body.Title != "" {
+		updates["title"] = body.Title
+	}
+
+	if body.Description != "" {
+		updates["description"] = body.Description
+	}
+
+	if body.Budget != 0 {
+		updates["budget"] = body.Budget
+	}
+
+	// Always update OpenBudget if it's part of the request
+	updates["open_budget"] = body.OpenBudget
+
+	if body.Address != "" {
+		updates["address"] = body.Address
+	}
+
+	if body.Status != "" {
+		// Prevent changing status of completed jobs
+		if jobPost.Status == models.JobStatusCompleted && body.Status != models.JobStatusCompleted {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"message": "error",
+				"error":   "cannot change status of a completed job",
+			})
+			return
+		}
+
+		// Uncomment when Contract model is implemented
+		// if body.Status == models.JobStatusCancelled {
+		// 	var activeContracts int64
+		// 	db.DB.Model(&models.Contract{}).
+		// 		Where("job_post_id = ? AND status = ?", id, models.ContractStatusActive).
+		// 		Count(&activeContracts)
+
+		// 	if activeContracts > 0 {
+		// 		c.JSON(http.StatusBadRequest, gin.H{
+		// 			"message": "error",
+		// 			"error":   "cannot cancel job with active contracts",
+		// 		})
+		// 		return
+		// 	}
+		// }
+
+		updates["status"] = body.Status
+	}
+
+	if body.CategoryID != "" {
+		updates["category_id"] = body.CategoryID
+	}
+
+	// Check if there are any updates to apply
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "error",
+			"error":   "no valid fields to update",
+		})
+		return
+	}
+
+	// Update the job post
+	if err := db.DB.Model(&jobPost).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "error",
+			"error":   "failed to update job post: " + err.Error(),
+		})
+		return
+	}
+
+	// jobResponse =
+	if err := db.DB.Preload("Category").
+		Preload("CreatedBy").
+		Preload("JobMedia").
+		Where("id = ?", id).
+		First(&jobPost).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "error",
+			"error":   "failed to reload job post: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data":    serializeJobPost(jobPost),
+	})
+}
+
+func GetJobsList(c *gin.Context) {
+
 }

@@ -96,31 +96,6 @@ func RegisterUser(c *gin.Context) {
 	})
 }
 
-func GetUsers(c *gin.Context) {
-	var users []models.User
-
-	if err := db.DB.Model(&users).Select(
-		"ID",
-		"FirstName",
-		"LastName",
-		"Email",
-		"PhoneNumber",
-		"CreatedAt",
-		"UpdatedAt",
-	).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   err.Error(),
-			"message": "Failed to fetch users",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Users fetched successfully",
-		"count":   len(users),
-		"users":   users,
-	})
-}
 func ChangePassword(c *gin.Context) {
 	var body struct {
 		NewPassword     string `json:"new_password" binding:"required,min=6"`
