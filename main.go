@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 	"tasksy/controllers"
 	"tasksy/db"
 	"tasksy/lib"
@@ -11,8 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
-
-var PORT string = "8080"
 
 func main() {
 	godotenv.Load()
@@ -52,7 +51,6 @@ func main() {
 		protected.GET("/api/user/profile", controllers.GetProfile)
 		protected.POST("/api/user/update", controllers.UpdateProfile)
 		protected.POST("/api/user/change-password", controllers.ChangePassword)
-
 		protected.POST("/api/proposals", controllers.CreateProposal)
 		protected.PUT("/api/proposals/:id", controllers.UpdateProposal)
 		protected.POST("/api/proposals/:id/withdraw", controllers.WithdrawProposal)
@@ -61,8 +59,21 @@ func main() {
 		protected.GET("/api/proposals/my", controllers.GetMyProposals)
 	}
 
-	log.Printf("Server starting on port %s", PORT)
-	if err := router.Run("192.168.100.53:" + PORT); err != nil {
+	host := os.Getenv("SERVER_HOST")
+	port := os.Getenv("SERVER_PORT")
+
+	if host == "" {
+		host = "localhost"
+	}
+
+	if port == "" {
+		port = "8080"
+	}
+
+	address := host + ":" + port
+
+	log.Printf("Server starting on address %s", address)
+	if err := router.Run(address); err != nil {
 		log.Fatalf("failed to run server: %v", err)
 	}
 

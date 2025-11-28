@@ -1,26 +1,26 @@
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-*.test
-*.out
+# Ignore build and temporary files
 tmp/
-vendor/
-bin/
-build/
-dist/
-*.a
+*.exe
+*.out
 *.test
-go.work
-go.work.sum
-gin.log
+
+# Ignore media files (large binary files)
+media/
+
+# Ignore Go build artifacts
+*.a
+*.so
+
+# Ignore log files
 *.log
-*.db
-*.sqlite
-*.sqlite3
+
+# Ignore environment variable files
 .env
 .env.*
-!.env.example
+
+# Ignore IDE/editor files
 .vscode/
 .history/
+
+# Optionally, ignore the Air live reloader config if you don't want to track it
+.air.toml
