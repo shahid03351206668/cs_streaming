@@ -3,7 +3,7 @@ name: Deployment Pipeline
 on:
   push:
     branches:
-      - deploy
+      - develop
 
 jobs:
   test-build-deploy:
