@@ -47,5 +47,5 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           password: ${{ secrets.VPS_SSH_PASSWORD }}
           script: |
-            echo "${{ secrets.VPS_SSH_PASSWORD }}" | sudo -S systemctl restart cs_streaming.service
-            sudo systemctl status cs_streaming.service --no-pager
+            echo '${{ secrets.VPS_SSH_PASSWORD }}' | sudo -S systemctl restart cs_streaming.service
+            echo '${{ secrets.VPS_SSH_PASSWORD }}' | sudo -S systemctl status cs_streaming.service --no-pager
