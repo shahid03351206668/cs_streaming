@@ -152,7 +152,6 @@ func GetJobDetail(c *gin.Context) {
 }
 
 func GetJobs(c *gin.Context) {
-	// Pagination
 	page := c.DefaultQuery("page", "1")
 	limit := c.DefaultQuery("limit", "10")
 	status := c.Query("status")
@@ -171,7 +170,7 @@ func GetJobs(c *gin.Context) {
 
 	var total int64
 	query.Model(&models.JobPost{}).Count(&total)
-	fmt.Println(query)
+
 	offset := 0
 	if page != "1" {
 		offset = (10 * (int(page[0]) - '0')) - 10
@@ -556,6 +555,117 @@ func UpdateJob(c *gin.Context) {
 	})
 }
 
-func GetJobsList(c *gin.Context) {
+func CreateContract(c *gin.Context) {
+	user, exists := lib.GetUser(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"message": "error",
+			"error":   "invalid user",
+		})
+		return
+	}
+	var body struct {
+		ProposalID  string    `json:"proposal_id" binding:"required"`
+		Title       string    `json:"title" binding:"required"`
+		Description string    `json:"description"`
+		TotalAmount float64   `json:"total_amount" binding:"required,gt=0"`
+		StartDate   time.Time `json:"start_date" binding:"required"`
+		EndDate     time.Time `json:"end_date" binding:"required"`
+		Terms       string    `json:"terms"`
+	}
 
+	if body.EndDate.Before(body.StartDate) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "End date must be after start date"})
+		return
+	}
+
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var proposal models.Proposal
+	if err := db.DB.Preload("JobPost").Where("id = ?", body.ProposalID).First(&proposal).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error":   "proposal not found",
+			"message": "error",
+		})
+		return
+	}
+
+	if proposal.JobPost.CreatedBy.ID != user.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only job creator can create contract", "message": "error"})
+		return
+	}
+
+	if proposal.Status != models.ProposalStatusAccepted {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Only accepted proposals can have contracts",
+			"message": "error"})
+	}
+
+	var existingContract models.Contract
+
+	if err := db.DB.Where(&existingContract, "proposal_id = ?", proposal.ID).Error; err == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Contract already exists for this proposal",
+			"message": "error"})
+		return
+	}
+
+	contract := models.Contract{
+		JobPostID:    proposal.JobPost.ID,
+		ProposalID:   proposal.ID,
+		ClientID:     proposal.JobPost.CreatedBy.ID,
+		FreelancerID: proposal.FreelancerID,
+		Title:        body.Title,
+		Description:  body.Description,
+		TotalAmount:  body.TotalAmount,
+		StartDate:    body.StartDate,
+		EndDate:      body.EndDate,
+		Status:       models.ContractStatusPending,
+		Terms:        body.Terms,
+	}
+	if err := db.DB.Create(&contract).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "error",
+			"error":   "failed to create contract: " + err.Error(),
+		})
+
+		return
+	}
+
+	db.DB.Model(&proposal.JobPost).Update("status", models.JobStatusInProgress)
+	db.DB.Preload("JobPost").Preload("Proposal").Preload("Client").Preload("Freelancer").
+		First(&contract, contract.ID)
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":  "Contract created successfully",
+		"contract": contract,
+	})
+
+}
+
+func GetContracts(c *gin.Context) {
+	var job_id string = c.Query("job_id")
+
+	if job_id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "error",
+			"error":   "job_id query param is required",
+		})
+		return
+	}
+
+	var contract models.Contract
+	if err := db.DB.Where(&contract, "job_post_id = ?", job_id).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "error",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data":    contract,
+	})
 }

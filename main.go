@@ -39,23 +39,20 @@ func main() {
 	router.POST("/api/auth/refresh", controllers.RefreshTokenController)
 	router.POST("/api/auth/google-auth", controllers.GoogleSignInFirebaseController)
 	router.GET("/api/jobs/list", controllers.GetJobs)
-
-	router.GET("/api/jobs/:id", controllers.GetJobs)
-
-	// admin := router.Group("/admin")
-	// {
-	// 	admin.GET("/api/job/list", controllers.GetJobsList)
-	// }
+	router.GET("/api/jobs/:id", controllers.GetJobDetail)
 
 	protected := router.Group("/")
 	protected.Use(lib.AuthenticatedHandler)
+
 	{
+		protected.GET("/api/jobs/:id/proposals", controllers.GetJobProposals)
 		protected.POST("/api/user/verify-credentials", controllers.VerifyUserCredential)
 		protected.POST("/api/jobs/create", controllers.CreateJob)
 		protected.POST("/api/jobs/update/:id", controllers.UpdateJob)
 		protected.GET("/api/user/profile", controllers.GetProfile)
 		protected.POST("/api/user/update", controllers.UpdateProfile)
 		protected.POST("/api/user/change-password", controllers.ChangePassword)
+
 		protected.POST("/api/proposals", controllers.CreateProposal)
 		protected.PUT("/api/proposals/:id", controllers.UpdateProposal)
 		protected.POST("/api/proposals/:id/withdraw", controllers.WithdrawProposal)
@@ -65,7 +62,7 @@ func main() {
 	}
 
 	log.Printf("Server starting on port %s", PORT)
-	if err := router.Run("192.168.18.8:" + PORT); err != nil {
+	if err := router.Run("192.168.100.53:" + PORT); err != nil {
 		log.Fatalf("failed to run server: %v", err)
 	}
 

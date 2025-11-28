@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 const (
 	JobStatusDraft      = "draft"
 	JobStatusOpen       = "open"
@@ -83,4 +85,63 @@ type ProposalAttachment struct {
 	FileName   string   `gorm:"type:varchar(255)" json:"file_name"`
 	FileSize   int64    `gorm:"type:bigint" json:"file_size"`
 	FileType   string   `gorm:"type:varchar(50)" json:"file_type"`
+}
+
+const (
+	ContractStatusPending    = "pending"
+	ContractStatusActive     = "active"
+	ContractStatusCompleted  = "completed"
+	ContractStatusCancelled  = "cancelled"
+	ContractStatusDisputed   = "disputed"
+	ContractStatusTerminated = "terminated"
+)
+
+const (
+	PaymentStatusPending    = "pending"
+	PaymentStatusProcessing = "processing"
+	PaymentStatusCompleted  = "completed"
+	PaymentStatusFailed     = "failed"
+	PaymentStatusRefunded   = "refunded"
+)
+
+type Contract struct {
+	BaseModel
+	JobPostID    string    `gorm:"not null;index" json:"job_post_id"`
+	JobPost      JobPost   `gorm:"foreignKey:JobPostID;constraint:OnDelete:CASCADE" json:"job_post"`
+	ProposalID   string    `gorm:"not null;uniqueIndex" json:"proposal_id"`
+	Proposal     Proposal  `gorm:"foreignKey:ProposalID;constraint:OnDelete:CASCADE" json:"proposal"`
+	ClientID     string    `gorm:"not null;index" json:"client_id"`
+	Client       User      `gorm:"foreignKey:ClientID;constraint:OnDelete:CASCADE" json:"client"`
+	FreelancerID string    `gorm:"not null;index" json:"freelancer_id"`
+	Freelancer   User      `gorm:"foreignKey:FreelancerID;constraint:OnDelete:CASCADE" json:"freelancer"`
+	Title        string    `gorm:"type:varchar(255);not null" json:"title"`
+	Description  string    `gorm:"type:text" json:"description"`
+	TotalAmount  float64   `gorm:"type:decimal(10,2);not null" json:"total_amount"`
+	StartDate    time.Time `gorm:"not null" json:"start_date"`
+	EndDate      time.Time `gorm:"not null" json:"end_date"`
+	Status       string    `gorm:"type:varchar(50);default:'pending';index" json:"status"`
+	Terms        string    `gorm:"type:text" json:"terms"`
+
+	Payments []Payment `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"payments,omitempty"`
+}
+
+type Payment struct {
+	BaseModel
+	ContractID       string     `gorm:"not null;index" json:"contract_id"`
+	Contract         Contract   `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"contract,omitempty"`
+	Amount           float64    `gorm:"type:decimal(10,2);not null" json:"amount"`
+	Status           string     `gorm:"type:varchar(50);default:'pending';index" json:"status"`
+	PaymentMethod    string     `gorm:"type:varchar(50)" json:"payment_method"`
+	TransactionID    string     `gorm:"type:varchar(255);uniqueIndex" json:"transaction_id"`
+	ProcessedAt      *time.Time `json:"processed_at,omitempty"`
+	PlatformFee      float64    `gorm:"type:decimal(10,2);default:0" json:"platform_fee"`
+	FreelancerAmount float64    `gorm:"type:decimal(10,2)" json:"freelancer_amount"`
+}
+
+func (Contract) TableName() string {
+	return "contracts"
+}
+
+func (Payment) TableName() string {
+	return "payments"
 }

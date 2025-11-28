@@ -29,32 +29,18 @@ func ConnectDB() {
 }
 
 func ApplyMigrations() {
-	log.Println("Applying DB migrations...")
-
-	if err := DB.AutoMigrate(&models.User{}); err != nil {
-		log.Fatalf("Error while applying migration for User model: %v", err)
+	if err := DB.AutoMigrate(
+		&models.User{},
+		&models.Role{},
+		&models.UserRoles{},
+		&models.Category{},
+		&models.JobPost{},
+		&models.JobMedia{},
+		&models.Proposal{},
+		&models.ProposalAttachment{},
+		&models.Contract{},
+		&models.Payment{},
+	); err != nil {
+		log.Fatalf("Error while applying migrations: %v", err)
 	}
-	if err := DB.AutoMigrate(&models.Role{}); err != nil {
-		log.Fatalf("Error while applying migration for Role model: %v", err)
-	}
-	if err := DB.AutoMigrate(&models.UserRoles{}); err != nil {
-		log.Fatalf("Error while applying migration for UserRoles model: %v", err)
-	}
-	if err := DB.AutoMigrate(&models.Category{}); err != nil {
-		log.Fatalf("Error while applying migrations for Category model: %v", err)
-	}
-	if err := DB.AutoMigrate(&models.JobPost{}); err != nil {
-		log.Fatalf("Error while applying migrations for JobPost model: %v", err)
-	}
-	if err := DB.AutoMigrate(&models.JobMedia{}); err != nil {
-		log.Fatalf("Error while applying migrations for JobMedia model: %v", err)
-	}
-	if err := DB.AutoMigrate(&models.Proposal{}); err != nil {
-		log.Fatalf("Error while applying migrations for Proposal model: %v", err)
-	}
-	if err := DB.AutoMigrate(&models.ProposalAttachment{}); err != nil {
-		log.Fatalf("Error while applying migrations for ProposalAttachment model: %v", err)
-	}
-
-	log.Println("All migrations applied successfully!")
 }
