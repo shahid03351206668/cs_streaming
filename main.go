@@ -14,6 +14,11 @@ import (
 	"github.com/joho/godotenv"
 )
 
+type APIRoute struct {
+	Method string `json:"method"`
+	Path   string `json:"path"`
+}
+
 type Config struct {
 	Host        string
 	Port        string
@@ -90,6 +95,10 @@ func main() {
 
 	MakeRoutes(router)
 
+	router.GET("/api/routes", func(c *gin.Context) {
+		ListRoutes(c, router)
+	})
+
 	router.GET("/api/user/list", controllers.GetUsers)
 	router.GET("/api/category/list", controllers.GetCategories)
 	router.POST("/api/category/create", controllers.CreateCategory)
@@ -126,4 +135,22 @@ func main() {
 		log.Fatalf("failed to run server: %v", err)
 	}
 
+}
+
+func ListRoutes(c *gin.Context, router *gin.Engine) {
+	routes := make([]APIRoute, 0)
+	for _, routeInfo := range router.Routes() {
+		// Exclude the static media route and the route list endpoint itself for clarity, if desired
+		// but generally, we include all public routes.
+		if routeInfo.Path != "/media/*filepath" && routeInfo.Path != "/api/routes" {
+			routes = append(routes, APIRoute{
+				Method: routeInfo.Method,
+				Path:   routeInfo.Path,
+			})
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"total_routes": len(routes),
+		"routes":       routes,
+	})
 }
