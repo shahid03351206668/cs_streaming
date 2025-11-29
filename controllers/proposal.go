@@ -499,7 +499,6 @@ func GetMyProposals(c *gin.Context) {
 	}
 
 	status := c.Query("status")
-
 	query := db.DB.Preload("JobPost").
 		Preload("JobPost.Category").
 		Preload("ProposalAttachments").
@@ -527,6 +526,7 @@ func GetMyProposals(c *gin.Context) {
 
 func GetJobProposals(c *gin.Context) {
 	user, exists := lib.GetUser(c)
+
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"message": "error",
@@ -535,16 +535,16 @@ func GetJobProposals(c *gin.Context) {
 		return
 	}
 
-	jobPostID := c.Param("job_id")
+	jobPostID := c.Param("id")
+
 	if jobPostID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
-			"error":   "job ID is required",
+			"error":   "Job id is required",
 		})
 		return
 	}
 
-	// Verify job ownership
 	jobPost := models.JobPost{}
 	if err := db.DB.Where("id = ?", jobPostID).First(&jobPost).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -569,7 +569,6 @@ func GetJobProposals(c *gin.Context) {
 		return
 	}
 
-	// Get all proposals for this job
 	var proposals []models.Proposal
 	if err := db.DB.Preload("Freelancer").
 		Preload("ProposalAttachments").

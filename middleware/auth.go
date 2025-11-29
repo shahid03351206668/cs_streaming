@@ -2,8 +2,10 @@ package middleware
 
 import (
 	"net/http"
+	"os"
 	"strings"
-	"tasksy/lib"
+	"tasksy/db"
+	"tasksy/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -15,72 +17,62 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		headers := c.Request.Header.Get("Authorization")
-
-		if headers == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":   "authorization header missing",
-				"message": "error",
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "Authorization header missing",
 			})
 			return
 		}
 
-		parts := strings.Split(headers, " ")
-
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":   "Invalid authorization format. Expected 'Bearer <token>'",
-				"message": "error",
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid authorization format. Expected 'Bearer <token>'",
 			})
 			return
 		}
 
-		token := parts[1]
-		jwtSecret := lib.GetJWTSecret()
-
-		if token == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":   "Bearer token missing",
-				"message": "error",
-			})
-			return
-		}
-
-		accessToken, err := jwt.ParseWithClaims(token, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, jwt.ErrSignatureInvalid
 			}
-			return jwtSecret, nil
+			return []byte(os.Getenv("JWT_SECRET")), nil
 		})
-
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error":   "Invalid or expired token",
-				"message": "error",
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid or expired token",
 			})
 			return
 		}
 
-		if claims, ok := accessToken.Claims.(*Claims); ok && accessToken.Valid {
-
-			if claims.Type != "access" {
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"error":   "Invalid token type. Use access token",
-					"message": "error",
-				})
-				return
-			}
-
-			c.Set("user_id", claims.UserID)
-			c.Next()
-		} else {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+		claims, ok := token.Claims.(*Claims)
+		if !ok || !token.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid token claims",
+			})
 			return
 		}
 
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Internal Server Error"})
+		if claims.Type != "access" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid token type. Access token required",
+			})
+			return
+		}
+
+		var user models.User
+
+		if err := db.DB.First(&user, "id = ?", claims.UserID).Error; err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid token",
+			})
+			return
+		}
+
+		c.Set("user", user)
+		c.Next()
 	}
 }

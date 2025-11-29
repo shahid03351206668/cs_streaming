@@ -7,57 +7,21 @@ import (
 	"tasksy/controllers"
 	"tasksy/db"
 	"tasksy/lib"
+	"tasksy/middleware"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
-func main() {
+type Config struct {
+	Host        string
+	Port        string
+	DatabaseURI string
+}
+
+func LoadConfig() Config {
 	godotenv.Load()
-	router := gin.Default()
-	router.Use(cors.Default())
-	router.Static("/media", "./media")
-
-	db.ConnectDB()
-	db.ApplyMigrations()
-
-	router.GET("/ping", func(c *gin.Context) {
-		c.JSON(http.StatusAccepted, gin.H{
-			"message": "pong",
-		})
-	})
-
-	router.GET("/api/user/list", controllers.GetUsers)
-	router.POST("/api/user/register", controllers.RegisterUser)
-	router.POST("/api/category/create", controllers.CreateCategory)
-	router.GET("/api/category/list", controllers.GetCategories)
-
-	router.POST("/api/auth/login", controllers.LoginController)
-	router.POST("/api/auth/verify-user", controllers.VerifyUser)
-	router.POST("/api/auth/refresh", controllers.RefreshTokenController)
-	router.POST("/api/auth/google-auth", controllers.GoogleSignInFirebaseController)
-	router.GET("/api/jobs/list", controllers.GetJobs)
-	router.GET("/api/jobs/:id", controllers.GetJobDetail)
-
-	protected := router.Group("/")
-	protected.Use(lib.AuthenticatedHandler)
-
-	{
-		protected.GET("/api/jobs/:id/proposals", controllers.GetJobProposals)
-		protected.POST("/api/user/verify-credentials", controllers.VerifyUserCredential)
-		protected.POST("/api/jobs/create", controllers.CreateJob)
-		protected.POST("/api/jobs/update/:id", controllers.UpdateJob)
-		protected.GET("/api/user/profile", controllers.GetProfile)
-		protected.POST("/api/user/update", controllers.UpdateProfile)
-		protected.POST("/api/user/change-password", controllers.ChangePassword)
-		protected.POST("/api/proposals", controllers.CreateProposal)
-		protected.PUT("/api/proposals/:id", controllers.UpdateProposal)
-		protected.POST("/api/proposals/:id/withdraw", controllers.WithdrawProposal)
-		protected.DELETE("/api/proposals/:id", controllers.DeleteProposal)
-		protected.GET("/api/proposals/:id", controllers.GetProposal)
-		protected.GET("/api/proposals/my", controllers.GetMyProposals)
-	}
 
 	host := os.Getenv("SERVER_HOST")
 	port := os.Getenv("SERVER_PORT")
@@ -70,8 +34,93 @@ func main() {
 		port = "8080"
 	}
 
-	address := host + ":" + port
+	dns := os.Getenv("DB_URI")
 
+	return Config{
+		Host:        host,
+		Port:        port,
+		DatabaseURI: dns,
+	}
+}
+func SetupRouter() *gin.Engine {
+	router := gin.Default()
+	router.Use(cors.Default())
+	router.Static("/media", "./media")
+	return router
+}
+
+func MakeRoutes(router *gin.Engine) {
+	authRoutes := router.Group("/api/auth")
+	{
+		authRoutes.GET("/list", controllers.GetUsers)
+		authRoutes.POST("/register", controllers.RegisterUser)
+		authRoutes.POST("/login", controllers.LoginController)
+		authRoutes.POST("/verify-user", controllers.VerifyUser)
+		authRoutes.POST("/refresh", controllers.RefreshTokenController)
+		authRoutes.POST("/google-auth", controllers.GoogleSignInFirebaseController)
+	}
+
+	protectedRoutes := router.Group("/")
+	protectedRoutes.Use(middleware.AuthMiddleware())
+	{
+		protectedRoutes.GET("/api/jobs/:id/contracts", controllers.GetContracts)
+		protectedRoutes.POST("/api/jobs/create", controllers.CreateJob)
+	}
+}
+
+func main() {
+	config := LoadConfig()
+	router := SetupRouter()
+
+	if err := db.ConnectDB(config.DatabaseURI); err != nil {
+		log.Fatalf("failed to connect to database: %v", err)
+		return
+	}
+
+	if err := db.ApplyMigrations(); err != nil {
+		log.Fatalf("failed to apply database migrations: %v", err)
+		return
+	}
+
+	router.GET("/ping", func(c *gin.Context) {
+		c.JSON(http.StatusAccepted, gin.H{
+			"message": "pong",
+		})
+	})
+
+	MakeRoutes(router)
+
+	router.GET("/api/user/list", controllers.GetUsers)
+	router.GET("/api/category/list", controllers.GetCategories)
+	router.POST("/api/category/create", controllers.CreateCategory)
+	router.GET("/api/jobs/list", controllers.GetJobs)
+	router.GET("/api/jobs/:id", controllers.GetJobDetail)
+
+	protected := router.Group("/")
+	protected.Use(lib.AuthenticatedHandler)
+
+	{
+		protected.GET("/api/user/profile", controllers.GetProfile)
+		protected.GET("/api/proposals/:id", controllers.GetProposal)
+		protected.GET("/api/jobs/my", controllers.GetMyJobs)
+		protected.GET("/api/proposals/my", controllers.GetMyProposals)
+		protected.GET("/api/jobs/:id/proposal", controllers.GetJobProposals)
+
+		protected.POST("/api/user/verify-credentials", controllers.VerifyUserCredential)
+		protected.POST("/api/jobs/update/:id", controllers.UpdateJob)
+		protected.POST("/api/user/update", controllers.UpdateProfile)
+		protected.POST("/api/user/change-password", controllers.ChangePassword)
+		protected.POST("/api/proposals", controllers.CreateProposal)
+
+		protected.POST("/api/proposals/:id/withdraw", controllers.WithdrawProposal)
+		protected.PUT("/api/proposals/:id", controllers.UpdateProposal)
+		protected.DELETE("/api/proposals/:id", controllers.DeleteProposal)
+
+		protected.POST("/api/proposals/create-contract", controllers.CreateContract)
+		protected.GET("/api/proposals/get-contract", controllers.GetContracts)
+	}
+
+	address := config.Host + ":" + config.Port
 	log.Printf("Server starting on address %s", address)
 	if err := router.Run(address); err != nil {
 		log.Fatalf("failed to run server: %v", err)

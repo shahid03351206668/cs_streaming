@@ -13,7 +13,7 @@ func GetCategories(c *gin.Context) {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
-	
+
 	var categories []Response
 
 	err := db.DB.
@@ -37,7 +37,6 @@ func GetCategories(c *gin.Context) {
 
 func CreateCategory(c *gin.Context) {
 	var DB = *db.DB
-
 	var body struct {
 		Name string `binding:"required" json:"name"`
 	}

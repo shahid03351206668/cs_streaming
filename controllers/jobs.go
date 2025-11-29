@@ -151,6 +151,33 @@ func GetJobDetail(c *gin.Context) {
 	})
 }
 
+func GetMyJobs(c *gin.Context) {
+	DB := db.DB
+	user := c.MustGet("user").(models.User)
+
+	var jobs []models.JobPost
+	query := DB.Preload("CreatedBy").Preload("Category").Preload("JobMedia")
+
+	if err := query.Model(&models.JobPost{}).Where("created_by_id = ?", user.ID).Order("created_at DESC").Find(&jobs).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "error",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	jobsList := make([]JobPostResponse, 0, len(jobs))
+	for _, job := range jobs {
+		jobsList = append(jobsList, serializeJobPost(job))
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":    jobsList,
+		"message": "success",
+	})
+
+}
+
 func GetJobs(c *gin.Context) {
 	page := c.DefaultQuery("page", "1")
 	limit := c.DefaultQuery("limit", "10")
@@ -210,15 +237,7 @@ type CreateJobRequest struct {
 func CreateJob(c *gin.Context) {
 	var DB = *db.DB
 
-	user, exists := lib.GetUser(c)
-
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "error",
-			"error":   "provide a valid authorization token",
-		})
-		return
-	}
+	user := c.MustGet("user").(models.User)
 
 	var body CreateJobRequest
 	if err := c.ShouldBind(&body); err != nil {
@@ -518,7 +537,6 @@ func UpdateJob(c *gin.Context) {
 		updates["category_id"] = body.CategoryID
 	}
 
-	// Check if there are any updates to apply
 	if len(updates) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
@@ -556,14 +574,9 @@ func UpdateJob(c *gin.Context) {
 }
 
 func CreateContract(c *gin.Context) {
-	user, exists := lib.GetUser(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "error",
-			"error":   "invalid user",
-		})
-		return
-	}
+	DB := *db.DB
+
+	user := c.MustGet("user").(models.User)
 	var body struct {
 		ProposalID  string    `json:"proposal_id" binding:"required"`
 		Title       string    `json:"title" binding:"required"`
@@ -605,7 +618,7 @@ func CreateContract(c *gin.Context) {
 
 	var existingContract models.Contract
 
-	if err := db.DB.Where(&existingContract, "proposal_id = ?", proposal.ID).Error; err == nil {
+	if err := DB.Where(&existingContract, "proposal_id = ?", proposal.ID).Error; err == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Contract already exists for this proposal",
 			"message": "error"})
 		return
@@ -624,39 +637,30 @@ func CreateContract(c *gin.Context) {
 		Status:       models.ContractStatusPending,
 		Terms:        body.Terms,
 	}
-	if err := db.DB.Create(&contract).Error; err != nil {
+
+	if err := DB.Create(&contract).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "error",
 			"error":   "failed to create contract: " + err.Error(),
 		})
-
 		return
 	}
 
-	db.DB.Model(&proposal.JobPost).Update("status", models.JobStatusInProgress)
-	db.DB.Preload("JobPost").Preload("Proposal").Preload("Client").Preload("Freelancer").
+	DB.Model(&proposal.JobPost).Update("status", models.JobStatusInProgress)
+	DB.Preload("JobPost").Preload("Proposal").Preload("Client").Preload("Freelancer").
 		First(&contract, contract.ID)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message":  "Contract created successfully",
 		"contract": contract,
 	})
-
 }
 
 func GetContracts(c *gin.Context) {
-	var job_id string = c.Query("job_id")
-
-	if job_id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "error",
-			"error":   "job_id query param is required",
-		})
-		return
-	}
+	id := c.Param("id")
 
 	var contract models.Contract
-	if err := db.DB.Where(&contract, "job_post_id = ?", job_id).Error; err != nil {
+	if err := db.DB.Where(&contract, "job_post_id = ?", id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "error",
 			"error":   err.Error(),
