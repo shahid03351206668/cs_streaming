@@ -29,7 +29,6 @@ jobs:
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o cs_streaming main.go
           ls -lah
-
       
       - name: Copy Binary to VPS
         uses: appleboy/scp-action@v0.1.7
