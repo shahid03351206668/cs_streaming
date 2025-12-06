@@ -83,7 +83,7 @@ func RegisterUser(c *gin.Context) {
 	}
 
 	user.Password = ""
-	tokens, err := lib.GenerateAuthTokens(user.ID)
+	tokens, err := lib.GenerateAuthTokens(user.ID, 0)
 
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{

@@ -12,9 +12,10 @@ type User struct {
 	Password      string
 	PhoneNumber   string `gorm:"column:phone_number" json:"phone_number"`
 	PhoneVerified bool   `gorm:"default:false;column:phone_verified" json:"phone_verified"`
-	EmailVerfied  bool   `gorm:"default:false;column:email_verified" json:"email_verified"`
+	EmailVerified bool   `gorm:"default:false;column:email_verified" json:"email_verified"`
 	ProfilePhoto  string `gorm:"size:255;column:profile_photo" json:"profile_photo"`
 	GoogleID      string
+	Disabled      bool `gorm:"default:false;column:disabled" json:"disabled"`
 }
 
 type UserRoles struct {

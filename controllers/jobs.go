@@ -673,3 +673,5 @@ func GetContracts(c *gin.Context) {
 		"data":    contract,
 	})
 }
+
+

@@ -32,14 +32,19 @@ func GetJWTSecret() []byte {
 	return []byte(secret)
 }
 
-func GenerateAuthTokens(userID string) (*AuthTokens, error) {
+func GenerateAuthTokens(userID string, duration int64 ) (*AuthTokens, error) {
 	jwtSecret := GetJWTSecret()
+
+	// setting because of our mobile developer cannot integrate jwt tokens api properly 
+	if duration == 0 {
+		duration = 43200
+	}
 
 	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
 		UserID: userID,
 		Type:   "access",
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute * 43200)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute * time.Duration(duration))),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	})

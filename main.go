@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"tasksy/api"
 	"tasksy/controllers"
 	"tasksy/db"
 	"tasksy/lib"
@@ -55,6 +56,13 @@ func SetupRouter() *gin.Engine {
 }
 
 func MakeRoutes(router *gin.Engine) {
+
+	authRoutesV1 := router.Group("/api/v1/auth")
+	{
+		// authRoutesV1.POST("/register", controllers.RegisterUserV1)
+		authRoutesV1.POST("/login", controllers.LoginControllerV1)
+	}
+
 	authRoutes := router.Group("/api/auth")
 	{
 		authRoutes.GET("/list", controllers.GetUsers)
@@ -101,9 +109,21 @@ func main() {
 
 	router.GET("/api/user/list", controllers.GetUsers)
 	router.GET("/api/category/list", controllers.GetCategories)
-	router.POST("/api/category/create", controllers.CreateCategory)
+	router.GET("/api/v1/category/:id", controllers.GetCategoryByID)
+	router.POST("/api/v1/category/create", controllers.CreateCategory)
+	router.GET("/api/v1/category/list", controllers.GetCategories)
+	router.DELETE("/api/v1/category/delete/:id", controllers.DeleteCategory)
+	router.PUT("/api/v1/category/update/:id", controllers.UpdateCategory)
+
 	router.GET("/api/jobs/list", controllers.GetJobs)
 	router.GET("/api/jobs/:id", controllers.GetJobDetail)
+
+	adminRoutes := router.Group("/api/v1/")
+	{
+		adminRoutes.POST("resource/list/:model", api.GetResourceList)
+		adminRoutes.GET("/users/list", controllers.AdminUserListController)
+		adminRoutes.GET("/users/:id", controllers.AdminGetUserController)
+	}
 
 	protected := router.Group("/")
 	protected.Use(lib.AuthenticatedHandler)

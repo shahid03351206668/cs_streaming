@@ -83,12 +83,12 @@ func GoogleSignInFirebaseController(c *gin.Context) {
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
 			user = models.User{
-				FirstName:    tokenInfo.GivenName,
-				LastName:     tokenInfo.FamilyName,
-				Email:        tokenInfo.Email,
-				GoogleID:     tokenInfo.Sub,
-				ProfilePhoto: tokenInfo.Picture,
-				EmailVerfied: tokenInfo.EmailVerified == "true",
+				FirstName:     tokenInfo.GivenName,
+				LastName:      tokenInfo.FamilyName,
+				Email:         tokenInfo.Email,
+				GoogleID:      tokenInfo.Sub,
+				ProfilePhoto:  tokenInfo.Picture,
+				EmailVerified: tokenInfo.EmailVerified == "true",
 			}
 
 			if err := db.DB.Create(&user).Error; err != nil {
@@ -107,12 +107,12 @@ func GoogleSignInFirebaseController(c *gin.Context) {
 		if user.GoogleID == "" {
 			user.GoogleID = tokenInfo.Sub
 			user.ProfilePhoto = tokenInfo.Picture
-			user.EmailVerfied = tokenInfo.EmailVerified == "true"
+			user.EmailVerified = tokenInfo.EmailVerified == "true"
 			db.DB.Save(&user)
 		}
 	}
 
-	tokens, err := lib.GenerateAuthTokens(user.ID)
+	tokens, err := lib.GenerateAuthTokens(user.ID, 0)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to generate tokens",
