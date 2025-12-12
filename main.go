@@ -7,7 +7,6 @@ import (
 	"tasksy/api"
 	"tasksy/controllers"
 	"tasksy/db"
-	"tasksy/lib"
 	"tasksy/middleware"
 
 	"github.com/gin-contrib/cors"
@@ -40,14 +39,15 @@ func LoadConfig() Config {
 		port = "8080"
 	}
 
-	dns := os.Getenv("DB_URI")
-
+	db_uri := os.Getenv("DB_URI")
+	
 	return Config{
 		Host:        host,
 		Port:        port,
-		DatabaseURI: dns,
+		DatabaseURI: db_uri,
 	}
 }
+
 func SetupRouter() *gin.Engine {
 	router := gin.Default()
 	router.Use(cors.Default())
@@ -56,6 +56,17 @@ func SetupRouter() *gin.Engine {
 }
 
 func MakeRoutes(router *gin.Engine) {
+	adminRoutesV1 := router.Group("/api/v1/admin")
+	{
+		adminRoutesV1.GET("/roles", api.GetRole)
+		adminRoutesV1.POST("/roles", api.CreateRole)
+		adminRoutesV1.POST("/users", api.CreateUser)
+		adminRoutesV1.GET("/users/:id", api.GetUser)
+		// api/v1/admin/users
+		// CreateRole
+		// adminRoutesV1.POST("/roles", controllers.CreateRole)
+		// adminRoutesV1.GET("/permissions", controllers.GetPermissions)
+	}
 
 	authRoutesV1 := router.Group("/api/v1/auth")
 	{
@@ -126,7 +137,7 @@ func main() {
 	}
 
 	protected := router.Group("/")
-	protected.Use(lib.AuthenticatedHandler)
+	protected.Use(middleware.AuthMiddleware())
 
 	{
 		protected.GET("/api/user/profile", controllers.GetProfile)
@@ -134,8 +145,8 @@ func main() {
 		protected.GET("/api/jobs/my", controllers.GetMyJobs)
 		protected.GET("/api/proposals/my", controllers.GetMyProposals)
 		protected.GET("/api/jobs/:id/proposal", controllers.GetJobProposals)
-
 		protected.POST("/api/user/verify-credentials", controllers.VerifyUserCredential)
+
 		protected.POST("/api/jobs/update/:id", controllers.UpdateJob)
 		protected.POST("/api/user/update", controllers.UpdateProfile)
 		protected.POST("/api/user/change-password", controllers.ChangePassword)
@@ -160,8 +171,6 @@ func main() {
 func ListRoutes(c *gin.Context, router *gin.Engine) {
 	routes := make([]APIRoute, 0)
 	for _, routeInfo := range router.Routes() {
-		// Exclude the static media route and the route list endpoint itself for clarity, if desired
-		// but generally, we include all public routes.
 		if routeInfo.Path != "/media/*filepath" && routeInfo.Path != "/api/routes" {
 			routes = append(routes, APIRoute{
 				Method: routeInfo.Method,

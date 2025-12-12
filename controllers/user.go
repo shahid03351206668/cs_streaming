@@ -104,13 +104,7 @@ func ChangePassword(c *gin.Context) {
 		CurrentPassword string `json:"current_password" binding:"required"`
 	}
 
-	user, _ := lib.GetUser(c)
-	if user == nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "Unauthorized",
-		})
-		return
-	}
+	user := c.MustGet("user").(models.User)
 
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -126,7 +120,7 @@ func ChangePassword(c *gin.Context) {
 		return
 	}
 
-	// Hash new password
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(body.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -151,16 +145,7 @@ func ChangePassword(c *gin.Context) {
 }
 
 func GetProfile(c *gin.Context) {
-	user, exists := lib.GetUser(c)
-
-	fmt.Println(user)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "User not authenticated",
-		})
-		return
-	}
-
+	user := c.MustGet("user").(models.User)
 	user.Password = ""
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
@@ -225,14 +210,7 @@ func UpdateProfile(c *gin.Context) {
 		Email       string `form:"email"`
 	}
 
-	user, exists := lib.GetUser(c)
-
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "User not authenticated",
-		})
-		return
-	}
+	user := c.MustGet("user").(models.User)
 
 	if err := c.ShouldBind(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -436,18 +414,8 @@ func VerifyUserCredential(c *gin.Context) {
 		return
 	}
 
-	user, exists := lib.GetUser(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "error",
-			"error":   "user not authenticated",
-		})
-		return
-	}
-
-	// Verify email if provided
+	user := c.MustGet("user").(models.User)
 	if body.Email != "" {
-		// Check if the email belongs to this user
 		if user.Email != body.Email {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"message": "error",

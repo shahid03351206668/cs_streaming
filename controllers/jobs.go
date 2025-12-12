@@ -3,13 +3,14 @@ package controllers
 import (
 	"errors"
 	"fmt"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"tasksy/db"
-	"tasksy/lib"
 	"tasksy/models"
 	"time"
 
@@ -153,8 +154,8 @@ func GetJobDetail(c *gin.Context) {
 
 func GetMyJobs(c *gin.Context) {
 	DB := db.DB
-	user := c.MustGet("user").(models.User)
 
+	user := c.MustGet("user").(models.User)
 	var jobs []models.JobPost
 	query := DB.Preload("CreatedBy").Preload("Category").Preload("JobMedia")
 
@@ -177,15 +178,26 @@ func GetMyJobs(c *gin.Context) {
 	})
 
 }
-
 func GetJobs(c *gin.Context) {
-	page := c.DefaultQuery("page", "1")
-	limit := c.DefaultQuery("limit", "10")
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+
+	if limit <= 0 {
+		limit = 10
+	}
+
+	if limit > 100 {
+		limit = 100
+	}
+
 	status := c.Query("status")
 	categoryID := c.Query("category_id")
 
-	var jobs []models.JobPost
-	query := db.DB.Preload("CreatedBy").Preload("Category").Preload("JobMedia")
+	query := db.DB.Model(&models.JobPost{})
 
 	if status != "" {
 		query = query.Where("status = ?", status)
@@ -196,16 +208,29 @@ func GetJobs(c *gin.Context) {
 	}
 
 	var total int64
-	query.Model(&models.JobPost{}).Count(&total)
-
-	offset := 0
-	if page != "1" {
-		offset = (10 * (int(page[0]) - '0')) - 10
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "error counting records",
+			"error":   err.Error(),
+		})
+		return
 	}
 
-	if err := query.Offset(offset).Limit(10).Order("created_at DESC").Find(&jobs).Error; err != nil {
+	offset := (page - 1) * limit
+	var jobs []models.JobPost
+
+	err := query.
+		Preload("CreatedBy").
+		Preload("Category").
+		Preload("JobMedia").
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&jobs).Error
+
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": "error",
+			"message": "error fetching data",
 			"error":   err.Error(),
 		})
 		return
@@ -219,9 +244,12 @@ func GetJobs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"data":    serializedJobs,
-		"total":   total,
-		"page":    page,
-		"limit":   limit,
+		"meta": gin.H{
+			"total": total,
+			"page":  page,
+			"limit": limit,
+			"pages": int(math.Ceil(float64(total) / float64(limit))),
+		},
 	})
 }
 
@@ -307,7 +335,6 @@ func CreateJob(c *gin.Context) {
 		}
 
 		for _, file := range files {
-			// Generate unique filename with proper extension
 			ext := filepath.Ext(file.Filename)
 			baseFileName := strings.TrimSuffix(file.Filename, ext)
 			baseFileName = filepath.Base(baseFileName)
@@ -370,16 +397,8 @@ func CreateJob(c *gin.Context) {
 }
 
 func UpdateJob(c *gin.Context) {
-	user, exists := lib.GetUser(c)
+	user := c.MustGet("user").(models.User)
 	id := c.Param("id")
-
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "error",
-			"error":   "invalid user",
-		})
-		return
-	}
 
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -406,7 +425,7 @@ func UpdateJob(c *gin.Context) {
 		return
 	}
 
-	// Check if user is the creator of the job post
+
 	if jobPost.CreatedByID != user.ID {
 		c.JSON(http.StatusForbidden, gin.H{
 			"message": "error",
@@ -673,5 +692,3 @@ func GetContracts(c *gin.Context) {
 		"data":    contract,
 	})
 }
-
-

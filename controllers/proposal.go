@@ -12,16 +12,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// CreateProposal - Freelancer submits a proposal/bid on a job
 func CreateProposal(c *gin.Context) {
-	user, exists := lib.GetUser(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "error",
-			"error":   "invalid user",
-		})
-		return
-	}
+	user := c.MustGet("user").(models.User)
 
 	var body struct {
 		JobPostID   string   `json:"job_post_id" binding:"required"`
@@ -283,17 +275,8 @@ func UpdateProposal(c *gin.Context) {
 	})
 }
 
-// WithdrawProposal - Freelancer withdraws their proposal
 func WithdrawProposal(c *gin.Context) {
-	user, exists := lib.GetUser(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "error",
-			"error":   "invalid user",
-		})
-		return
-	}
-
+	user := c.MustGet("user").(models.User)
 	proposalID := c.Param("id")
 	if proposalID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -359,14 +342,7 @@ func WithdrawProposal(c *gin.Context) {
 
 // DeleteProposal - Hard delete a proposal (only if pending/withdrawn)
 func DeleteProposal(c *gin.Context) {
-	user, exists := lib.GetUser(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "error",
-			"error":   "invalid user",
-		})
-		return
-	}
+	user := c.MustGet("user").(models.User)
 
 	proposalID := c.Param("id")
 	if proposalID == "" {
@@ -433,14 +409,7 @@ func DeleteProposal(c *gin.Context) {
 
 // GetProposal - Get single proposal details
 func GetProposal(c *gin.Context) {
-	user, exists := lib.GetUser(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "error",
-			"error":   "invalid user",
-		})
-		return
-	}
+	user := c.MustGet("user").(models.User)
 
 	proposalID := c.Param("id")
 	if proposalID == "" {
@@ -489,14 +458,7 @@ func GetProposal(c *gin.Context) {
 
 // GetMyProposals - Get all proposals by the logged-in freelancer
 func GetMyProposals(c *gin.Context) {
-	user, exists := lib.GetUser(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "error",
-			"error":   "invalid user",
-		})
-		return
-	}
+	user := c.MustGet("user").(models.User)
 
 	status := c.Query("status")
 	query := db.DB.Preload("JobPost").
@@ -525,15 +487,7 @@ func GetMyProposals(c *gin.Context) {
 }
 
 func GetJobProposals(c *gin.Context) {
-	user, exists := lib.GetUser(c)
-
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "error",
-			"error":   "invalid user",
-		})
-		return
-	}
+	user := c.MustGet("user").(models.User)
 
 	jobPostID := c.Param("id")
 

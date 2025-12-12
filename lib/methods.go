@@ -11,5 +11,4 @@ func MakePassword(value string) string {
 		return ""
 	}
 	return string(hashed)
-
 }

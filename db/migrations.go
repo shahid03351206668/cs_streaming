@@ -52,7 +52,7 @@ func ApplyMigrations() error {
 	modelsToMigrate := []interface{}{
 		&models.User{},
 		&models.Role{},
-		&models.UserRoles{},
+		&models.Permission{},
 		&models.Category{},
 		&models.JobPost{},
 		&models.JobMedia{},

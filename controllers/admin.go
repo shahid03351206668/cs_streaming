@@ -23,8 +23,9 @@ func GetUsers(c *gin.Context) {
 	}
 
 	var users []UserResponse
+	DB := db.DB
 
-	if err := db.DB.Model(&models.User{}).
+	if err := DB.Model(&models.User{}).
 		Select("id", "first_name", "last_name", "email", "phone_number", "created_at", "updated_at").
 		Find(&users).
 		Error; err != nil {
@@ -45,17 +46,15 @@ func GetUsers(c *gin.Context) {
 	})
 }
 
-
 func ListRecords(c *gin.Context) {
 	model := c.Param("model")
 	if model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
-			"error": "model is missing in the query params",
+			"error":   "model is missing in the query params",
 		})
 		return
 	}
-
 
 }
 

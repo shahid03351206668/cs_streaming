@@ -2,13 +2,12 @@ package api
 
 import (
 	"fmt"
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"net/http"
 	"strings"
 	"tasksy/db"
 	"tasksy/models"
-
-	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 type QueryParams struct {
@@ -31,7 +30,7 @@ type ListResponse struct {
 
 var ModelRegistry = map[string]interface{}{
 	"user":     &models.User{},
-	"job_post":     &models.JobPost{},
+	"job_post": &models.JobPost{},
 	"category": &models.Category{},
 	"contract": &models.Contract{},
 }
