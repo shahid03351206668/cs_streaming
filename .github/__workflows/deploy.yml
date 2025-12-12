@@ -17,7 +17,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.24'
+          go-version: '1.25.5'
 
       - name: Install Dependencies
         run: go mod tidy
@@ -27,7 +27,7 @@ jobs:
 
       - name: Build Project
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o cs_streaming main.go
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o server main.go
           ls -lah
       
       - name: Copy Binary to VPS
@@ -35,16 +35,16 @@ jobs:
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
-          password: ${{ secrets.VPS_SSH_PASSWORD }}
-          source: "cs_streaming"
-          target: "/home/frappe/cs_streaming/"
+          key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          source: "server"
+          target: "/home/ubuntu/tasksy-server"
 
       - name: Restart Systemd Service on VPS
         uses: appleboy/ssh-action@v0.1.10
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
-          password: ${{ secrets.VPS_SSH_PASSWORD }}
+          key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           script: |
-            echo '${{ secrets.VPS_SSH_PASSWORD }}' | sudo -S systemctl restart cs_streaming.service
-            echo '${{ secrets.VPS_SSH_PASSWORD }}' | sudo -S systemctl status cs_streaming.service --no-pager
+            sudo systemctl restart tasksy-server.service
+            sudo systemctl status tasksy-server.service --no-pager
