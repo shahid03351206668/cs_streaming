@@ -1,17 +1,18 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"tasksy/api"
+	"tasksy/config"
 	"tasksy/controllers"
 	"tasksy/db"
+	"tasksy/internal/modules/chat"
 	"tasksy/middleware"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
 )
 
 type APIRoute struct {
@@ -19,38 +20,20 @@ type APIRoute struct {
 	Path   string `json:"path"`
 }
 
-type Config struct {
-	Host        string
-	Port        string
-	DatabaseURI string
-}
-
-func LoadConfig() Config {
-	godotenv.Load()
-
-	host := os.Getenv("SERVER_HOST")
-	port := os.Getenv("SERVER_PORT")
-
-	if host == "" {
-		host = "localhost"
-	}
-
-	if port == "" {
-		port = "8080"
-	}
-
-	db_uri := os.Getenv("DB_URI")
-	
-	return Config{
-		Host:        host,
-		Port:        port,
-		DatabaseURI: db_uri,
-	}
-}
-
 func SetupRouter() *gin.Engine {
 	router := gin.Default()
-	router.Use(cors.Default())
+	config := cors.DefaultConfig()
+
+	config.AllowAllOrigins = true
+	config.AllowHeaders = []string{
+		"Origin",
+		"Content-Length",
+		"Content-Type",
+		"Authorization",
+	}
+
+	config.AllowMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+	router.Use(cors.New(config))
 	router.Static("/media", "./media")
 	return router
 }
@@ -70,7 +53,6 @@ func MakeRoutes(router *gin.Engine) {
 
 	authRoutesV1 := router.Group("/api/v1/auth")
 	{
-		// authRoutesV1.POST("/register", controllers.RegisterUserV1)
 		authRoutesV1.POST("/login", controllers.LoginControllerV1)
 	}
 
@@ -84,19 +66,30 @@ func MakeRoutes(router *gin.Engine) {
 		authRoutes.POST("/google-auth", controllers.GoogleSignInFirebaseController)
 	}
 
-	protectedRoutes := router.Group("/")
-	protectedRoutes.Use(middleware.AuthMiddleware())
+	jobRoutes := router.Group("/api/jobs")
+	jobRoutes.Use(middleware.AuthMiddleware())
+
 	{
-		protectedRoutes.GET("/api/jobs/:id/contracts", controllers.GetContracts)
-		protectedRoutes.POST("/api/jobs/create", controllers.CreateJob)
+		jobRoutes.GET("/my", controllers.GetMyJobs)
+		jobRoutes.GET("/proposals/my", controllers.GetMyProposals)
+		jobRoutes.GET("/:id/contract", controllers.GetContracts)
+		jobRoutes.GET("/:id/proposal", controllers.GetJobProposals)
+		jobRoutes.POST("/create", controllers.CreateJob)
+		jobRoutes.POST("/update/:id", controllers.UpdateJob)
+
+	}
+	proposalRoutes := router.Group("/api/proposals")
+	proposalRoutes.Use(middleware.AuthMiddleware())
+	{
+		proposalRoutes.POST("/:id/decision", controllers.ManageProposalDecision)
 	}
 }
 
 func main() {
-	config := LoadConfig()
+	appConfig := config.LoadConfig()
 	router := SetupRouter()
 
-	if err := db.ConnectDB(config.DatabaseURI); err != nil {
+	if err := db.ConnectDB(appConfig.Database.URI); err != nil {
 		log.Fatalf("failed to connect to database: %v", err)
 		return
 	}
@@ -140,27 +133,43 @@ func main() {
 	protected.Use(middleware.AuthMiddleware())
 
 	{
+		protected.GET("/api/contracts/:id/review", controllers.AddReview)
 		protected.GET("/api/user/profile", controllers.GetProfile)
 		protected.GET("/api/proposals/:id", controllers.GetProposal)
-		protected.GET("/api/jobs/my", controllers.GetMyJobs)
-		protected.GET("/api/proposals/my", controllers.GetMyProposals)
-		protected.GET("/api/jobs/:id/proposal", controllers.GetJobProposals)
 		protected.POST("/api/user/verify-credentials", controllers.VerifyUserCredential)
 
-		protected.POST("/api/jobs/update/:id", controllers.UpdateJob)
 		protected.POST("/api/user/update", controllers.UpdateProfile)
 		protected.POST("/api/user/change-password", controllers.ChangePassword)
-		protected.POST("/api/proposals", controllers.CreateProposal)
+		protected.POST("/api/job/send-proposal", controllers.CreateProposal)
 
 		protected.POST("/api/proposals/:id/withdraw", controllers.WithdrawProposal)
 		protected.PUT("/api/proposals/:id", controllers.UpdateProposal)
 		protected.DELETE("/api/proposals/:id", controllers.DeleteProposal)
 
 		protected.POST("/api/proposals/create-contract", controllers.CreateContract)
+		protected.POST("/api/contracts/:id/complete", controllers.CompleteContract)
+		protected.GET("/api/contracts/list", controllers.GetContracts)
 		protected.GET("/api/proposals/get-contract", controllers.GetContracts)
 	}
 
-	address := config.Host + ":" + config.Port
+	fmt.Println("registering chat routes")
+	chatRepo := chat.NewRepository(db.DB)
+	chatService := chat.NewService(chatRepo, appConfig)
+	chatHandler := chat.NewHandler(chatService)
+	chatRoutes := router.Group("/chat")
+
+	router.GET("/chat/ws", chatHandler.WSHandler)
+
+	chatRoutes.Use(middleware.AuthMiddleware())
+	{
+		chatRoutes.POST("/init", chatHandler.InitiateChat)
+		chatRoutes.POST("/:id/message", chatHandler.SendMessage)
+		chatRoutes.GET("/inbox", chatHandler.GetInbox)
+		chatRoutes.GET("/:id/history", chatHandler.GetChatHistory)
+
+	}
+
+	address := appConfig.Server.Addr
 	log.Printf("Server starting on address %s", address)
 	if err := router.Run(address); err != nil {
 		log.Fatalf("failed to run server: %v", err)

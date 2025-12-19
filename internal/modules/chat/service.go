@@ -1,0 +1,242 @@
+package chat
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"tasksy/config"
+	"tasksy/models"
+	"tasksy/utils"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+)
+
+type Service interface {
+	InitiateChat(userA, userB string) (*models.ChatConversation, error)
+	SendMessage(senderID, convID, content, msgType string, files []*multipart.FileHeader) (*models.ChatMessage, error)
+	GetInbox(userID string) ([]models.ChatConversation, error)
+	GetChatHistory(conversationID string, page, limit int) ([]models.ChatMessage, error)
+	RegisterClient(client *Client)
+	UnregisterClient(client *Client)
+}
+
+type chatService struct {
+	repo Repository
+	// In-Memory Connection Store
+	// UserID -> *Client
+	clients   map[string]*Client
+	mu        sync.RWMutex
+	s3Client  *s3.Client
+	appConfig *config.Config
+}
+
+func NewService(repo Repository, appConfig *config.Config) Service {
+
+	creds := credentials.NewStaticCredentialsProvider(
+		appConfig.AWS.AccessKeyID,
+		appConfig.AWS.SecretAccessKey,
+		"",
+	)
+	cfg, err := awsconfig.LoadDefaultConfig(context.TODO(),
+		awsconfig.WithRegion(appConfig.AWS.Region),
+		awsconfig.WithCredentialsProvider(creds),
+	)
+
+	var s3Client *s3.Client
+	if err == nil {
+		s3Client = s3.NewFromConfig(cfg)
+	} else {
+		fmt.Printf("AWS Config Error: %v\n", err)
+	}
+	return &chatService{
+		repo:      repo,
+		clients:   make(map[string]*Client),
+		s3Client:  s3Client,
+		appConfig: appConfig,
+	}
+}
+
+func (s *chatService) uploadToS3(file io.Reader, filename, mimeType string) (string, error) {
+	if s.s3Client == nil {
+		return "", fmt.Errorf("S3 client not initialized")
+	}
+
+	region := s.appConfig.AWS.Region
+	if region == "" {
+		region = "eu-north-1"
+	}
+
+	key := fmt.Sprintf("chat/%d_%s", time.Now().UnixNano(), filename)
+	bucketName := s.appConfig.AWS.BucketName
+
+	_, err := s.s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket:      aws.String(bucketName),
+		Key:         aws.String(key),
+		Body:        file,
+		ContentType: aws.String(mimeType),
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	if s.appConfig.AWS.BucketURL != "" {
+		baseURL := strings.TrimRight(s.appConfig.AWS.BucketURL, "/")
+		return fmt.Sprintf("%s/%s", baseURL, key), nil
+	}
+
+	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucketName, region, key), nil
+}
+
+func (s *chatService) InitiateChat(userA, userB string) (*models.ChatConversation, error) {
+	existing, err := s.repo.FindPrivateChat(userA, userB)
+
+	if err == nil {
+		return existing, nil
+	}
+
+	return s.repo.CreateConversation([]string{userA, userB})
+}
+
+func (s *chatService) SendMessage(senderID, convID, content, msgType string, files []*multipart.FileHeader) (*models.ChatMessage, error) {
+	fmt.Println("start of send message service")
+	sender, err := s.repo.GetUserByID(senderID)
+	if err != nil {
+		return nil, err
+	}
+
+	var attachments []models.ChatAttachment
+	fmt.Println("files")
+	fmt.Println(files)
+	if len(files) > 0 {
+		msgType = "attachment"
+
+		for _, fileHeader := range files {
+			src, err := fileHeader.Open()
+			if err != nil {
+				return nil, err
+			}
+
+			ext := filepath.Ext(fileHeader.Filename)
+			tempFile, err := os.CreateTemp("", "upload-*"+ext)
+			if err != nil {
+				src.Close()
+				return nil, err
+			}
+			if _, err := io.Copy(tempFile, src); err != nil {
+				src.Close()
+				tempFile.Close()
+				return nil, err
+			}
+
+			src.Close()
+			tempFilePath := tempFile.Name()
+			tempFile.Close()
+
+			defer os.Remove(tempFilePath)
+
+			mimeType := fileHeader.Header.Get("Content-Type")
+			fileType := utils.GetFileType(mimeType)
+			fileSize := fileHeader.Size
+			duration := 0
+
+			if fileType == "video" || fileType == "audio" {
+				duration = utils.GetMediaDuration(tempFilePath)
+			}
+
+			// D. Upload to S3 (Using the Temp File)
+			// We open the temp file to upload it
+			uploadFile, err := os.Open(tempFilePath)
+			if err != nil {
+				return nil, err
+			}
+
+			fileURL, err := s.uploadToS3(uploadFile, fileHeader.Filename, mimeType)
+			uploadFile.Close() // Close after upload
+
+			if err != nil {
+				return nil, fmt.Errorf("failed to upload file %s: %v", fileHeader.Filename, err)
+			}
+
+			attachments = append(attachments, models.ChatAttachment{
+				URL:      fileURL,
+				FileType: fileType,
+				FileName: fileHeader.Filename,
+				FileSize: fileSize,
+				Duration: duration,
+			})
+		}
+	}
+
+	msg := &models.ChatMessage{
+		ConversationID: convID,
+		SenderID:       senderID,
+		Content:        content,
+		Type:           msgType,
+		IsRead:         false,
+		Sender:         *sender,
+		Attachments:    attachments,
+	}
+
+	if err := s.repo.SaveMessage(msg); err != nil {
+		return nil, err
+	}
+
+	go func() {
+		participants, err := s.repo.GetParticipantIDs(convID)
+		if err != nil {
+			return
+		}
+
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+
+		for _, uid := range participants {
+			if client, isOnline := s.clients[uid]; isOnline {
+				select {
+				case client.Send <- msg: // Send the specific message struct
+					// Success
+				default:
+					// Client buffer full or disconnected
+				}
+			}
+		}
+	}()
+
+	return msg, nil
+}
+func (s *chatService) GetInbox(userID string) ([]models.ChatConversation, error) {
+	return s.repo.GetUserConversations(userID)
+}
+
+func (s *chatService) RegisterClient(c *Client) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clients[c.UserID] = c
+}
+
+func (s *chatService) UnregisterClient(c *Client) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.clients[c.UserID]; ok {
+		delete(s.clients, c.UserID)
+		close(c.Send)
+	}
+}
+
+func (s *chatService) GetChatHistory(conversationID string, page, limit int) ([]models.ChatMessage, error) {
+	if page < 1 {
+		page = 1
+	}
+	offset := (page - 1) * limit
+	return s.repo.GetHistory(conversationID, limit, offset)
+}

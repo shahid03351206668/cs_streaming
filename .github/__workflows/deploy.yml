@@ -11,16 +11,15 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
-
+        uses: actions/checkout@v4 
 
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.25.5'
+          go-version: '1.23'
 
       - name: Install Dependencies
-        run: go mod tidy
+        run: go mod download
 
       - name: Run Tests
         run: go test ./... -v
@@ -36,8 +35,8 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
-          source: "server"
-          target: "/home/ubuntu/tasksy-server"
+          source: "tasksy-server"
+          target: "/home/ubuntu/" 
 
       - name: Restart Systemd Service on VPS
         uses: appleboy/ssh-action@v0.1.10
@@ -45,6 +44,11 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          # 1. Move binary to final location (optional, keeps home clean)
+          # 2. Give it executable permissions
+          # 3. Restart service
           script: |
+            mv /home/ubuntu/tasksy-server /home/ubuntu/tasksy-server-bin
+            chmod +x /home/ubuntu/tasksy-server-bin
             sudo systemctl restart tasksy-server.service
             sudo systemctl status tasksy-server.service --no-pager

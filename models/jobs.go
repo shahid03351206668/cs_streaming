@@ -28,17 +28,21 @@ type Category struct {
 
 type JobPost struct {
 	BaseModel
-	CreatedByID string     `gorm:"not null;index" json:"created_by_id"`
-	CreatedBy   User       `gorm:"foreignKey:CreatedByID;constraint:OnDelete:CASCADE" json:"created_by"`
-	CategoryID  string     `gorm:"index" json:"category_id"`
-	Category    Category   `gorm:"foreignKey:CategoryID;constraint:OnDelete:SET NULL" json:"category"`
-	Title       string     `gorm:"type:varchar(255);not null" json:"title"`
-	Description string     `gorm:"type:text;not null" json:"description"`
-	Budget      float64    `gorm:"type:decimal(10,2)" json:"budget"`
-	OpenBudget  bool       `gorm:"default:false" json:"open_budget"`
-	Address     string     `gorm:"type:varchar(500)" json:"address"`
-	Status      string     `gorm:"type:varchar(50);default:'open';index" json:"status"`
-	JobMedia    []JobMedia `gorm:"foreignKey:JobID;constraint:OnDelete:CASCADE" json:"job_media,omitempty"`
+
+	CreatedBy User     `gorm:"foreignKey:CreatedByID;constraint:OnDelete:CASCADE" json:"created_by"`
+	Category  Category `gorm:"foreignKey:CategoryID;constraint:OnDelete:SET NULL" json:"category"`
+
+	CreatedByID string  `gorm:"type:string;not null;index" json:"created_by_id"`
+	CategoryID  string  `gorm:"index" json:"category_id"`
+	Title       string  `gorm:"type:varchar(255);not null" json:"title"`
+	Description string  `gorm:"type:text;not null" json:"description"`
+	Budget      float64 `gorm:"type:decimal(10,2)" json:"budget"`
+	OpenBudget  bool    `gorm:"default:false" json:"open_budget"`
+	Address     string  `gorm:"type:varchar(500)" json:"address"`
+	Status      string  `gorm:"type:varchar(50);default:'open';index" json:"status"`
+
+	JobMedia  []JobMedia `gorm:"foreignKey:JobID;constraint:OnDelete:CASCADE" json:"job_media,omitempty"`
+	Proposals []Proposal `gorm:"foreignKey:JobPostID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 type JobMedia struct {
@@ -122,6 +126,10 @@ type Contract struct {
 	Status       string    `gorm:"type:varchar(50);default:'pending';index" json:"status"`
 	Terms        string    `gorm:"type:text" json:"terms"`
 
+	ClientCompleted     bool       `gorm:"default:false" json:"client_completed"`
+	FreelancerCompleted bool       `gorm:"default:false" json:"freelancer_completed"`
+	CompletedAt         *time.Time `json:"completed_at,omitempty"`
+
 	Payments []Payment `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"payments,omitempty"`
 }
 
@@ -144,4 +152,22 @@ func (Contract) TableName() string {
 
 func (Payment) TableName() string {
 	return "payments"
+}
+
+type Review struct {
+	BaseModel
+	ContractID string   `gorm:"not null;index:idx_review_contract_reviewer" json:"contract_id"`
+	Contract   Contract `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"-"`
+	// author
+	ReviewerID string `gorm:"not null;index:idx_review_contract_reviewer" json:"reviewer_id"`
+	Reviewer   User   `gorm:"foreignKey:ReviewerID;constraint:OnDelete:CASCADE" json:"reviewer"`
+	// the user who get the review
+	TargetID   string `gorm:"not null;index" json:"target_id"`
+	TargetUser User   `gorm:"foreignKey:TargetID;constraint:OnDelete:CASCADE" json:"target_user"`
+	Rating     int    `gorm:"not null;check:rating >= 1 AND rating <= 5" json:"rating"`
+	Comment    string `gorm:"type:text" json:"comment"`
+}
+
+func (Review) TableName() string {
+	return "reviews"
 }

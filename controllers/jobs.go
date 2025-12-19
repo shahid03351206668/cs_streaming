@@ -157,7 +157,7 @@ func GetMyJobs(c *gin.Context) {
 
 	user := c.MustGet("user").(models.User)
 	var jobs []models.JobPost
-	query := DB.Preload("CreatedBy").Preload("Category").Preload("JobMedia")
+	query := DB.Preload("CreatedBy").Preload("Category").Preload("JobMedia").Preload("Proposals")
 
 	if err := query.Model(&models.JobPost{}).Where("created_by_id = ?", user.ID).Order("created_at DESC").Find(&jobs).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -166,7 +166,6 @@ func GetMyJobs(c *gin.Context) {
 		})
 		return
 	}
-
 	jobsList := make([]JobPostResponse, 0, len(jobs))
 	for _, job := range jobs {
 		jobsList = append(jobsList, serializeJobPost(job))
@@ -223,6 +222,7 @@ func GetJobs(c *gin.Context) {
 		Preload("CreatedBy").
 		Preload("Category").
 		Preload("JobMedia").
+		Where("status = ?", "open").
 		Order("created_at DESC").
 		Limit(limit).
 		Offset(offset).
@@ -408,7 +408,6 @@ func UpdateJob(c *gin.Context) {
 		return
 	}
 
-	// Find the job post - FIXED: Correct GORM syntax
 	jobPost := models.JobPost{}
 	if err := db.DB.Where("id = ?", id).First(&jobPost).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -424,7 +423,6 @@ func UpdateJob(c *gin.Context) {
 		})
 		return
 	}
-
 
 	if jobPost.CreatedByID != user.ID {
 		c.JSON(http.StatusForbidden, gin.H{
@@ -479,7 +477,6 @@ func UpdateJob(c *gin.Context) {
 		}
 	}
 
-	// Validate category if provided
 	if body.CategoryID != "" {
 		category := models.Category{}
 		if err := db.DB.Where("id = ?", body.CategoryID).First(&category).Error; err != nil {
@@ -491,7 +488,7 @@ func UpdateJob(c *gin.Context) {
 				return
 			}
 		}
-		// Check if category is disabled
+
 		if category.Disable {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"message": "error",
@@ -516,7 +513,6 @@ func UpdateJob(c *gin.Context) {
 		updates["budget"] = body.Budget
 	}
 
-	// Always update OpenBudget if it's part of the request
 	updates["open_budget"] = body.OpenBudget
 
 	if body.Address != "" {
@@ -539,7 +535,6 @@ func UpdateJob(c *gin.Context) {
 		// 	db.DB.Model(&models.Contract{}).
 		// 		Where("job_post_id = ? AND status = ?", id, models.ContractStatusActive).
 		// 		Count(&activeContracts)
-
 		// 	if activeContracts > 0 {
 		// 		c.JSON(http.StatusBadRequest, gin.H{
 		// 			"message": "error",
@@ -592,6 +587,11 @@ func UpdateJob(c *gin.Context) {
 	})
 }
 
+func DeleteJob(c *gin.Context) {
+
+	c.JSON(http.StatusOK, gin.H{"message": "success"})
+}
+
 func CreateContract(c *gin.Context) {
 	DB := *db.DB
 
@@ -612,7 +612,7 @@ func CreateContract(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "message": "error"})
 		return
 	}
 
@@ -625,7 +625,7 @@ func CreateContract(c *gin.Context) {
 		return
 	}
 
-	if proposal.JobPost.CreatedBy.ID != user.ID {
+	if proposal.JobPost.CreatedByID != user.ID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Only job creator can create contract", "message": "error"})
 		return
 	}
@@ -637,7 +637,7 @@ func CreateContract(c *gin.Context) {
 
 	var existingContract models.Contract
 
-	if err := DB.Where(&existingContract, "proposal_id = ?", proposal.ID).Error; err == nil {
+	if DB.First(&existingContract, "proposal_id = ?", proposal.ID).RowsAffected > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Contract already exists for this proposal",
 			"message": "error"})
 		return
@@ -646,7 +646,7 @@ func CreateContract(c *gin.Context) {
 	contract := models.Contract{
 		JobPostID:    proposal.JobPost.ID,
 		ProposalID:   proposal.ID,
-		ClientID:     proposal.JobPost.CreatedBy.ID,
+		ClientID:     user.ID,
 		FreelancerID: proposal.FreelancerID,
 		Title:        body.Title,
 		Description:  body.Description,
@@ -675,20 +675,242 @@ func CreateContract(c *gin.Context) {
 	})
 }
 
-func GetContracts(c *gin.Context) {
-	id := c.Param("id")
+func CompleteContract(c *gin.Context) {
+	db := db.DB
+	user := c.MustGet("user").(models.User)
+	contractID := c.Param("id")
+
+	tx := db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
 
 	var contract models.Contract
-	if err := db.DB.Where(&contract, "job_post_id = ?", id).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": "error",
-			"error":   err.Error(),
+	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&contract, "id = ?", contractID).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusNotFound, gin.H{"error": "Contract not found", "message": "error"})
+		return
+	}
+
+	isClient := contract.ClientID == user.ID
+	isFreelancer := contract.FreelancerID == user.ID
+
+	if !isClient && !isFreelancer {
+		tx.Rollback()
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are not a party to this contract"})
+		return
+	}
+
+	if contract.Status == models.ContractStatusCompleted {
+		tx.Rollback()
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Contract is already completed"})
+		return
+	}
+
+	if contract.Status == models.ContractStatusCancelled || contract.Status == models.ContractStatusTerminated {
+		tx.Rollback()
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot complete a cancelled or terminated contract"})
+		return
+	}
+
+	if isClient {
+		contract.ClientCompleted = true
+	}
+	if isFreelancer {
+		contract.FreelancerCompleted = true
+	}
+
+	statusMessage := "Marked as completed. Waiting for the other party."
+
+	if contract.ClientCompleted && contract.FreelancerCompleted {
+		now := time.Now()
+		contract.Status = models.ContractStatusCompleted
+		contract.CompletedAt = &now
+		statusMessage = "Contract fully completed"
+
+		if err := tx.Model(&models.JobPost{}).Where("id = ?", contract.JobPostID).
+			Update("status", models.JobStatusCompleted).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update job status"})
+			return
+		}
+
+		// TODO: This is where you would trigger the Payment Release logic
+		// ReleaseEscrowFunds(contract.ID)
+	}
+
+	if err := tx.Save(&contract).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update contract"})
+		return
+	}
+
+	tx.Commit()
+	c.JSON(http.StatusOK, gin.H{
+		"message": statusMessage,
+		"contract": gin.H{
+			"id":                   contract.ID,
+			"status":               contract.Status,
+			"client_completed":     contract.ClientCompleted,
+			"freelancer_completed": contract.FreelancerCompleted,
+			"completed_at":         contract.CompletedAt,
+		},
+	})
+}
+
+// func GetContracts
+
+func GetContracts(c *gin.Context) {
+	dbConn := db.DB
+	user := c.MustGet("user").(models.User)
+
+	// 1. Define Query Parameters
+	var queryParams struct {
+		Page   int    `form:"page,default=1"`
+		Limit  int    `form:"limit,default=10"`
+		Status string `form:"status"` // filter by: active, pending, completed, etc.
+		Role   string `form:"role"`   // filter by: client, freelancer
+	}
+
+	if err := c.ShouldBindQuery(&queryParams); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid query parameters"})
+		return
+	}
+
+	// 2. Build the Query
+	var contracts []models.Contract
+	var total int64
+
+	// Start with the base model
+	query := dbConn.Model(&models.Contract{}).Preload("Freelancer").Preload("Proposal")
+
+	// 3. Security Scope: Only show contracts related to this user
+	// Logic: (client_id = user AND role != freelancer) OR (freelancer_id = user AND role != client)
+	// This allows filtering by "As Client" or "As Freelancer" if the user does both.
+
+	switch queryParams.Role {
+	case "client":
+		query = query.Where("client_id = ?", user.ID)
+	case "freelancer":
+		query = query.Where("freelancer_id = ?", user.ID)
+	default:
+		// If no role specified, show ALL contracts where user is EITHER party
+		query = query.Where("client_id = ? OR freelancer_id = ?", user.ID, user.ID)
+	}
+
+	// 4. Apply Status Filter (Optional)
+	if queryParams.Status != "" {
+		query = query.Where("status = ?", queryParams.Status)
+	}
+
+	// 5. Count Total (before pagination)
+	query.Count(&total)
+
+	// 6. Pagination & Preloading
+	offset := (queryParams.Page - 1) * queryParams.Limit
+
+	err := query.
+		Limit(queryParams.Limit).
+		Offset(offset).
+		Order("created_at desc"). // Newest contracts first
+		Preload("JobPost").       // Load Job details
+		Preload("Client").        // Load Client profile
+		Preload("Freelancer").    // Load Freelancer profile
+		Find(&contracts).Error
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch contracts"})
+		return
+	}
+
+	// 7. Response
+	c.JSON(http.StatusOK, gin.H{
+		"data": contracts,
+		"meta": gin.H{
+			"current_page": queryParams.Page,
+			"limit":        queryParams.Limit,
+			"total":        total,
+			"total_pages":  int(math.Ceil(float64(total) / float64(queryParams.Limit))),
+		},
+	})
+}
+
+// Route: POST /api/contracts/:id/review
+func AddReview(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	contractID := c.Param("id")
+
+	var body struct {
+		Rating  int    `json:"rating" binding:"required,min=1,max=5"`
+		Comment string `json:"comment"`
+	}
+
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid input. Rating must be between 1 and 5.",
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "success",
-		"data":    contract,
+	var contract models.Contract
+	if err := db.DB.Where("id = ?", contractID).First(&contract).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Contract not found"})
+		return
+	}
+
+	var targetID string
+	if user.ID == contract.ClientID {
+		targetID = contract.FreelancerID
+	} else if user.ID == contract.FreelancerID {
+		targetID = contract.ClientID
+	} else {
+
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "unauthorized access",
+		})
+		return
+	}
+
+	if contract.Status != models.ContractStatusCompleted {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "You can only review completed contracts. Current status: " + contract.Status,
+		})
+		return
+	}
+
+	var existingReview models.Review
+	if err := db.DB.Where("contract_id = ? AND reviewer_id = ?", contract.ID, user.ID).
+		First(&existingReview).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{ // 409 Conflict
+			"error": "You have already submitted a review for this contract",
+		})
+		return
+	}
+
+	review := models.Review{
+		ContractID: contract.ID,
+		ReviewerID: user.ID,
+		TargetID:   targetID,
+		Rating:     body.Rating,
+		Comment:    body.Comment,
+	}
+
+	if err := db.DB.Create(&review).Error; err != nil {
+
+		if strings.Contains(err.Error(), "idx_review_contract_reviewer") {
+			c.JSON(http.StatusConflict, gin.H{"error": "You have already submitted a review for this contract"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to save review",
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Review submitted successfully",
+		"data":    review,
 	})
 }

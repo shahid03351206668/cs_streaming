@@ -16,7 +16,7 @@ func ConnectDB(dsn string) error {
 	var err error
 
 	dbConfig := &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: logger.Default.LogMode(logger.Silent),
 	}
 
 	DB, err = gorm.Open(postgres.Open(dsn), dbConfig)
@@ -60,6 +60,10 @@ func ApplyMigrations() error {
 		&models.ProposalAttachment{},
 		&models.Contract{},
 		&models.Payment{},
+		&models.ChatConversation{},
+		&models.ChatMessage{},
+		&models.ChatAttachment{},
+		&models.ChatParticipant{},
 	}
 
 	if err := DB.AutoMigrate(modelsToMigrate...); err != nil {

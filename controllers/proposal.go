@@ -2,10 +2,8 @@ package controllers
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"tasksy/db"
-	"tasksy/lib"
 	"tasksy/models"
 
 	"github.com/gin-gonic/gin"
@@ -16,14 +14,14 @@ func CreateProposal(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
 	var body struct {
-		JobPostID   string   `json:"job_post_id" binding:"required"`
-		CoverLetter string   `json:"cover_letter" binding:"required"`
-		BidAmount   float64  `json:"bid_amount" binding:"required,gt=0"`
-		Duration    int      `json:"duration" binding:"required,gt=0"` // in days
-		Attachments []string `json:"attachments"`                      // URLs of uploaded files
+		JobPostID   string   `form:"job_post_id" binding:"required"`
+		CoverLetter string   `form:"cover_letter" binding:"required"`
+		BidAmount   float64  `form:"bid_amount" binding:"required,gt=0"`
+		Duration    int      `form:"duration" binding:"required,gt=0"`
+		Attachments []string `form:"attachments"`
 	}
 
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := c.ShouldBind(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
 			"error":   err.Error(),
@@ -31,7 +29,6 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 
-	// Check if job post exists and is open
 	jobPost := models.JobPost{}
 	if err := db.DB.Where("id = ?", body.JobPostID).First(&jobPost).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -66,7 +63,6 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 
-	// Check if user already submitted a proposal for this job
 	existingProposal := models.Proposal{}
 	if err := db.DB.Where("job_post_id = ? AND freelancer_id = ?", body.JobPostID, user.ID).
 		First(&existingProposal).Error; err == nil {
@@ -108,13 +104,11 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 
-	// Add attachments if provided
 	if len(body.Attachments) > 0 {
 		for _, attachmentURL := range body.Attachments {
 			attachment := models.ProposalAttachment{
 				ProposalID: proposal.ID,
 				URL:        attachmentURL,
-				// You can extract filename, size, type from URL or request
 			}
 			if err := tx.Create(&attachment).Error; err != nil {
 				tx.Rollback()
@@ -135,7 +129,6 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 
-	fmt.Println(proposal.ID)
 	if err := db.DB.Preload("JobPost").
 		Preload("JobPost.CreatedBy").
 		Preload("ProposalAttachments").
@@ -156,16 +149,9 @@ func CreateProposal(c *gin.Context) {
 }
 
 func UpdateProposal(c *gin.Context) {
-	user, exists := lib.GetUser(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "error",
-			"error":   "invalid user",
-		})
-		return
-	}
-
+	user := c.MustGet("user").(models.User)
 	proposalID := c.Param("id")
+
 	if proposalID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
@@ -174,9 +160,11 @@ func UpdateProposal(c *gin.Context) {
 		return
 	}
 
-	// Find proposal
+	DB := db.DB
+
 	proposal := models.Proposal{}
-	if err := db.DB.Where("id = ?", proposalID).First(&proposal).Error; err != nil {
+
+	if err := DB.Where("id = ?", proposalID).First(&proposal).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{
 				"message": "error",
@@ -184,6 +172,7 @@ func UpdateProposal(c *gin.Context) {
 			})
 			return
 		}
+
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "error",
 			"error":   "failed to fetch proposal",
@@ -199,7 +188,6 @@ func UpdateProposal(c *gin.Context) {
 		return
 	}
 
-	// Only allow updates if proposal is still pending
 	if proposal.Status != models.ProposalStatusPending {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
@@ -223,7 +211,6 @@ func UpdateProposal(c *gin.Context) {
 		return
 	}
 
-	// Prepare updates
 	updates := make(map[string]interface{})
 
 	if body.CoverLetter != "" {
@@ -303,7 +290,6 @@ func WithdrawProposal(c *gin.Context) {
 		return
 	}
 
-	// Check ownership
 	if proposal.FreelancerID != user.ID {
 		c.JSON(http.StatusForbidden, gin.H{
 			"message": "error",
@@ -312,7 +298,6 @@ func WithdrawProposal(c *gin.Context) {
 		return
 	}
 
-	// Can only withdraw pending or shortlisted proposals
 	if proposal.Status != models.ProposalStatusPending &&
 		proposal.Status != models.ProposalStatusShortlisted {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -322,7 +307,6 @@ func WithdrawProposal(c *gin.Context) {
 		return
 	}
 
-	// Update status to withdrawn
 	if err := db.DB.Model(&proposal).Update("status", models.ProposalStatusWithdrawn).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "error",
@@ -456,13 +440,13 @@ func GetProposal(c *gin.Context) {
 	})
 }
 
-// GetMyProposals - Get all proposals by the logged-in freelancer
 func GetMyProposals(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
-
 	status := c.Query("status")
-	query := db.DB.Preload("JobPost").
+	DB := db.DB
+	query := DB.Preload("JobPost").
 		Preload("JobPost.Category").
+		Preload("Freelancer").
 		Preload("ProposalAttachments").
 		Where("freelancer_id = ?", user.ID)
 
@@ -541,4 +525,106 @@ func GetJobProposals(c *gin.Context) {
 		"data":    proposals,
 		"count":   len(proposals),
 	})
+}
+
+func ManageProposalDecision(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	proposalID := c.Param("id")
+
+	var body struct {
+		Status string `json:"status" binding:"required,oneof=accepted rejected"`
+	}
+
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid status. Allowed values: 'accepted', 'rejected'",
+		})
+		return
+	}
+
+	DB := db.DB
+	targetStatus := body.Status
+	var proposal models.Proposal
+	if err := DB.Preload("JobPost").First(&proposal, "id = ?", proposalID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Proposal not found"})
+		return
+	}
+
+	if proposal.JobPost.CreatedByID != user.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "You are not authorized to manage this proposal"})
+		return
+	}
+
+	if proposal.Status != models.ProposalStatusPending && proposal.Status != models.ProposalStatusShortlisted {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot change status of a proposal that is " + proposal.Status})
+		return
+	}
+
+	if targetStatus == models.ProposalStatusRejected {
+		if err := DB.Model(&proposal).Update("status", models.ProposalStatusRejected).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reject proposal"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Proposal rejected",
+			"status":  models.ProposalStatusRejected,
+		})
+		return
+	}
+
+	if targetStatus == models.ProposalStatusAccepted {
+		if proposal.JobPost.Status != models.JobStatusOpen {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Job is not open, cannot accept new proposals"})
+			return
+		}
+
+		tx := DB.Begin()
+		if err := tx.Model(&proposal).Update("status", models.ProposalStatusAccepted).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update proposal status"})
+			return
+		}
+
+		if err := tx.Model(&models.JobPost{BaseModel: models.BaseModel{ID: proposal.JobPostID}}).
+			Update("status", models.JobStatusInProgress).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to lock job"})
+			return
+		}
+
+		// startDate := time.Now()
+		// endDate := startDate.AddDate(0, 0, proposal.Duration)
+		// contract := models.Contract{
+		//     JobPostID:    proposal.JobPostID,
+		//     ProposalID:   proposal.ID,
+		//     ClientID:     user.ID,
+		//     FreelancerID: proposal.FreelancerID,
+		//     Title:        proposal.JobPost.Title,
+		//     Description:  proposal.CoverLetter,
+		//     TotalAmount:  proposal.BidAmount,
+		//     StartDate:    startDate,
+		//     EndDate:      endDate,
+		//     Status:       models.ContractStatusActive,
+		// }
+
+		// if err := tx.Create(&contract).Error; err != nil {
+		//     tx.Rollback()
+		//     c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate contract"})
+		//     return
+		// }
+
+		if err := tx.Commit().Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Transaction failed"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Proposal accepted and contract created",
+			"status":  models.ProposalStatusAccepted,
+			// "contract_id":  contract.ID,
+			"job_status": models.JobStatusInProgress,
+		})
+		return
+	}
 }
