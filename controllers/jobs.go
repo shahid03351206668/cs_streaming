@@ -772,6 +772,7 @@ func GetContracts(c *gin.Context) {
 		Limit  int    `form:"limit,default=10"`
 		Status string `form:"status"` // filter by: active, pending, completed, etc.
 		Role   string `form:"role"`   // filter by: client, freelancer
+		ProposalID string `form:"proposal_id"`
 	}
 
 	if err := c.ShouldBindQuery(&queryParams); err != nil {
@@ -803,6 +804,10 @@ func GetContracts(c *gin.Context) {
 	// 4. Apply Status Filter (Optional)
 	if queryParams.Status != "" {
 		query = query.Where("status = ?", queryParams.Status)
+	}
+
+	if queryParams.ProposalID != "" {
+		query = query.Where("proposal_id = ?", queryParams.ProposalID)
 	}
 
 	// 5. Count Total (before pagination)
