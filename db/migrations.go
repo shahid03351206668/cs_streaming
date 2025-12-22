@@ -58,6 +58,7 @@ func ApplyMigrations() error {
 		&models.JobMedia{},
 		&models.Proposal{},
 		&models.ProposalAttachment{},
+		&models.Review{},
 		&models.Contract{},
 		&models.Payment{},
 		&models.ChatConversation{},

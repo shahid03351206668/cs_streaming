@@ -133,7 +133,7 @@ func main() {
 	protected.Use(middleware.AuthMiddleware())
 
 	{
-		protected.GET("/api/contracts/:id/review", controllers.AddReview)
+		protected.POST("/api/contracts/:id/review", controllers.AddReview)
 		protected.GET("/api/user/profile", controllers.GetProfile)
 		protected.GET("/api/proposals/:id", controllers.GetProposal)
 		protected.POST("/api/user/verify-credentials", controllers.VerifyUserCredential)

@@ -120,7 +120,6 @@ func ChangePassword(c *gin.Context) {
 		return
 	}
 
-
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(body.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -147,11 +146,29 @@ func ChangePassword(c *gin.Context) {
 func GetProfile(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 	user.Password = ""
+
+	var reviews []models.Review
+	err := db.DB.
+		Where("target_id = ?", user.ID).
+		Preload("Reviewer").
+		Preload("Contract").
+		Order("created_at DESC").
+		Find(&reviews).Error
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "Failed to fetch reviews",
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"user":    user,
+		"reviews": reviews,
 	})
 }
+
 func VerifyUser(c *gin.Context) {
 	var body struct {
 		PhoneNumber string `json:"phone_number"`

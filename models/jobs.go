@@ -131,6 +131,7 @@ type Contract struct {
 	CompletedAt         *time.Time `json:"completed_at,omitempty"`
 
 	Payments []Payment `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"payments,omitempty"`
+	Reviews  []Review  `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"reviews,omitempty"`
 }
 
 type Payment struct {

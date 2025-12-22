@@ -768,10 +768,10 @@ func GetContracts(c *gin.Context) {
 
 	// 1. Define Query Parameters
 	var queryParams struct {
-		Page   int    `form:"page,default=1"`
-		Limit  int    `form:"limit,default=10"`
-		Status string `form:"status"` // filter by: active, pending, completed, etc.
-		Role   string `form:"role"`   // filter by: client, freelancer
+		Page       int    `form:"page,default=1"`
+		Limit      int    `form:"limit,default=10"`
+		Status     string `form:"status"` // filter by: active, pending, completed, etc.
+		Role       string `form:"role"`   // filter by: client, freelancer
 		ProposalID string `form:"proposal_id"`
 	}
 
@@ -823,10 +823,13 @@ func GetContracts(c *gin.Context) {
 		Preload("JobPost").       // Load Job details
 		Preload("Client").        // Load Client profile
 		Preload("Freelancer").    // Load Freelancer profile
+		Preload("Reviews").       // Load Reviews
 		Find(&contracts).Error
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch contracts"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "Failed to fetch contracts",
+			"error":   err.Error()})
 		return
 	}
 
@@ -903,7 +906,6 @@ func AddReview(c *gin.Context) {
 	}
 
 	if err := db.DB.Create(&review).Error; err != nil {
-
 		if strings.Contains(err.Error(), "idx_review_contract_reviewer") {
 			c.JSON(http.StatusConflict, gin.H{"error": "You have already submitted a review for this contract"})
 			return
