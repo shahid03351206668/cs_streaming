@@ -407,6 +407,7 @@ func GetProposal(c *gin.Context) {
 	// Find proposal
 	proposal := models.Proposal{}
 	if err := db.DB.Preload("JobPost").
+		Preload("JobPost.CreatedBy").
 		Preload("Freelancer").
 		Preload("ProposalAttachments").
 		Where("id = ?", proposalID).

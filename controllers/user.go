@@ -145,9 +145,11 @@ func ChangePassword(c *gin.Context) {
 
 func GetProfile(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
+
 	user.Password = ""
 
 	var reviews []models.Review
+	
 	err := db.DB.
 		Where("target_id = ?", user.ID).
 		Preload("Reviewer").
