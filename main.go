@@ -9,6 +9,7 @@ import (
 	"tasksy/controllers"
 	"tasksy/db"
 	"tasksy/internal/modules/chat"
+	"tasksy/internal/modules/user"
 	"tasksy/middleware"
 
 	"github.com/gin-contrib/cors"
@@ -111,7 +112,11 @@ func main() {
 		ListRoutes(c, router)
 	})
 
+	userService := user.NewService(db.DB)
+	userHandler := user.NewHandler(userService)
 	router.GET("/api/user/list", controllers.GetUsers)
+	router.GET("/api/user/:id/profile", userHandler.GetUserProfile)
+
 	router.GET("/api/category/list", controllers.GetCategories)
 	router.GET("/api/v1/category/:id", controllers.GetCategoryByID)
 	router.POST("/api/v1/category/create", controllers.CreateCategory)

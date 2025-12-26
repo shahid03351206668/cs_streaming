@@ -813,7 +813,7 @@ func GetContracts(c *gin.Context) {
 
 	if queryParams.ContractID != "" {
 		query = query.Where("id = ?", queryParams.ContractID)
-	}	
+	}
 
 	// 5. Count Total (before pagination)
 	query.Count(&total)
