@@ -3,7 +3,6 @@ package middleware
 import (
 	"tasksy/pkg/logger"
 	"time"
-
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )

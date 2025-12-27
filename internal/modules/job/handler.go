@@ -1,18 +1,20 @@
 package job
 
 import (
+	"github.com/gin-gonic/gin"
 	"net/http"
 	"strconv"
 	"tasksy/models"
-
-	// "github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/gin-gonic/gin"
 )
 
 const MAX_JOBS_PER_PAGE = 20
 
 type Handler struct {
-	service *Service
+	service Service
+}
+
+func NewHandler(s Service) *Handler {
+	return &Handler{service: s}
 }
 
 func (h *Handler) JobFeedHandler(c *gin.Context) {
@@ -105,14 +107,12 @@ func (h *Handler) CreateJobPost(c *gin.Context) {
 		})
 		return
 	}
-
-	form, err := c.MultipartForm()
-	if err == nil && form != nil && form.File["media"] != nil {
-
-		// files := form.File["media"]
-		// for _, i in range files {
-		// }
-	}
+	// form, err := c.MultipartForm()
+	// if err == nil && form != nil && form.File["media"] != nil {
+	// 	// files := form.File["media"]
+	// 	// for _, i in range files {
+	// 	// }
+	// }
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",

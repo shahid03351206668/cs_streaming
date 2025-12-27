@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-
 type TypeCategory struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -46,14 +45,14 @@ type Service struct {
 	db gorm.DB
 }
 
-func NewService(db *gorm.DB) *Service {
-	return &Service{db: *db}
+func NewService(db *gorm.DB) Service {
+	return Service{db: *db}
 }
 
 func (s *Service) GetJobFeed(category, searchQuery string, page, limit int) ([]JobPostValue, int64, error) {
 	var jobResults []models.JobPost
-
 	var total int64
+
 	jobQuery := s.db.Model(&models.JobPost{}).Where("status = ?", models.JobStatusOpen)
 
 	if category != "" {

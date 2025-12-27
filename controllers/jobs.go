@@ -766,12 +766,11 @@ func GetContracts(c *gin.Context) {
 	dbConn := db.DB
 	user := c.MustGet("user").(models.User)
 
-	// 1. Define Query Parameters
 	var queryParams struct {
 		Page       int    `form:"page,default=1"`
 		Limit      int    `form:"limit,default=10"`
-		Status     string `form:"status"` // filter by: active, pending, completed, etc.
-		Role       string `form:"role"`   // filter by: client, freelancer
+		Status     string `form:"status"`
+		Role       string `form:"role"` // filter by: client, freelancer
 		ProposalID string `form:"proposal_id"`
 		ContractID string `form:"contract_id"`
 	}
@@ -781,7 +780,6 @@ func GetContracts(c *gin.Context) {
 		return
 	}
 
-	// 2. Build the Query
 	var contracts []models.Contract
 	var total int64
 
@@ -798,7 +796,6 @@ func GetContracts(c *gin.Context) {
 	case "freelancer":
 		query = query.Where("freelancer_id = ?", user.ID)
 	default:
-		// If no role specified, show ALL contracts where user is EITHER party
 		query = query.Where("client_id = ? OR freelancer_id = ?", user.ID, user.ID)
 	}
 
@@ -838,9 +835,42 @@ func GetContracts(c *gin.Context) {
 		return
 	}
 
-	// 7. Response
+	// We create a temporary struct to hold the Contract + The Computed Flags
+	type ContractResponse struct {
+		models.Contract           // Embed the original contract fields
+		ReviewedByClient     bool `json:"reviewed_by_client"`
+		ReviewedByFreelancer bool `json:"reviewed_by_freelancer"`
+	}
+
+	// Initialize the result slice
+	responseList := make([]ContractResponse, 0, len(contracts))
+
+	for _, contract := range contracts {
+		rByClient := false
+		rByFreelancer := false
+
+		// Check the preloaded reviews
+		// Assuming your Review model has a 'ReviewerID' field
+		for _, review := range contract.Reviews {
+			if review.ReviewerID == contract.ClientID {
+				rByClient = true
+			}
+			if review.ReviewerID == contract.FreelancerID {
+				rByFreelancer = true
+			}
+		}
+
+		// Add to the response list
+		responseList = append(responseList, ContractResponse{
+			Contract:             contract,
+			ReviewedByClient:     rByClient,
+			ReviewedByFreelancer: rByFreelancer,
+		})
+	}
+
+	// 8. Return the processed list
 	c.JSON(http.StatusOK, gin.H{
-		"data": contracts,
+		"data": responseList, // Send the wrapper list, not the raw contracts
 		"meta": gin.H{
 			"current_page": queryParams.Page,
 			"limit":        queryParams.Limit,

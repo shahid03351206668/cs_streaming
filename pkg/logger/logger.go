@@ -11,6 +11,7 @@ import (
 var Log *zap.Logger
 
 func InitLogger() {
+	
 	logWriter := &lumberjack.Logger{
 		Filename:   "./logs/app.log",
 		MaxSize:    10,

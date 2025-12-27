@@ -108,15 +108,14 @@ func (s *chatService) InitiateChat(userA, userB string) (*models.ChatConversatio
 }
 
 func (s *chatService) SendMessage(senderID, convID, content, msgType string, files []*multipart.FileHeader) (*models.ChatMessage, error) {
-	fmt.Println("start of send message service")
 	sender, err := s.repo.GetUserByID(senderID)
+
 	if err != nil {
 		return nil, err
 	}
 
 	var attachments []models.ChatAttachment
-	fmt.Println("files")
-	fmt.Println(files)
+	
 	if len(files) > 0 {
 		msgType = "attachment"
 

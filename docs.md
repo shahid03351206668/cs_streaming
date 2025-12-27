@@ -37,7 +37,7 @@
 │   │       ├── handler.go
 │   │       └── service.go
 │   │
-│   └── server                <-- Server wiring
+│   └── /api/v1/jobs/feed                <-- Server wiring
 │       ├── router.go         <-- Register all module routes here
 │       └── server.go         <-- Graceful shutdown logic
 │

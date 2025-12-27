@@ -3,9 +3,8 @@ name: Deployment Pipeline
 on:
   push:
     branches:
-      - deployment
-      # - develop
-
+      - develop
+      # - deployment
 jobs:
   test-build-deploy:
     runs-on: ubuntu-latest
@@ -26,9 +25,8 @@ jobs:
         run: go test ./... -v
 
       - name: Build Project
-        # 1. Changed binary name to 'server'
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o server main.go
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o server ./cmd/api/main.go
           ls -lah
       
       - name: Copy Binary to VPS
@@ -37,7 +35,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
-          source: "server"  # 2. Matches the build output above
+          source: "server" 
           target: "/home/ubuntu/"
 
       - name: Restart Systemd Service on VPS
@@ -47,10 +45,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           script: |
-            # 3. Rename 'server' to 'tasksy-server' so Systemd finds it
             mv /home/ubuntu/server /home/ubuntu/tasksy-server
             chmod +x /home/ubuntu/tasksy-server
-            
-            # Restart service
             sudo systemctl restart tasksy-server.service
             sudo systemctl status tasksy-server.service --no-pager

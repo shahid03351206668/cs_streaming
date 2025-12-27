@@ -1,37 +1,36 @@
-package api
+package main
 
 import (
+	"fmt"
+	"log"
 	"tasksy/config"
-	"tasksy/middleware"
+	"tasksy/db"
 	"tasksy/pkg/logger"
-	"tasksy/services"
+	"tasksy/server"
 
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 func SetupConfig() {
 }
 
 func main() {
-	logger.InitLogger()
-	router := gin.Default()
 	appConfig := config.LoadConfig()
-	router.Use(middleware.LoggerMiddleware())
+	logger.InitLogger()
 
-	// awsService :=
-	services.NewAWSService(appConfig)
-
-	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowAllOrigins = true
-	corsConfig.AllowHeaders = []string{
-		"Origin",
-		"Content-Length",
-		"Content-Type",
-		"Authorization",
+	if err := db.ConnectDB(appConfig.Database.URI); err != nil {
+		logger.Log.Error("failed to connect to database", zap.Error(err), zap.String("operation", "server-op"))
+		return
 	}
 
-	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+	fmt.Println(db.DB)
+	router := server.MakeRouter(db.DB, appConfig)
+	address := appConfig.Server.Addr
 
-	router.Use(cors.New(corsConfig))
+	log.Printf("Server starting on address %s", address)
+	if err := router.Run(address); err != nil {
+		logger.Log.Error("Error while starting server", zap.Error(err), zap.String("operation", "server-op"))
+		return
+	}
+
 }
