@@ -3,7 +3,9 @@ package utils
 import (
 	"fmt"
 	"math/rand/v2"
+	"mime/multipart"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -18,6 +20,24 @@ func GenerateRandomString(length int) string {
 	return string(b)
 }
 
+func FileType(file *multipart.FileHeader) string {
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+
+	imageExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true}
+	videoExts := map[string]bool{".mp4": true, ".mov": true, ".avi": true}
+	docExts := map[string]bool{".pdf": true, ".doc": true, ".docx": true}
+
+	switch {
+	case imageExts[ext]:
+		return "image"
+	case videoExts[ext]:
+		return "video"
+	case docExts[ext]:
+		return "document"
+	default:
+		return "other"
+	}
+}
 
 func GetFileType(mimeType string) string {
 	if strings.HasPrefix(mimeType, "image/") {

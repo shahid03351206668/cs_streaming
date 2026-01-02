@@ -1,13 +1,14 @@
-package services
+package aws_services
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"time"
+
 	"tasksy/config"
 	"tasksy/pkg/logger"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -21,7 +22,7 @@ type S3Client struct {
 	appConfig *config.Config
 }
 
-func (c *S3Client) NewS3Client(appConfig *config.Config) *S3Client {
+func NewS3Client(appConfig *config.Config) *S3Client {
 	var client *s3.Client
 
 	creds := credentials.NewStaticCredentialsProvider(
@@ -40,11 +41,9 @@ func (c *S3Client) NewS3Client(appConfig *config.Config) *S3Client {
 		fmt.Printf("AWS Config Error: %v\n", err)
 	}
 	return &S3Client{client: client, appConfig: appConfig}
-
 }
 
 func (c *S3Client) UploadFile(file io.Reader, filename, mimeType, region, bucketName string) (string, error) {
-
 	if c.client == nil {
 		err := errors.New("S3 client is not initialized")
 		logger.Log.Error("S3 client is not setup", zap.Error(err), zap.String("operation", "aws-s3-op"))
@@ -69,7 +68,8 @@ func (c *S3Client) UploadFile(file io.Reader, filename, mimeType, region, bucket
 		}
 	}
 
-	key := fmt.Sprintf("chat/%d_%s", time.Now().UnixNano(), filename)
+	folder := "files"
+	key := fmt.Sprintf("%s/%d_%s", folder, time.Now().UnixNano(), filename)
 	_, err := c.client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket:      aws.String(targetBucket),
 		Key:         aws.String(key),
@@ -82,7 +82,7 @@ func (c *S3Client) UploadFile(file io.Reader, filename, mimeType, region, bucket
 		return "", err
 	}
 
-	// Format: https://BUCKET.s3.REGION.amazonaws.com/KEY
+	// S3 Bucket URL Format: https://BUCKET.s3.REGION.amazonaws.com/KEY
 	fileURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", targetBucket, targetRegion, key)
 	return fileURL, nil
 }

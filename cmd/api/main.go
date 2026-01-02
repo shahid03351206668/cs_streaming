@@ -16,10 +16,17 @@ func SetupConfig() {
 
 func main() {
 	appConfig := config.LoadConfig()
+
 	logger.InitLogger()
 
 	if err := db.ConnectDB(appConfig.Database.URI); err != nil {
 		logger.Log.Error("failed to connect to database", zap.Error(err), zap.String("operation", "server-op"))
+		return
+	}
+
+	err := db.ApplyMigrations()
+	if err != nil {
+		logger.Log.Error("error while applying migrations", zap.Error(err), zap.String("db", "db-transaction"))
 		return
 	}
 
@@ -32,5 +39,4 @@ func main() {
 		logger.Log.Error("Error while starting server", zap.Error(err), zap.String("operation", "server-op"))
 		return
 	}
-
 }

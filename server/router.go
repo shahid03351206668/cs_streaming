@@ -7,6 +7,7 @@ import (
 	"tasksy/internal/modules/job"
 	"tasksy/internal/modules/user"
 	"tasksy/middleware"
+	aws_services "tasksy/pkg"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -14,9 +15,11 @@ import (
 )
 
 func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
-
 	router := gin.Default()
+	router.Static("/media", "./media")
 	router.Use(middleware.LoggerMiddleware())
+
+	s3Client := aws_services.NewS3Client(appConfig)
 
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowAllOrigins = true
@@ -28,61 +31,53 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 		c.JSON(200, gin.H{"message": "pong"})
 	})
 
-	userService := user.NewService(db)
+	userService := user.NewService(db, s3Client)
 	userHandler := user.NewHandler(userService)
-	jobPostService := job.NewService(db)
+	jobPostService := job.NewService(db, s3Client)
 	jobPostHandler := job.NewHandler(jobPostService)
 
-	// --- Auth Routes ---
 	authRoutes := router.Group("/api/auth")
 	{
-		authRoutes.POST("/register", controllers.RegisterUser)
+		authRoutes.POST("/register", userHandler.RegisterUser)
 		authRoutes.POST("/login", controllers.LoginController)
 		authRoutes.POST("/verify-user", controllers.VerifyUser)
 		authRoutes.POST("/refresh", controllers.RefreshTokenController)
 		authRoutes.POST("/google-auth", controllers.GoogleSignInFirebaseController)
 	}
 
-	// --- Proposal Routes ---
 	proposalRoutes := router.Group("/api/proposals")
 	proposalRoutes.Use(middleware.AuthMiddleware())
 	{
 		proposalRoutes.POST("/:id/decision", controllers.ManageProposalDecision)
 	}
 
-	// --- Job Routes ---
 	jobRoutes := router.Group("/api/jobs")
 	jobRoutes.Use(middleware.AuthMiddleware())
 	{
-		// ✅ FIXED: Static routes come FIRST
+		jobRoutes.POST("/create", jobPostHandler.CreateJobPost)
 		jobRoutes.GET("/my", controllers.GetMyJobs)
 		jobRoutes.GET("/proposals/my", controllers.GetMyProposals)
 
 		// Wildcard routes come LAST
 		jobRoutes.GET("/:id/contract", controllers.GetContracts)
 		jobRoutes.GET("/:id/proposal", controllers.GetJobProposals)
-		jobRoutes.POST("/create", controllers.CreateJob)
+		// jobRoutes.POST("/create", controllers.CreateJobPost)
 		jobRoutes.POST("/update/:id", controllers.UpdateJob)
 	}
 
-	// --- Public Routes ---
 	publicRoutes := router.Group("/api/v1")
 	{
 		publicRoutes.GET("/user/:id/profile", userHandler.GetUserProfile)
-
-		// ✅ FIXED: "create" and "list" moved ABOVE ":id"
 		publicRoutes.POST("/category/create", controllers.CreateCategory)
 		publicRoutes.GET("/category/list", controllers.GetCategories)
 		publicRoutes.GET("/category/:id", controllers.GetCategoryByID)
 		publicRoutes.DELETE("/category/delete/:id", controllers.DeleteCategory)
 		publicRoutes.PUT("/category/update/:id", controllers.UpdateCategory)
 
-		// ✅ FIXED: "feed" moved ABOVE ":id"
 		publicRoutes.GET("/job/feed", jobPostHandler.JobFeedHandler)
 		publicRoutes.GET("/job/:id", controllers.GetJobDetail)
 	}
 
-	// --- Protected Routes ---
 	protected := router.Group("/")
 	protected.Use(middleware.AuthMiddleware())
 	{
@@ -91,35 +86,29 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 		protected.POST("/api/user/update", controllers.UpdateProfile)
 		protected.POST("/api/user/change-password", controllers.ChangePassword)
 
-		// ✅ FIXED: "get-contract" moved ABOVE ":id"
 		protected.GET("/api/proposals/get-contract", controllers.GetContracts)
 		protected.POST("/api/proposals/create-contract", controllers.CreateContract)
 
-		// Wildcards for proposals
 		protected.GET("/api/proposals/:id", controllers.GetProposal)
 		protected.POST("/api/proposals/:id/withdraw", controllers.WithdrawProposal)
 		protected.PUT("/api/proposals/:id", controllers.UpdateProposal)
 		protected.DELETE("/api/proposals/:id", controllers.DeleteProposal)
 
-		// Contracts
 		protected.GET("/api/contracts/list", controllers.GetContracts)
 		protected.POST("/api/contracts/:id/complete", controllers.CompleteContract)
 	}
 
-	// --- Chat Routes ---
 	chatRepo := chat.NewRepository(db)
 	chatService := chat.NewService(chatRepo, appConfig)
 	chatHandler := chat.NewHandler(chatService)
 
 	chatGroup := router.Group("/chat")
 	chatGroup.GET("/chat/ws", chatHandler.WSHandler) // Note: path is /chat/chat/ws here?
-
 	chatProtected := chatGroup.Group("/")
 	chatProtected.Use(middleware.AuthMiddleware())
 	{
 		chatProtected.GET("/inbox", chatHandler.GetInbox)
 		chatProtected.POST("/init", chatHandler.InitiateChat)
-		// Wildcards last
 		chatProtected.GET("/:id/history", chatHandler.GetChatHistory)
 		chatProtected.POST("/:id/message", chatHandler.SendMessage)
 	}

@@ -1,9 +1,11 @@
 package job
 
 import (
-	"github.com/gin-gonic/gin"
 	"net/http"
 	"strconv"
+
+	"github.com/gin-gonic/gin"
+
 	"tasksy/models"
 )
 
@@ -34,7 +36,6 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 	}
 
 	jobs, count, err := h.service.GetJobFeed(category, searchQuery, page, limit)
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   err.Error(),
@@ -54,67 +55,56 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 	})
 }
 
+type JobPostData struct {
+	CategoryID  string  `form:"category_id" binding:"required"`
+	Title       string  `form:"title" binding:"required,min=3,max=255"`
+	Description string  `form:"description" binding:"required,min=10"`
+	Budget      float64 `form:"budget" binding:"omitempty,min=0"`
+	OpenBudget  bool    `form:"open_budget"`
+	Address     string  `form:"address" binding:"omitempty,max=500"`
+}
+
 func (h *Handler) CreateJobPost(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
+	form, _ := c.MultipartForm()
+	files, _ := form.File["media"]
 
-	var body struct {
-		CategoryID  string  `form:"category_id" binding:"required"`
-		Title       string  `form:"title" binding:"required,min=3,max=255"`
-		Description string  `form:"description" binding:"required,min=10"`
-		Budget      float64 `form:"budget" binding:"omitempty,min=0"`
-		OpenBudget  bool    `form:"open_budget"`
-		Address     string  `form:"address" binding:"omitempty,max=500"`
-	}
-
-	if err := c.ShouldBind(&body); err != nil {
+	var data JobPostData
+	if err := c.ShouldBind(&data); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
 			"error":   err.Error(),
 		})
-
 		return
 	}
 
 	var category models.Category
-	if err := h.service.db.First(&category, "id = ?", body.CategoryID).Error; err != nil {
+	if err := h.service.db.First(&category, "id = ?", data.CategoryID).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
 			"error":   err.Error(),
 		})
 		return
 	}
-	tx := h.service.db.Begin()
 
+	tx := h.service.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
 		}
 	}()
 
-	jobPost := models.JobPost{
-		Status:      models.JobStatusOpen,
-		CreatedByID: user.ID,
-		CategoryID:  category.ID,
-		Title:       body.Title,
-		Description: body.Description,
-		Address:     body.Address,
-	}
-
-	if err := tx.Create(&jobPost).Error; err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "error",
+	jobPost, err := h.service.CreateJobPost(user, data, files)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "error while creating job post",
 			"error":   err.Error(),
 		})
 		return
-	}
-	// form, err := c.MultipartForm()
-	// if err == nil && form != nil && form.File["media"] != nil {
-	// 	// files := form.File["media"]
-	// 	// for _, i in range files {
-	// 	// }
-	// }
 
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
+		"data":    jobPost,
 	})
 }

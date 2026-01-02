@@ -1,10 +1,17 @@
 package job
 
 import (
-	"gorm.io/gorm"
+	"log"
+	"mime/multipart"
 	"strings"
 	"tasksy/models"
+	aws_services "tasksy/pkg"
+	"tasksy/pkg/logger"
+	"tasksy/utils"
 	"time"
+
+	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 type TypeCategory struct {
@@ -42,11 +49,12 @@ type JobPostValue struct {
 }
 
 type Service struct {
-	db gorm.DB
+	db       gorm.DB
+	s3Client *aws_services.S3Client
 }
 
-func NewService(db *gorm.DB) Service {
-	return Service{db: *db}
+func NewService(db *gorm.DB, s3Client *aws_services.S3Client) Service {
+	return Service{db: *db, s3Client: s3Client}
 }
 
 func (s *Service) GetJobFeed(category, searchQuery string, page, limit int) ([]JobPostValue, int64, error) {
@@ -123,4 +131,69 @@ func (s *Service) GetJobFeed(category, searchQuery string, page, limit int) ([]J
 	}
 
 	return jobsArray, total, nil
+}
+
+func (s *Service) CreateJobPost(user models.User, data JobPostData, files []*multipart.FileHeader) (*models.JobPost, error) {
+	jobPost := models.JobPost{
+		CreatedByID: user.ID,
+		CategoryID:  data.CategoryID,
+		Title:       data.Title,
+		Description: data.Description,
+		Budget:      data.Budget,
+		OpenBudget:  data.OpenBudget,
+		Address:     data.Address,
+		Status:      models.JobStatusOpen,
+	}
+
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	if err := tx.Create(&jobPost).Error; err != nil {
+		log.Println("error in user creation transaction")
+		log.Println(err.Error())
+		return nil, err
+	}
+
+	for _, f := range files {
+		file, err := f.Open()
+
+		if err != nil {
+			log.Println("error while opening file")
+			logger.Log.Error("error while opening file in create job operation", zap.Error(err), zap.String("operation", "job-creation-operation"))
+			continue
+		}
+		defer file.Close()
+
+		fileType := utils.FileType(f)
+		fileUrl, err := s.s3Client.UploadFile(file, f.Filename, fileType, "", "")
+
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+
+		if err := tx.Create(&models.JobMedia{
+			JobID:     jobPost.ID,
+			FileName:  f.Filename,
+			FileSize:  f.Size,
+			URL:       fileUrl,
+			MediaType: fileType,
+		}).Error; err != nil {
+			logger.Log.Error("Failed to upload/save job media", zap.Error(err))
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		logger.Log.Error("Transaction commit failed", zap.Error(err))
+		return nil, err
+	}
+
+	logger.Log.Info("Job post created successfully", zap.String("job_id", jobPost.ID))
+	return &jobPost, nil
+
 }

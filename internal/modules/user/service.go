@@ -1,15 +1,19 @@
 package user
 
 import (
+	"errors"
+	"mime/multipart"
 	"tasksy/models"
+	aws_services "tasksy/pkg"
 	"time"
 
-	// "github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
 type Service struct {
-	DB *gorm.DB
+	DB       *gorm.DB
+	s3Client *aws_services.S3Client
 }
 
 type UserProfile struct {
@@ -29,9 +33,10 @@ type UserProfileResponse struct {
 	Reviews []models.Review `json:"reviews"`
 }
 
-func NewService(db *gorm.DB) *Service {
-	return &Service{DB: db}
+func NewService(db *gorm.DB, s3Client *aws_services.S3Client) *Service {
+	return &Service{DB: db, s3Client: s3Client}
 }
+
 
 func (s *Service) GetUserProfile(id string) (*UserProfileResponse, error) {
 	var user models.User
@@ -41,7 +46,6 @@ func (s *Service) GetUserProfile(id string) (*UserProfileResponse, error) {
 
 	user.Password = ""
 	var reviews []models.Review
-
 	if err := s.DB.Preload("Reviewer").Where("target_id = ? ", id).Order("created_at DESC").Find(&reviews).Error; err != nil {
 		return nil, err
 	}
@@ -86,16 +90,83 @@ func (s *Service) GetUserProfile(id string) (*UserProfileResponse, error) {
 	}, nil
 }
 
+type UserData struct {
+	FirstName   string `form:"first_name" binding:"required"`
+	LastName    string `form:"last_name"`
+	Email       string `form:"email"`
+	Password    string `form:"password" binding:"required,min=8"`
+	PhoneNumber string `form:"phone_number"`
+}
+
+func (s *Service) CreateUser(data UserData, file *multipart.FileHeader) (*models.User, error) {
+
+	var existingUser models.User
+	if data.Email != "" {
+		s.DB.Where("email = ?", data.Email).First(&existingUser)
+		if existingUser.ID != "" {
+			return nil, errors.New("user with this email id already exists")
+		}
+	}
+
+	if data.PhoneNumber != "" {
+		s.DB.Where("phone_number = ?", data.PhoneNumber).First(&existingUser)
+		if existingUser.ID != "" {
+			return nil, errors.New("user with this phone number already exists")
+		}
+	}
+
+	imageURL := ""
+	if file != nil {
+		image, _ := file.Open()
+		allowedTypes := map[string]bool{
+			"image/jpeg": true,
+			"image/jpg":  true,
+			"image/png":  true,
+			"image/webp": true,
+		}
+
+		fileType := file.Header.Get("Content-Type")
+		if !allowedTypes[fileType] {
+			return nil, errors.New("Invalid filetype for user profile image allowed types are [jpeg, jpg, png, webp]")
+		}
+
+		url, err := s.s3Client.UploadFile(image, file.Filename, fileType, "", "")
+		if err != nil {
+			return nil, err
+		}
+		imageURL = url
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(data.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+
+	user := models.User{
+		FirstName:     data.FirstName,
+		LastName:      data.LastName,
+		Email:         data.Email,
+		PhoneVerified: true,
+		PhoneNumber:   data.PhoneNumber,
+		Password:      string(hashedPassword),
+		ProfilePhoto:  imageURL,
+	}
+
+	if err := s.DB.Create(&user).Error; err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}
+
 // func (s *Service) UpdateUser(c *gin.Context) {
 // 	var body struct {
 // 		FirstName   string `form:"first_name"`
 // 		LastName    string `form:"last_name"`
 // 		PhoneNumber string `form:"phone_number"`
 // 		Email       string `form:"email"`
-// 	}
-
+// 	}\
 // 	user := c.MustGet("user").(models.User)
-
 // 	if err := c.ShouldBind(&body); err != nil {
 // 		c.JSON(http.StatusBadRequest, gin.H{
 // 			"error":   err.Error(),

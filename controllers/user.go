@@ -17,14 +17,18 @@ import (
 
 func RegisterUser(c *gin.Context) {
 	var body struct {
-		FirstName   string `json:"first_name" binding:"required"`
-		LastName    string `json:"last_name"`
-		Email       string `json:"email"`
-		Password    string `json:"password" binding:"required,min=6"`
-		PhoneNumber string `json:"phone_number"`
+		FirstName   string `form:"first_name" binding:"required"`
+		LastName    string `form:"last_name"`
+		Email       string `form:"email"`
+		Password    string `form:"password" binding:"required,min=6"`
+		PhoneNumber string `form:"phone_number"`
 	}
 
-	if err := c.ShouldBindJSON(&body); err != nil {
+	form, _ := c.MultipartForm()
+	files := form.File["files"]
+	fmt.Println(files)
+
+	if err := c.ShouldBind(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   err.Error(),
 			"message": "Please provide a valid json object",
@@ -149,7 +153,7 @@ func GetProfile(c *gin.Context) {
 	user.Password = ""
 
 	var reviews []models.Review
-	
+
 	err := db.DB.
 		Where("target_id = ?", user.ID).
 		Preload("Reviewer").

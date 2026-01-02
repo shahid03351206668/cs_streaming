@@ -115,7 +115,7 @@ func (s *chatService) SendMessage(senderID, convID, content, msgType string, fil
 	}
 
 	var attachments []models.ChatAttachment
-	
+
 	if len(files) > 0 {
 		msgType = "attachment"
 
