@@ -29,22 +29,25 @@ type Category struct {
 type JobPost struct {
 	BaseModel
 
-	CreatedBy User     `gorm:"foreignKey:CreatedByID;constraint:OnDelete:CASCADE" json:"created_by"`
-	Category  Category `gorm:"foreignKey:CategoryID;constraint:OnDelete:SET NULL" json:"category"`
-	CreatedByID string  `gorm:"type:string;not null;index" json:"created_by_id"`
-	CategoryID  string  `gorm:"index" json:"category_id"`
-	Title       string  `gorm:"type:varchar(255);not null" json:"title"`
-	Description string  `gorm:"type:text;not null" json:"description"`
-	Budget      float64 `gorm:"type:decimal(10,2)" json:"budget"`
-	OpenBudget  bool    `gorm:"default:false" json:"open_budget"`
-	Address     string  `gorm:"type:varchar(500)" json:"address"`
-	Status      string  `gorm:"type:varchar(50);default:'open';index" json:"status"`
+	CreatedBy   User     `gorm:"foreignKey:CreatedByID;constraint:OnDelete:CASCADE" json:"created_by"`
+	Category    Category `gorm:"foreignKey:CategoryID;constraint:OnDelete:SET NULL" json:"category"`
+	CreatedByID string   `gorm:"type:string;not null;index" json:"created_by_id"`
+	CategoryID  string   `gorm:"index" json:"category_id"`
+	Title       string   `gorm:"type:varchar(255);not null" json:"title"`
+	Description string   `gorm:"type:text;not null" json:"description"`
+	Budget      float64  `gorm:"type:decimal(10,2)" json:"budget"`
+	OpenBudget  bool     `gorm:"default:false" json:"open_budget"`
+	Address     string   `gorm:"type:varchar(500)" json:"address"`
+
+	Status    string     `gorm:"type:varchar(50);default:'open';index" json:"status"`
 	JobMedia  []JobMedia `gorm:"foreignKey:JobID;constraint:OnDelete:CASCADE" json:"job_media,omitempty"`
 	Proposals []Proposal `gorm:"foreignKey:JobPostID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 type JobMedia struct {
 	BaseModel
+	Thumbnail string  `gorm:"type:varchar(500)" json:"thumbnail"`
+	ObjectKey string  `gorm:"type:varchar(200)" json:"s3_object_key"`
 	JobID     string  `gorm:"not null;index" json:"job_id"`
 	Job       JobPost `gorm:"foreignKey:JobID;constraint:OnDelete:CASCADE" json:"job,omitempty"`
 	URL       string  `gorm:"type:varchar(500);not null" json:"url"`

@@ -12,6 +12,7 @@ type Config struct {
 	Server   ServerConfig
 	Database DatabaseConfig
 	AWS      AWSConfig
+	Stripe   StripeConfig
 }
 
 type ServerConfig struct {
@@ -30,6 +31,11 @@ type AWSConfig struct {
 	Region          string
 	BucketName      string
 	BucketURL       string
+}
+
+type StripeConfig struct {
+	IdentityWebhookSecret string
+	SecretKey             string
 }
 
 func LoadConfig() *Config {
@@ -55,6 +61,10 @@ func LoadConfig() *Config {
 		},
 		Database: DatabaseConfig{
 			URI: dbURI,
+		},
+		Stripe: StripeConfig{
+			IdentityWebhookSecret: getEnv("STRIPE_IDENTITY_WEBHOOK", ""),
+			SecretKey:             getEnv("STRIPE_SECRET_KEY", ""),
 		},
 		AWS: AWSConfig{
 			AccessKeyID:     getEnv("AWS_S3_USER_ACCESS_KEY_ID", ""),

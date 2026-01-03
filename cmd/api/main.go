@@ -5,18 +5,14 @@ import (
 	"log"
 	"tasksy/config"
 	"tasksy/db"
+	"tasksy/internal/server"
 	"tasksy/pkg/logger"
-	"tasksy/server"
 
 	"go.uber.org/zap"
 )
 
-func SetupConfig() {
-}
-
 func main() {
 	appConfig := config.LoadConfig()
-
 	logger.InitLogger()
 
 	if err := db.ConnectDB(appConfig.Database.URI); err != nil {

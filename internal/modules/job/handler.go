@@ -20,6 +20,7 @@ func NewHandler(s Service) *Handler {
 }
 
 func (h *Handler) JobFeedHandler(c *gin.Context) {
+
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	category := c.Query("category")

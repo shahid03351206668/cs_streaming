@@ -3,6 +3,7 @@ package user
 import (
 	"errors"
 	"mime/multipart"
+	"tasksy/config"
 	"tasksy/models"
 	aws_services "tasksy/pkg"
 	"time"
@@ -12,8 +13,9 @@ import (
 )
 
 type Service struct {
-	DB       *gorm.DB
-	s3Client *aws_services.S3Client
+	db        *gorm.DB
+	appConfig *config.Config
+	s3Client  *aws_services.S3Client
 }
 
 type UserProfile struct {
@@ -33,20 +35,19 @@ type UserProfileResponse struct {
 	Reviews []models.Review `json:"reviews"`
 }
 
-func NewService(db *gorm.DB, s3Client *aws_services.S3Client) *Service {
-	return &Service{DB: db, s3Client: s3Client}
+func NewService(db *gorm.DB, appConfig *config.Config, s3Client *aws_services.S3Client) *Service {
+	return &Service{db: db, s3Client: s3Client, appConfig: appConfig}
 }
-
 
 func (s *Service) GetUserProfile(id string) (*UserProfileResponse, error) {
 	var user models.User
-	if err := s.DB.First(&user, "id = ?", id).Error; err != nil {
+	if err := s.db.First(&user, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
 
 	user.Password = ""
 	var reviews []models.Review
-	if err := s.DB.Preload("Reviewer").Where("target_id = ? ", id).Order("created_at DESC").Find(&reviews).Error; err != nil {
+	if err := s.db.Preload("Reviewer").Where("target_id = ? ", id).Order("created_at DESC").Find(&reviews).Error; err != nil {
 		return nil, err
 	}
 
@@ -102,14 +103,14 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader) (*models
 
 	var existingUser models.User
 	if data.Email != "" {
-		s.DB.Where("email = ?", data.Email).First(&existingUser)
+		s.db.Where("email = ?", data.Email).First(&existingUser)
 		if existingUser.ID != "" {
 			return nil, errors.New("user with this email id already exists")
 		}
 	}
 
 	if data.PhoneNumber != "" {
-		s.DB.Where("phone_number = ?", data.PhoneNumber).First(&existingUser)
+		s.db.Where("phone_number = ?", data.PhoneNumber).First(&existingUser)
 		if existingUser.ID != "" {
 			return nil, errors.New("user with this phone number already exists")
 		}
@@ -130,7 +131,7 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader) (*models
 			return nil, errors.New("Invalid filetype for user profile image allowed types are [jpeg, jpg, png, webp]")
 		}
 
-		url, err := s.s3Client.UploadFile(image, file.Filename, fileType, "", "")
+		url, _, err := s.s3Client.UploadFile(image, file.Filename, fileType, "", "")
 		if err != nil {
 			return nil, err
 		}
@@ -152,7 +153,7 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader) (*models
 		ProfilePhoto:  imageURL,
 	}
 
-	if err := s.DB.Create(&user).Error; err != nil {
+	if err := s.db.Create(&user).Error; err != nil {
 		return nil, err
 	}
 

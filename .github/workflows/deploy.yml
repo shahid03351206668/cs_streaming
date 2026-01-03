@@ -10,26 +10,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
+      - name: checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Go
+      - name: setup golang
         uses: actions/setup-go@v5
         with:
           go-version: '1.23' 
 
-      - name: Install Dependencies
+      - name: install project dependencies
         run: go mod download
 
-      # - name: Run Tests
-      #   run: go test ./... -v
-
-      - name: Build Project
+      - name: build the golang code
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o server ./cmd/api/main.go
           ls -lah
       
-      - name: Copy Binary to VPS
+      - name: copy binary to vps
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -38,14 +35,13 @@ jobs:
           source: "server" 
           target: "/home/ubuntu/"
 
-      - name: Restart Systemd Service on VPS
+      - name: restart linux systems services
         uses: appleboy/ssh-action@v0.1.10
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           script: |
-            
             mv /home/ubuntu/server /home/ubuntu/tasksy-server
             chmod +x /home/ubuntu/tasksy-server
             sudo systemctl restart tasksy-server.service

@@ -1,15 +1,16 @@
 package job
 
 import (
-	"log"
+	"io"
 	"mime/multipart"
+	// "slices"
 	"strings"
 	"tasksy/models"
 	aws_services "tasksy/pkg"
 	"tasksy/pkg/logger"
-	"tasksy/utils"
 	"time"
 
+	"github.com/gabriel-vasile/mimetype"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -122,18 +123,20 @@ func (s *Service) GetJobFeed(category, searchQuery string, page, limit int) ([]J
 			OpenBudget:  post.OpenBudget,
 			Address:     post.Address,
 			Status:      post.Status,
-			CreatedBy:   creator,
-			Category:    cat,
-			Media:       mediaList,
-			CreatedAt:   post.CreatedAt,
-			UpdatedAt:   post.UpdatedAt,
+			// Thumbnail:   post.Thumbnail,
+			CreatedBy: creator,
+			Category:  cat,
+			Media:     mediaList,
+			CreatedAt: post.CreatedAt,
+			UpdatedAt: post.UpdatedAt,
 		})
 	}
 
 	return jobsArray, total, nil
 }
 
-func (s *Service) CreateJobPost(user models.User, data JobPostData, files []*multipart.FileHeader) (*models.JobPost, error) {
+func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*multipart.FileHeader) (*models.JobPost, error) {
+	// AllowedVideoMediaFileTyps := []string{"video/mp4", "video/x-msvideo", "video/quicktime", "video/webm"}
 	jobPost := models.JobPost{
 		CreatedByID: user.ID,
 		CategoryID:  data.CategoryID,
@@ -153,23 +156,31 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, files []*mul
 	}()
 
 	if err := tx.Create(&jobPost).Error; err != nil {
-		log.Println("error in user creation transaction")
-		log.Println(err.Error())
+		logger.Log.Error("Failed to create job post", zap.Error(err))
 		return nil, err
 	}
 
-	for _, f := range files {
+	for _, f := range media {
 		file, err := f.Open()
 
 		if err != nil {
-			log.Println("error while opening file")
-			logger.Log.Error("error while opening file in create job operation", zap.Error(err), zap.String("operation", "job-creation-operation"))
-			continue
+			logger.Log.Error("error while opening file in create job operation", zap.Error(err))
+			return nil, err
 		}
+
 		defer file.Close()
 
-		fileType := utils.FileType(f)
-		fileUrl, err := s.s3Client.UploadFile(file, f.Filename, fileType, "", "")
+		var thumbnailUrl string
+
+		fileBytes, _ := io.ReadAll(file)
+		mime := mimetype.Detect(fileBytes)
+		fileUrl, ObjectKey, err := s.s3Client.UploadFile(file, f.Filename, mime.Extension(), "", "")
+
+		// if slices.Contains(AllowedVideoMediaFileTypes, mime.String()) {
+		// 	thumbnailFile, _ := io.ReadAll(file)
+		// 	// url, _, _ := s.s3Client.UploadFile(file, f.Filename, mime.Extension(), "", "")
+		// 	// thumbnailUrl = url
+		// }
 
 		if err != nil {
 			tx.Rollback()
@@ -177,11 +188,13 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, files []*mul
 		}
 
 		if err := tx.Create(&models.JobMedia{
+			ObjectKey: ObjectKey,
+			Thumbnail: thumbnailUrl,
 			JobID:     jobPost.ID,
 			FileName:  f.Filename,
 			FileSize:  f.Size,
 			URL:       fileUrl,
-			MediaType: fileType,
+			MediaType: mime.String(),
 		}).Error; err != nil {
 			logger.Log.Error("Failed to upload/save job media", zap.Error(err))
 			return nil, err
@@ -195,5 +208,4 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, files []*mul
 
 	logger.Log.Info("Job post created successfully", zap.String("job_id", jobPost.ID))
 	return &jobPost, nil
-
 }

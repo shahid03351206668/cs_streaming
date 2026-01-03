@@ -31,7 +31,6 @@ type User struct {
 
 func (u User) Can(slug string, db *gorm.DB) bool {
 	var count int64
-
 	db.Table("users").
 		Joins("JOIN user_roles ON user_roles.user_id = users.id").
 		Joins("JOIN roles ON roles.id = user_roles.role_id").
@@ -39,6 +38,5 @@ func (u User) Can(slug string, db *gorm.DB) bool {
 		Joins("JOIN permissions ON permissions.id = role_permissions.permission_id").
 		Where("users.id = ? AND permissions.slug = ?", u.ID, slug).
 		Count(&count)
-
 	return count > 0
 }

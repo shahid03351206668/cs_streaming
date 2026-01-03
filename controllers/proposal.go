@@ -13,6 +13,13 @@ import (
 func CreateProposal(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
+	if !user.IdentityVerfied {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "error",
+			"error":   "only verified user can send proposals on jobs",
+		})
+		return
+	}
 	var body struct {
 		JobPostID   string   `form:"job_post_id" binding:"required"`
 		CoverLetter string   `form:"cover_letter" binding:"required"`
