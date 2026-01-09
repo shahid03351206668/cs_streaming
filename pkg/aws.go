@@ -70,7 +70,9 @@ func (c *S3Client) UploadFile(file io.Reader, filename, contentType, region, buc
 	}
 
 	folder := "files"
-	ObjectKey := aws.String(fmt.Sprintf("%s/%d_%s", folder, time.Now().UnixNano(), filename))
+	keyString := fmt.Sprintf("%s/%d_%s", folder, time.Now().UnixNano(), filename)
+	ObjectKey := aws.String(keyString)
+
 	_, err := c.client.PutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket:      aws.String(targetBucket),
 		Key:         ObjectKey,
@@ -83,7 +85,6 @@ func (c *S3Client) UploadFile(file io.Reader, filename, contentType, region, buc
 		return "", "", err
 	}
 
-	// S3 Bucket URL Format: https://BUCKET.s3.REGION.amazonaws.com/KEY
-	fileURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", targetBucket, targetRegion, ObjectKey)
-	return fileURL, fmt.Sprint(ObjectKey), nil
+	fileURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", targetBucket, targetRegion, keyString)
+	return fileURL, keyString, nil
 }

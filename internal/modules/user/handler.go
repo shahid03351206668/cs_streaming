@@ -9,6 +9,7 @@ import (
 	"tasksy/lib"
 	"tasksy/models"
 	"tasksy/pkg/logger"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -155,4 +156,180 @@ func (h *Handler) StripeIdentityWebhookHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 	})
+}
+
+func (h *Handler) AddPortfolio(c *gin.Context) {
+	var user models.User
+
+	if err := h.service.db.Where("id = ?", c.Param("id")).Find(&user).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "error",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// 1. Parse Multipart Form (Max 32MB)
+	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
+		c.JSON(400, gin.H{"error": "File too large or invalid format"})
+		return
+	}
+
+	var input models.Portfolio
+	input.Title = c.PostForm("title")
+	input.Description = c.PostForm("description")
+	input.ProjectURL = c.PostForm("project_url")
+
+	if input.Title == "" {
+		c.JSON(400, gin.H{"error": "Title is required"})
+		return
+	}
+	form, err := c.MultipartForm()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "Invalid form data"})
+		return
+	}
+
+	result, err := h.service.AddPortfolio(&user, input, form.File["media"])
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "error",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data":    result,
+	})
+
+}
+
+func (h *Handler) UpdatePortfolio(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	portfolioID := c.Param("id")
+
+	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File too large or invalid data"})
+		return
+	}
+
+	var input models.Portfolio
+	input.Title = c.PostForm("title")
+	input.Description = c.PostForm("description")
+	input.ProjectURL = c.PostForm("project_url")
+	keepIDsRaw := c.PostFormArray("keep_ids")
+
+	var keepIDs []string
+	for _, id := range keepIDsRaw {
+		keepIDs = append(keepIDs, id)
+	}
+
+	form, _ := c.MultipartForm()
+	newFiles := form.File["new_media"]
+
+	updatedPortfolio, err := h.service.UpdatePortfolio(
+		user.ID,
+		portfolioID,
+		input,
+		keepIDs,
+		newFiles,
+	)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "Update failed",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Portfolio updated successfully",
+		"data":    updatedPortfolio,
+	})
+}
+
+func (h *Handler) GetPortfolio(c *gin.Context) {
+	var data []models.Portfolio
+
+	id := c.Param("id")
+
+	if err := h.service.db.Where("user_id = ?", id).Find(&data).Error; err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "error",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data":    data,
+	})
+
+}
+
+func (h *Handler) DeletePortfolio(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	err := h.service.DeletePortfolio(user.ID, c.Param("id"))
+
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "success",
+			"error":   err,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data":    fmt.Sprintf("%s portfolio deleted", c.Param("id")),
+	})
+}
+
+func (h *Handler) GetCertifications(c *gin.Context) {
+	var results []models.Certification
+	userID := c.Param("id")
+
+	if err := h.service.db.Where("user_id = ?", userID).Find(&results).Error; err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{
+			"message": "error",
+			"error":   err.Error(),
+		})
+
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data":    results,
+	})
+}
+
+func (h *Handler) AddCertification(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	issueDate, _ := time.Parse("2006-01-02", c.PostForm("issue_date"))
+
+	var expiryDate *time.Time
+	if expStr := c.PostForm("expiration_date"); expStr != "" {
+		t, _ := time.Parse("2006-01-02", expStr)
+		expiryDate = &t
+	}
+
+	cert := models.Certification{
+		Name:           c.PostForm("name"),
+		IssuingOrg:     c.PostForm("issuing_organization"),
+		IssueDate:      issueDate,
+		ExpirationDate: expiryDate,
+	}
+
+	file, _ := c.FormFile("image")
+	result, err := h.service.AddCertification(user.ID, cert, file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, result)
 }

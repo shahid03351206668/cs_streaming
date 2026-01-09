@@ -62,6 +62,9 @@ func ApplyMigrations() error {
 		&models.ChatMessage{},
 		&models.ChatAttachment{},
 		&models.ChatParticipant{},
+		&models.File{},
+		&models.Portfolio{},
+		&models.Certification{},
 	}
 
 	if err := DB.AutoMigrate(modelsToMigrate...); err != nil {

@@ -69,15 +69,29 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 
 	publicRoutes := router.Group("/api/v1")
 	{
-		publicRoutes.GET("/user/:id/profile", userHandler.GetUserProfile)
-		publicRoutes.POST("/category/create", controllers.CreateCategory)
+		// /api/v1/user/:id/profile
+		userGroup := publicRoutes.Group("/user/:id")
+		{
+			userGroup.GET("/profile", userHandler.GetUserProfile)
+			userGroup.GET("/portfolio", userHandler.GetPortfolio)
+			userGroup.GET("/certifications", userHandler.GetCertifications)
+
+			protected := userGroup.Use(middleware.AuthMiddleware())
+			{
+				protected.PUT("portfolio", userHandler.UpdatePortfolio)
+				protected.POST("/portfolio", userHandler.AddPortfolio)
+				protected.DELETE("/portfolio", userHandler.DeletePortfolio)
+			}
+			// GetCertifications
+		}
+
 		publicRoutes.GET("/category/list", controllers.GetCategories)
 		publicRoutes.GET("/category/:id", controllers.GetCategoryByID)
-		publicRoutes.DELETE("/category/delete/:id", controllers.DeleteCategory)
-		publicRoutes.PUT("/category/update/:id", controllers.UpdateCategory)
-
 		publicRoutes.GET("/job/feed", jobPostHandler.JobFeedHandler)
 		publicRoutes.GET("/job/:id", controllers.GetJobDetail)
+		publicRoutes.PUT("/category/update/:id", controllers.UpdateCategory)
+		publicRoutes.POST("/category/create", controllers.CreateCategory)
+		publicRoutes.DELETE("/category/delete/:id", controllers.DeleteCategory)
 	}
 
 	protected := router.Group("/")

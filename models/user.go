@@ -1,6 +1,10 @@
 package models
 
-import "gorm.io/gorm"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 type Permission struct {
 	BaseModel
@@ -39,4 +43,23 @@ func (u User) Can(slug string, db *gorm.DB) bool {
 		Where("users.id = ? AND permissions.slug = ?", u.ID, slug).
 		Count(&count)
 	return count > 0
+}
+
+type Portfolio struct {
+	BaseModel
+	UserID      string `gorm:"index;not null" json:"user_id"`
+	Title       string `json:"title" binding:"required"`
+	Description string `json:"description"`
+	ProjectURL  string `json:"project_url"`
+	Media       []File `gorm:"polymorphic:Entity;polymorphicValue:portfolios" json:"media"`
+}
+
+type Certification struct {
+	BaseModel
+	UserID         string     `gorm:"index;not null" json:"user_id"`
+	Name           string     `json:"name" binding:"required"`
+	IssuingOrg     string     `json:"issuing_organization" binding:"required"`
+	IssueDate      time.Time  `json:"issue_date" binding:"required"`
+	ExpirationDate *time.Time `json:"expiration_date"` // Pointer allows null (no expiry)`
+	ImageURL       string     `json:"image_url" binding:"required"`
 }

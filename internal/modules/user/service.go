@@ -6,8 +6,10 @@ import (
 	"tasksy/config"
 	"tasksy/models"
 	aws_services "tasksy/pkg"
+	"tasksy/pkg/logger"
 	"time"
 
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -160,6 +162,148 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader) (*models
 	return &user, nil
 }
 
+func (s *Service) AddPortfolio(User *models.User, data models.Portfolio, files []*multipart.FileHeader) (*models.Portfolio, error) {
+	data.UserID = User.ID
+
+	tx := s.db.Begin()
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	if err := tx.Create(&data).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	for _, f := range files {
+		file, _ := f.Open()
+
+		defer file.Close()
+
+		fileType := f.Header.Get("Content-Type")
+		url, objectKey, err := s.s3Client.UploadFile(file, f.Filename, fileType, "", "")
+
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+
+		media := models.File{
+			URL:        url,
+			FileName:   f.Filename,
+			FileSize:   f.Size,
+			EntityID:   data.ID,
+			ObjectKey:  objectKey,
+			FileType:   fileType,
+			EntityType: "portfolio",
+		}
+
+		if err := tx.Create(&media).Error; err != nil {
+			return nil, err
+		}
+
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		logger.Log.Error("Transaction commit failed", zap.Error(err))
+		return nil, err
+	}
+
+	return &data, nil
+}
+
+func (s *Service) DeletePortfolio(userID string, id string) error {
+	result := s.db.Where("id = ? AND user_id = ?", id, userID).Delete(&models.Portfolio{})
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return errors.New("portfolio not found or unauthorized")
+	}
+
+	return nil
+}
+
+func (s *Service) UpdatePortfolio(userID string, portfolioID string, data models.Portfolio, keepMediaIDs []string, newFiles []*multipart.FileHeader) (*models.Portfolio, error) {
+	tx := s.db.Begin()
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	var portfolio models.Portfolio
+	if err := tx.Where("id = ? AND user_id = ?", portfolioID, userID).First(&portfolio).Error; err != nil {
+		tx.Rollback()
+		return nil, errors.New("portfolio not found or unauthorized")
+	}
+
+	tx.Model(&portfolio).Updates(data)
+	var attachmentsToDelete []models.File
+	tx.Where("entity_id = ? AND entity_type = ? AND id NOT IN ?", portfolioID, "portfolios", keepMediaIDs).Find(&attachmentsToDelete)
+
+	for _, asset := range attachmentsToDelete {
+		tx.Delete(&asset)
+	}
+
+	for _, f := range newFiles {
+		src, _ := f.Open()
+		defer src.Close()
+
+		url, objectKey, err := s.s3Client.UploadFile(src, f.Filename, f.Header.Get("Content-Type"), "", "")
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+
+		tx.Create(&models.File{
+			URL:        url,
+			FileName:   f.Filename,
+			FileSize:   f.Size,
+			ObjectKey:  objectKey,
+			FileType:   f.Header.Get("Content-Type"),
+			EntityID:   portfolio.ID,
+			EntityType: "portfolios",
+		})
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+
+	s.db.Preload("Media").First(&portfolio, "id = ?", portfolioID)
+	return &portfolio, nil
+}
+func (s *Service) AddCertification(userID string, cert models.Certification, file *multipart.FileHeader) (*models.Certification, error) {
+	tx := s.db.Begin()
+	cert.UserID = userID
+
+	if file != nil {
+		src, _ := file.Open()
+		defer src.Close()
+		url, _, err := s.s3Client.UploadFile(src, file.Filename, file.Header.Get("Content-Type"), "", "")
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		cert.ImageURL = url
+	}
+
+	if err := tx.Create(&cert).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	tx.Commit()
+	return &cert, nil
+}
+
 // func (s *Service) UpdateUser(c *gin.Context) {
 // 	var body struct {
 // 		FirstName   string `form:"first_name"`
@@ -175,9 +319,7 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader) (*models
 // 		})
 // 		return
 // 	}
-
 // 	updates := make(map[string]interface{})
-
 // 	if body.FirstName != "" {
 // 		updates["first_name"] = body.FirstName
 // 	}
