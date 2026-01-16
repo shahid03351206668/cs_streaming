@@ -55,7 +55,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 
 	jobRoutes.Use(middleware.AuthMiddleware())
 	{
-		jobRoutes.POST("/create", jobPostHandler.CreateJobPost)
+		jobRoutes.POST("/create", controllers.CreateJob)
 		jobRoutes.GET("/my", controllers.GetMyJobs)
 		jobRoutes.GET("/proposals/my", controllers.GetMyProposals)
 		jobRoutes.POST("/send-proposal", controllers.CreateProposal)
@@ -87,7 +87,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 
 		publicRoutes.GET("/category/list", controllers.GetCategories)
 		publicRoutes.GET("/category/:id", controllers.GetCategoryByID)
-		publicRoutes.GET("/job/feed", jobPostHandler.JobFeedHandler)
+		publicRoutes.GET("/job/feed", controllers.GetJobs)
 		publicRoutes.GET("/job/:id", controllers.GetJobDetail)
 		publicRoutes.PUT("/category/update/:id", controllers.UpdateCategory)
 		publicRoutes.POST("/category/create", controllers.CreateCategory)
