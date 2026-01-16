@@ -4,7 +4,8 @@ import (
 	"tasksy/config"
 	"tasksy/controllers"
 	"tasksy/internal/modules/chat"
-	"tasksy/internal/modules/job"
+
+	// "tasksy/internal/modules/job"
 	"tasksy/internal/modules/user"
 	"tasksy/middleware"
 	aws_services "tasksy/pkg"
@@ -33,8 +34,8 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 
 	userService := user.NewService(db, appConfig, s3Client)
 	userHandler := user.NewHandler(userService)
-	jobPostService := job.NewService(db, s3Client)
-	jobPostHandler := job.NewHandler(jobPostService)
+	// jobPostService := job.NewService(db, s3Client)
+	// jobPostHandler := job.NewHandler(jobPostService)
 
 	authRoutes := router.Group("/api/auth")
 	{
