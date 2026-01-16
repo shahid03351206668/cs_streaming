@@ -35,8 +35,13 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 	userService := user.NewService(db, appConfig, s3Client)
 	userHandler := user.NewHandler(userService)
 	// jobPostService := job.NewService(db, s3Client)
+	// middleware.AuthMiddleware()
 	// jobPostHandler := job.NewHandler(jobPostService)
-	router.POST("api/job/send-proposal", controllers.CreateProposal)
+	tempProtected := router.Group("/")
+	tempProtected.Use(middleware.AuthMiddleware())
+	{
+		tempProtected.POST("api/job/send-proposal", controllers.CreateProposal)
+	}
 
 	authRoutes := router.Group("/api/auth")
 	{
