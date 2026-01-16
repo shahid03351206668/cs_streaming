@@ -6,16 +6,16 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
+
 	"tasksy/lib"
 	"tasksy/models"
 	"tasksy/pkg/logger"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
-
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/webhook"
+	"go.uber.org/zap"
 )
 
 type Handler struct {
@@ -169,7 +169,6 @@ func (h *Handler) AddPortfolio(c *gin.Context) {
 		return
 	}
 
-	// 1. Parse Multipart Form (Max 32MB)
 	if err := c.Request.ParseMultipartForm(32 << 20); err != nil {
 		c.JSON(400, gin.H{"error": "File too large or invalid format"})
 		return
@@ -256,7 +255,7 @@ func (h *Handler) GetPortfolio(c *gin.Context) {
 
 	id := c.Param("id")
 
-	if err := h.service.db.Where("user_id = ?", id).Find(&data).Error; err != nil {
+	if err := h.service.db.Preload("Media").Where("user_id = ?", id).Find(&data).Error; err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "error",
 			"error":   err.Error(),
@@ -332,4 +331,55 @@ func (h *Handler) AddCertification(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, result)
+}
+
+func (h *Handler) UpdateCertification(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	certID := c.Param("id")
+
+	issueDate, _ := time.Parse("2006-01-02", c.PostForm("issue_date"))
+
+	certData := models.Certification{
+		Name:       c.PostForm("name"),
+		IssuingOrg: c.PostForm("issuing_organization"),
+		IssueDate:  issueDate,
+	}
+
+	file, _ := c.FormFile("image")
+
+	result, err := h.service.UpdateCertification(user.ID, certID, certData, file)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) DeleteCertification(c *gin.Context) {
+	id := c.Param("id")
+	user := c.MustGet("user").(models.User)
+
+	debug_message := fmt.Sprintf("user id: %s \n certification id %s ", user.ID, id)
+	fmt.Println(debug_message)
+
+	result := h.service.db.Where("id = ? AND user_id = ?", id, user.ID).Delete(&models.Certification{})
+
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "error",
+			"error":   result.Error.Error(),
+		})
+		return
+	}
+
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": fmt.Sprintf("invalid certification id %s ", id)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"results": "certification deleted",
+	})
 }

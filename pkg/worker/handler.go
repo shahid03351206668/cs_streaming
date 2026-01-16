@@ -1,0 +1,179 @@
+package worker
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"tasksy/models"
+	aws_services "tasksy/pkg"
+	"time"
+
+	"github.com/hibiken/asynq"
+	"gorm.io/gorm"
+)
+
+type VideoProcessor struct {
+	DB       *gorm.DB
+	S3Client *aws_services.S3Client
+}
+
+func (processor *VideoProcessor) UploadHLSFolder(folderPath, s3FolderPrefix string) (string, error) {
+	var masterURL string
+
+	// 1. Walk through the directory recursively
+	err := filepath.Walk(folderPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		// Skip directories, we only upload files
+		if info.IsDir() {
+			return nil
+		}
+
+		// 2. Calculate S3 Key (Relative Path)
+		// This strips the local temp dir prefix.
+		// Example: /tmp/hls/123/v0/segment.ts -> v0/segment.ts
+		relPath, err := filepath.Rel(folderPath, path)
+		if err != nil {
+			return err
+		}
+
+		// CRITICAL: Normalize path separators.
+		// On Windows, relPath might be "v0\segment.ts", but S3 requires "v0/segment.ts".
+		relPath = filepath.ToSlash(relPath)
+
+		// Combine with the prefix (e.g., "jobs/job_123/video/456/v0/segment.ts")
+		s3Key := fmt.Sprintf("%s/%s", s3FolderPrefix, relPath)
+
+		// 3. Determine Content-Type
+		// Browsers strictly require these MIME types for HLS playback.
+		contentType := "application/octet-stream"
+		ext := strings.ToLower(filepath.Ext(path))
+		switch ext {
+		case ".m3u8":
+			contentType = "application/x-mpegURL"
+		case ".ts":
+			contentType = "video/MP2T"
+		}
+
+		// 4. Open File
+		file, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("failed to open file %s: %w", path, err)
+		}
+		defer file.Close()
+
+		// 5. Upload to S3
+		// We pass 's3Key' as the filename. The UploadFile method handles the bucket logic.
+		url, _, err := processor.S3Client.UploadFile(file, s3Key, contentType, "", "")
+		if err != nil {
+			return fmt.Errorf("failed to upload %s: %w", relPath, err)
+		}
+
+		// 6. Capture Master Playlist URL
+		// We need to return this specific URL so it can be saved in the database.
+		// Note: Ensure your FFmpeg command names the main file "master.m3u8"
+		if strings.HasSuffix(relPath, "master.m3u8") {
+			masterURL = url
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	if masterURL == "" {
+		return "", fmt.Errorf("master.m3u8 was not found in the generated folder")
+	}
+
+	return masterURL, nil
+}
+
+func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.Task) error {
+	var p VideoTranscodePayload
+
+	if err := json.Unmarshal(t.Payload(), &p); err != nil {
+		return fmt.Errorf("json unmarshal failed: %v", err)
+	}
+
+	// debug message
+	fmt.Printf(" [x] Processing Video for Job: %s\n", p.JobID)
+	tempDir := filepath.Join(os.TempDir(), "worker_hls", p.JobID)
+	os.MkdirAll(tempDir, 0755)
+	defer os.RemoveAll(tempDir)
+	tempFilePath := filepath.Join(tempDir, "downloaded.mp4")
+	err := processor.S3Client.DownloadFile(p.S3RawKey, "tasksy-raw-media", tempFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to download raw file: %v", err)
+	}
+
+	hlsDir := filepath.Join(tempDir, "hls")
+
+	if err := generateHLS(tempFilePath, hlsDir); err != nil {
+		return err
+	}
+
+	uniqueID := fmt.Sprintf("%d", time.Now().UnixNano())
+	s3Prefix := fmt.Sprintf("jobs/%s/video/%s", p.JobID, uniqueID)
+
+	masterURL, err := processor.UploadHLSFolder(hlsDir, s3Prefix)
+
+	if err != nil {
+		return err
+	}
+
+	err = processor.DB.Transaction(func(tx *gorm.DB) error {
+		media := models.JobMedia{
+			JobID:     p.JobID,
+			URL:       masterURL,
+			MediaType: "application/x-mpegURL",
+			FileName:  p.FileName,
+			FileSize:  p.FileSize,
+		}
+
+		if err := tx.Create(&media).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Model(models.JobPost{}).Where("id = ?", p.JobID).Update("status", models.JobStatusOpen).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	// if err == nil {
+	// processor.S3Client.DeleteObject(p.S3RawKey)
+	// }
+
+	return err
+}
+
+func generateHLS(input string, output string) error {
+	cmd := exec.Command("ffmpeg",
+		"-y", "-i", input,
+		"-filter_complex", "[0:v]split=2[v1][v2]; [v1]scale=w=1280:h=720[v1out]; [v2]scale=w=854:h=480[v2out]",
+		"-map", "[v1out]", "-c:v:0", "libx264", "-b:v:0", "2500k", "-maxrate:v:0", "2600k", "-bufsize:v:0", "5000k",
+		"-map", "[v2out]", "-c:v:1", "libx264", "-b:v:1", "1000k", "-maxrate:v:1", "1200k", "-bufsize:v:1", "2000k",
+		"-map", "a:0", "-c:a", "aac", "-b:a", "128k", "-ac", "2",
+		"-map", "a:0",
+		"-f", "hls",
+		"-hls_time", "6",
+		"-hls_playlist_type", "vod",
+		"-hls_flags", "independent_segments",
+		"-master_pl_name", "master.m3u8",
+		"-var_stream_map", "v:0,a:0 v:1,a:1",
+		filepath.Join(output, "v%v", "stream.m3u8"),
+	)
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ffmpeg output: %s, error: %v", string(out), err)
+	}
+	return nil
+}

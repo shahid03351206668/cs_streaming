@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
 )
 
@@ -20,6 +21,13 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 	router.Use(middleware.LoggerMiddleware())
 
 	s3Client := aws_services.NewS3Client(appConfig)
+
+	redisOpt := asynq.RedisClientOpt{
+		Addr: "localhost:6379",
+	}
+
+	queueClient := asynq.NewClient(redisOpt)
+	defer queueClient.Close()
 
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowAllOrigins = true
@@ -33,7 +41,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 
 	userService := user.NewService(db, appConfig, s3Client)
 	userHandler := user.NewHandler(userService)
-	jobPostService := job.NewService(db, s3Client)
+	jobPostService := job.NewService(db, s3Client, queueClient)
 	jobPostHandler := job.NewHandler(jobPostService)
 
 	authRoutes := router.Group("/api/auth")
@@ -63,7 +71,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 		// Wildcard routes come LAST
 		jobRoutes.GET("/:id/contract", controllers.GetContracts)
 		jobRoutes.GET("/:id/proposal", controllers.GetJobProposals)
-		// jobRoutes.POST("/create", controllers.CreateJobPost)
 		jobRoutes.POST("/update/:id", controllers.UpdateJob)
 	}
 
@@ -78,11 +85,13 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 
 			protected := userGroup.Use(middleware.AuthMiddleware())
 			{
+				protected.POST("/certifications", userHandler.AddCertification)
+				protected.PUT("/certifications", userHandler.UpdateCertification)
+				protected.DELETE("/certifications", userHandler.DeleteCertification)
 				protected.PUT("portfolio", userHandler.UpdatePortfolio)
 				protected.POST("/portfolio", userHandler.AddPortfolio)
 				protected.DELETE("/portfolio", userHandler.DeletePortfolio)
 			}
-			// GetCertifications
 		}
 
 		publicRoutes.GET("/category/list", controllers.GetCategories)
@@ -119,7 +128,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 	chatHandler := chat.NewHandler(chatService)
 
 	chatGroup := router.Group("/chat")
-	chatGroup.GET("/chat/ws", chatHandler.WSHandler) // Note: path is /chat/chat/ws here?
+	chatGroup.GET("/chat/ws", chatHandler.WSHandler)
 	chatProtected := chatGroup.Group("/")
 	chatProtected.Use(middleware.AuthMiddleware())
 	{

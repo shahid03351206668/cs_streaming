@@ -56,34 +56,27 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 	})
 }
 
-type JobPostData struct {
-	CategoryID  string  `form:"category_id" binding:"required"`
-	Title       string  `form:"title" binding:"required,min=3,max=255"`
-	Description string  `form:"description" binding:"required,min=10"`
-	Budget      float64 `form:"budget" binding:"omitempty,min=0"`
-	OpenBudget  bool    `form:"open_budget"`
-	Address     string  `form:"address" binding:"omitempty,max=500"`
-}
-
 func (h *Handler) CreateJobPost(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
-	form, _ := c.MultipartForm()
-	files, _ := form.File["media"]
-
 	var data JobPostData
 	if err := c.ShouldBind(&data); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
 			"error":   err.Error(),
+			"detail":  "Invalid form data",
 		})
 		return
 	}
 
+	form, _ := c.MultipartForm()
+	files := form.File["media"]
+
 	var category models.Category
 	if err := h.service.db.First(&category, "id = ?", data.CategoryID).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "error",
 			"error":   err.Error(),
+			"detail":  "category not found",
 		})
 		return
 	}

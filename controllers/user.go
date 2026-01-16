@@ -228,13 +228,13 @@ func VerifyUser(c *gin.Context) {
 func UpdateProfile(c *gin.Context) {
 	var body struct {
 		FirstName   string `form:"first_name"`
+		Verified    string `form:"verified"`
 		LastName    string `form:"last_name"`
 		PhoneNumber string `form:"phone_number"`
 		Email       string `form:"email"`
 	}
 
 	user := c.MustGet("user").(models.User)
-
 	if err := c.ShouldBind(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   err.Error(),
@@ -252,9 +252,11 @@ func UpdateProfile(c *gin.Context) {
 		updates["last_name"] = body.LastName
 	}
 
-	// Validate and update phone number
+	if body.Verified == "true" {
+		updates["identity_verified"] = true
+	}
+
 	if body.PhoneNumber != "" {
-		// Check if phone number is already taken by another user
 		var existingUser models.User
 		result := db.DB.Model(&models.User{}).
 			Where("phone_number = ?", body.PhoneNumber).

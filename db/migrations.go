@@ -42,9 +42,56 @@ func ConnectDB(dsn string) error {
 		log.Println("Database connected. Engine Version:", version)
 	}
 
+	type Category struct {
+		ID   string
+		Name string
+		// add other columns here
+	}
+
+	var categories []Category
+
+	if err := DB.Raw("SELECT * FROM categories").Scan(&categories).Error; err != nil {
+		log.Println("error:", err)
+		return err
+	}
+
+	log.Println("categories:", categories)
+
 	return nil
 }
 
+func Connect(dsn string) (*gorm.DB, error) {
+	var err error
+
+	dbConfig := &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	}
+
+	DB, err = gorm.Open(postgres.Open(dsn), dbConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	sqlDB, err := DB.DB()
+	if err != nil {
+		return nil, err
+	}
+
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetMaxOpenConns(100)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+
+	if err := sqlDB.Ping(); err != nil {
+		return nil, err
+	}
+
+	var version string
+	if err := DB.Raw("SHOW server_version;").Scan(&version).Error; err == nil {
+		log.Println("Database connected. Engine Version:", version)
+	}
+
+	return DB, nil
+}
 func ApplyMigrations() error {
 	modelsToMigrate := []interface{}{
 		&models.User{},
@@ -52,6 +99,7 @@ func ApplyMigrations() error {
 		&models.Permission{},
 		&models.Category{},
 		&models.JobPost{},
+		&models.JobPostVideo{},
 		&models.JobMedia{},
 		&models.Proposal{},
 		&models.ProposalAttachment{},
