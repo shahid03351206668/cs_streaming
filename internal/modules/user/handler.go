@@ -333,3 +333,57 @@ func (h *Handler) AddCertification(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, result)
 }
+
+
+
+
+func (h *Handler) UpdateCertification(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	certID := c.Param("id")
+
+	issueDate, _ := time.Parse("2006-01-02", c.PostForm("issue_date"))
+
+	certData := models.Certification{
+		Name:       c.PostForm("name"),
+		IssuingOrg: c.PostForm("issuing_organization"),
+		IssueDate:  issueDate,
+	}
+
+	file, _ := c.FormFile("image")
+
+	result, err := h.service.UpdateCertification(user.ID, certID, certData, file)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) DeleteCertification(c *gin.Context) {
+	id := c.Param("id")
+	user := c.MustGet("user").(models.User)
+
+	debug_message := fmt.Sprintf("user id: %s \n certification id %s ", user.ID, id)
+	fmt.Println(debug_message)
+
+	result := h.service.db.Where("id = ? AND user_id = ?", id, user.ID).Delete(&models.Certification{})
+
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "error",
+			"error":   result.Error.Error(),
+		})
+		return
+	}
+
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": fmt.Sprintf("invalid certification id %s ", id)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"results": "certification deleted",
+	})
+}

@@ -79,10 +79,15 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 
 			protected := userGroup.Use(middleware.AuthMiddleware())
 			{
+				protected.POST("/certifications", userHandler.AddCertification)
+				protected.PUT("/certifications", userHandler.UpdateCertification)
+				protected.DELETE("/certifications", userHandler.DeleteCertification)
 				protected.PUT("portfolio", userHandler.UpdatePortfolio)
 				protected.POST("/portfolio", userHandler.AddPortfolio)
 				protected.DELETE("/portfolio", userHandler.DeletePortfolio)
+
 			}
+
 			// GetCertifications
 		}
 

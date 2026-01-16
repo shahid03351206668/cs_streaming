@@ -304,6 +304,25 @@ func (s *Service) AddCertification(userID string, cert models.Certification, fil
 	return &cert, nil
 }
 
+func (s *Service) UpdateCertification(userID, certID string, data models.Certification, file *multipart.FileHeader) (*models.Certification, error) {
+	var cert models.Certification
+	if err := s.db.Where("id = ? AND user_id = ?", certID, userID).First(&cert).Error; err != nil {
+		return nil, errors.New("certification not found")
+	}
+
+	if file != nil {
+		src, _ := file.Open()
+		defer src.Close()
+		url, _, err := s.s3Client.UploadFile(src, file.Filename, file.Header.Get("Content-Type"), "", "")
+		if err == nil {
+			cert.ImageURL = url
+		}
+	}
+
+	s.db.Model(&cert).Updates(data)
+	return &cert, nil
+}
+
 // func (s *Service) UpdateUser(c *gin.Context) {
 // 	var body struct {
 // 		FirstName   string `form:"first_name"`
