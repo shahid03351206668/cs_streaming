@@ -36,6 +36,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 	userHandler := user.NewHandler(userService)
 	// jobPostService := job.NewService(db, s3Client)
 	// jobPostHandler := job.NewHandler(jobPostService)
+	router.POST("api/job/send-proposal", controllers.CreateProposal)
 
 	authRoutes := router.Group("/api/auth")
 	{
@@ -59,7 +60,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 		jobRoutes.POST("/create", controllers.CreateJob)
 		jobRoutes.GET("/my", controllers.GetMyJobs)
 		jobRoutes.GET("/proposals/my", controllers.GetMyProposals)
-		jobRoutes.POST("/send-proposal", controllers.CreateProposal)
 
 		// Wildcard routes come LAST
 		jobRoutes.GET("/:id/contract", controllers.GetContracts)
