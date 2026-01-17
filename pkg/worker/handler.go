@@ -26,6 +26,8 @@ func (processor *VideoProcessor) UploadHLSFolder(folderPath, s3FolderPrefix stri
 
 	// 1. Walk through the directory recursively
 	err := filepath.Walk(folderPath, func(path string, info os.FileInfo, err error) error {
+		fmt.Println(path)
+
 		if err != nil {
 			return err
 		}
@@ -61,30 +63,40 @@ func (processor *VideoProcessor) UploadHLSFolder(folderPath, s3FolderPrefix stri
 		}
 
 		// 4. Open File
+		fmt.Println("opening file ", path)
 		file, err := os.Open(path)
+
 		if err != nil {
 			return fmt.Errorf("failed to open file %s: %w", path, err)
 		}
 		defer file.Close()
 
 		// 5. Upload to S3
-		// We pass 's3Key' as the filename. The UploadFile method handles the bucket logic.
-		url, _, err := processor.S3Client.UploadFile(file, s3Key, contentType, "", "")
+
+		fmt.Println("Uploading file ", file.Name(), s3Key, contentType)
+		fmt.Println("Uploading file ", file.Name(), s3Key, contentType)
+
+		// FIX: Use the new function that doesn't add timestamps
+		url, err := processor.S3Client.UploadFileWithFixedKey(file, s3Key, contentType)
+		fmt.Println(url)
 		if err != nil {
 			return fmt.Errorf("failed to upload %s: %w", relPath, err)
 		}
+		fmt.Println("file uploaded")
 
 		// 6. Capture Master Playlist URL
 		// We need to return this specific URL so it can be saved in the database.
 		// Note: Ensure your FFmpeg command names the main file "master.m3u8"
+
 		if strings.HasSuffix(relPath, "master.m3u8") {
 			masterURL = url
 		}
-
+		fmt.Println(masterURL)
 		return nil
 	})
 
 	if err != nil {
+		fmt.Println(err.Error())
 		return "", err
 	}
 
@@ -107,7 +119,12 @@ func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.T
 	tempDir := filepath.Join(os.TempDir(), "worker_hls", p.JobID)
 	os.MkdirAll(tempDir, 0755)
 	defer os.RemoveAll(tempDir)
+
 	tempFilePath := filepath.Join(tempDir, "downloaded.mp4")
+
+	fmt.Println("tempFilePath")
+	fmt.Println(tempFilePath)
+
 	err := processor.S3Client.DownloadFile(p.S3RawKey, "tasksy-raw-media", tempFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to download raw file: %v", err)
@@ -122,9 +139,14 @@ func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.T
 	uniqueID := fmt.Sprintf("%d", time.Now().UnixNano())
 	s3Prefix := fmt.Sprintf("jobs/%s/video/%s", p.JobID, uniqueID)
 
+	fmt.Println("uploading hls folder")
 	masterURL, err := processor.UploadHLSFolder(hlsDir, s3Prefix)
 
+	fmt.Println(p.JobID)
+	fmt.Println("hls folder uploaded")
+
 	if err != nil {
+		fmt.Println(err.Error())
 		return err
 	}
 
@@ -142,20 +164,20 @@ func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.T
 		}
 
 		if err := tx.Model(models.JobPost{}).Where("id = ?", p.JobID).Update("status", models.JobStatusOpen).Error; err != nil {
+			fmt.Println(err.Error())
 			return err
 		}
-
 		return nil
 	})
-
-	// if err == nil {
-	// processor.S3Client.DeleteObject(p.S3RawKey)
-	// }
 
 	return err
 }
 
 func generateHLS(input string, output string) error {
+	fmt.Println("generating gls video")
+	fmt.Println(input)
+	fmt.Println(output)
+
 	cmd := exec.Command("ffmpeg",
 		"-y", "-i", input,
 		"-filter_complex", "[0:v]split=2[v1][v2]; [v1]scale=w=1280:h=720[v1out]; [v2]scale=w=854:h=480[v2out]",
@@ -171,6 +193,8 @@ func generateHLS(input string, output string) error {
 		"-var_stream_map", "v:0,a:0 v:1,a:1",
 		filepath.Join(output, "v%v", "stream.m3u8"),
 	)
+
+	fmt.Println("video generated")
 
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("ffmpeg output: %s, error: %v", string(out), err)

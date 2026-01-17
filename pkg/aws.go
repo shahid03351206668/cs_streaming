@@ -52,6 +52,10 @@ func NewS3Client(appConfig *config.Config) *S3Client {
 }
 
 func (c *S3Client) UploadFile(file io.Reader, filename, contentType, region, bucketName string) (string, string, error) {
+	if logger.Log == nil {
+		logger.InitLogger()
+	}
+
 	if c.client == nil {
 		err := errors.New("S3 client is not initialized")
 		logger.Log.Error("S3 client is not setup", zap.Error(err), zap.String("operation", "aws-s3-op"))
@@ -161,4 +165,27 @@ func (c *S3Client) DownloadFile(key, bucket, path string) error {
 		return fmt.Errorf("failed to write file content: %w", err)
 	}
 	return nil
+}
+
+func (c *S3Client) UploadFileWithFixedKey(file io.Reader, key, contentType string) (string, error) {
+	targetBucket := c.appConfig.AWS.BucketName
+	region := c.appConfig.AWS.Region
+	if region == "" {
+		region = "eu-north-1"
+	}
+
+	_, err := c.client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket:      aws.String(targetBucket),
+		Key:         aws.String(key), // Use the exact key provided
+		Body:        file,
+		ContentType: aws.String(contentType),
+		ACL:         types.ObjectCannedACLPublicRead, // Ensure public access
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	// Return the fixed URL
+	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", targetBucket, region, key), nil
 }

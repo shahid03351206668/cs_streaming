@@ -23,11 +23,17 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 	s3Client := aws_services.NewS3Client(appConfig)
 
 	redisOpt := asynq.RedisClientOpt{
-		Addr: "localhost:6379",
+		Addr: "127.0.0.1:6379",
 	}
 
 	queueClient := asynq.NewClient(redisOpt)
-	defer queueClient.Close()
+
+	// defer func() {
+	// 	if recover() != nil {
+	// 		fmt.Println(recover())
+	// 		queueClient.Close()
+	// 	}
+	// }()
 
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowAllOrigins = true

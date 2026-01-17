@@ -74,6 +74,7 @@ func NewService(db *gorm.DB, s3Client *aws_services.S3Client, queueClient *asynq
 
 func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*multipart.FileHeader) (*models.JobPost, error) {
 	fmt.Println("test create job")
+
 	jobPost := models.JobPost{
 		CreatedByID: user.ID,
 		CategoryID:  data.CategoryID,
@@ -100,6 +101,7 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 
 	fmt.Println("media files")
 	fmt.Println(media)
+
 	for _, f := range media {
 		fileType := f.Header.Get("Content-Type")
 		fmt.Println("fileType", fileType)
@@ -119,23 +121,33 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 			if err != nil {
 				file.Close()
 				tx.Rollback()
-				logger.Log.Error("faild to open file", zap.Error(err))
+				logger.Log.Error("failed to upload file to s3 bucket", zap.Error(err))
 
 				return nil, err
 			}
-
 			task, _ := worker.NewVideoTranscodeTask(jobPost.ID, key, f.Filename, fileType, f.Size)
+
 			if _, err := s.queueClient.Enqueue(task, asynq.MaxRetry(3), asynq.Timeout(10*time.Minute)); err != nil {
+				fmt.Println("error while adding task into queue")
+				fmt.Println(err.Error())
 				return nil, err
 			}
 
 		} else {
 			file, err := f.Open()
-			fileUrl, key, err := s.s3Client.UploadFileToBucket(file, f.Filename, fileType, "tasksy-storage")
 			if err != nil {
 				file.Close()
 				tx.Rollback()
 				logger.Log.Error("faild to open file", zap.Error(err))
+				return nil, err
+			}
+
+			fileUrl, key, err := s.s3Client.UploadFileToBucket(file, f.Filename, fileType, "tasksy-storage")
+
+			if err != nil {
+				file.Close()
+				tx.Rollback()
+				logger.Log.Error("faild to update file to s3 bucket", zap.Error(err))
 				return nil, err
 			}
 

@@ -14,7 +14,10 @@ import (
 )
 
 func main() {
+	logger.InitLogger()
+
 	cfg := config.LoadConfig()
+
 	db, err := db.Connect(cfg.Database.URI)
 	if err != nil {
 		msg := fmt.Sprint("error while connecting to database %s", err.Error())

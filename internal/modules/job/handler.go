@@ -1,6 +1,7 @@
 package job
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -69,6 +70,7 @@ func (h *Handler) CreateJobPost(c *gin.Context) {
 	}
 
 	form, _ := c.MultipartForm()
+	fmt.Println(form)
 	files := form.File["media"]
 
 	var category models.Category
