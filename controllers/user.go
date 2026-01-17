@@ -231,6 +231,7 @@ func UpdateProfile(c *gin.Context) {
 		LastName    string `form:"last_name"`
 		PhoneNumber string `form:"phone_number"`
 		Email       string `form:"email"`
+		Verified    string `form:"identity_verified"`
 	}
 
 	user := c.MustGet("user").(models.User)
@@ -252,6 +253,9 @@ func UpdateProfile(c *gin.Context) {
 		updates["last_name"] = body.LastName
 	}
 
+	if body.Verified == "true" {
+		updates["identity_verified"] = true
+	}
 	// Validate and update phone number
 	if body.PhoneNumber != "" {
 		// Check if phone number is already taken by another user
