@@ -83,12 +83,13 @@ func GoogleSignInFirebaseController(c *gin.Context) {
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
 			user = models.User{
-				FirstName:     tokenInfo.GivenName,
-				LastName:      tokenInfo.FamilyName,
-				Email:         tokenInfo.Email,
-				GoogleID:      tokenInfo.Sub,
-				ProfilePhoto:  tokenInfo.Picture,
-				EmailVerified: tokenInfo.EmailVerified == "true",
+				FirstName:       tokenInfo.GivenName,
+				LastName:        tokenInfo.FamilyName,
+				Email:           tokenInfo.Email,
+				IdentityVerfied: true,
+				GoogleID:        tokenInfo.Sub,
+				ProfilePhoto:    tokenInfo.Picture,
+				EmailVerified:   tokenInfo.EmailVerified == "true",
 			}
 
 			if err := db.DB.Create(&user).Error; err != nil {

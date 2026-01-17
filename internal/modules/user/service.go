@@ -146,13 +146,14 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader) (*models
 	}
 
 	user := models.User{
-		FirstName:     data.FirstName,
-		LastName:      data.LastName,
-		Email:         data.Email,
-		PhoneVerified: true,
-		PhoneNumber:   data.PhoneNumber,
-		Password:      string(hashedPassword),
-		ProfilePhoto:  imageURL,
+		FirstName:       data.FirstName,
+		LastName:        data.LastName,
+		Email:           data.Email,
+		PhoneVerified:   true,
+		IdentityVerfied: true,
+		PhoneNumber:     data.PhoneNumber,
+		Password:        string(hashedPassword),
+		ProfilePhoto:    imageURL,
 	}
 
 	if err := s.db.Create(&user).Error; err != nil {
