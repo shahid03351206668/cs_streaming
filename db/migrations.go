@@ -42,21 +42,6 @@ func ConnectDB(dsn string) error {
 		log.Println("Database connected. Engine Version:", version)
 	}
 
-	type Category struct {
-		ID   string
-		Name string
-		// add other columns here
-	}
-
-	var categories []Category
-
-	if err := DB.Raw("SELECT * FROM categories").Scan(&categories).Error; err != nil {
-		log.Println("error:", err)
-		return err
-	}
-
-	log.Println("categories:", categories)
-
 	return nil
 }
 

@@ -1,7 +1,7 @@
 package config
 
 import (
-	"fmt"
+	// "fmt"
 	"log"
 	"os"
 
@@ -34,8 +34,9 @@ type AWSConfig struct {
 }
 
 type StripeConfig struct {
-	IdentityWebhookSecret string
-	SecretKey             string
+	WebhookSecret string
+	SecretKey     string
+	APIKey        string
 }
 
 func LoadConfig() *Config {
@@ -47,8 +48,9 @@ func LoadConfig() *Config {
 	port := getEnv("SERVER_PORT", "8080")
 	dbURI := getEnv("DB_URI", "")
 
-	fmt.Println("host, port")
-	fmt.Println(host, port)
+	// fmt.Println("host, port")
+	// fmt.Println(host, port)
+
 	if dbURI == "" {
 		log.Println("Warning: DB_URI is not set")
 	}
@@ -63,8 +65,9 @@ func LoadConfig() *Config {
 			URI: dbURI,
 		},
 		Stripe: StripeConfig{
-			IdentityWebhookSecret: getEnv("STRIPE_IDENTITY_WEBHOOK", ""),
-			SecretKey:             getEnv("STRIPE_SECRET_KEY", ""),
+			WebhookSecret: getEnv("STRIPE_WEBHOOK_SECRET", ""),
+			SecretKey:     getEnv("STRIPE_SECRET_KEY", ""),
+			APIKey:        getEnv("STRIPE_API_KEY", ""),
 		},
 		AWS: AWSConfig{
 			AccessKeyID:     getEnv("AWS_S3_USER_ACCESS_KEY_ID", ""),

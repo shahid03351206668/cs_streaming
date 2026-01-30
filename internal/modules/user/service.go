@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"mime/multipart"
+	"strings"
 	"tasksy/config"
 	"tasksy/models"
 	aws_services "tasksy/pkg"
@@ -329,4 +330,34 @@ func (s *Service) UpdateCertification(userID, certID string, data models.Certifi
 
 func (s *Service) UpdateUser(user *models.User) {
 
+}
+func (s *Service) RedeemCode(tx *gorm.DB, code string, UserID string) error {
+	var refCode models.ReferralCode
+
+	if err := tx.Where("code = ? AND is_active = ?", strings.ToUpper(strings.TrimSpace(code)), true).First(&refCode).Error; err != nil {
+		return errors.New("invalid referral code")
+	}
+
+	if refCode.OwnerID == UserID {
+		return errors.New("cannot refer yourself")
+	}
+
+	// if err := tx.Model(&models.User{}).Where("id = ?", UserID).
+	// 	Update("referred_by_id", refCode.OwnerID).Error; err != nil {
+	// 	return err
+	// }
+
+	// 3. Audit Trail: Create the Usage record
+	usage := models.ReferralUsage{
+		ReferralCodeID: refCode.ID,
+		ReferrerID:     refCode.OwnerID,
+		RefereeID:      UserID,
+		RewardAmount:   refCode.RewardAmount,
+		Status:         "pending",
+	}
+	if err := tx.Create(&usage).Error; err != nil {
+		return err
+	}
+
+	return tx.Model(&refCode).UpdateColumn("current_uses", gorm.Expr("current_uses + ?", 1)).Error
 }

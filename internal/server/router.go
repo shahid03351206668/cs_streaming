@@ -5,6 +5,7 @@ import (
 	"tasksy/controllers"
 	"tasksy/internal/modules/chat"
 	"tasksy/internal/modules/job"
+	"tasksy/internal/modules/payments"
 	"tasksy/internal/modules/user"
 	"tasksy/middleware"
 	aws_services "tasksy/pkg"
@@ -49,6 +50,11 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 	userHandler := user.NewHandler(userService)
 	jobPostService := job.NewService(db, s3Client, queueClient)
 	jobPostHandler := job.NewHandler(jobPostService)
+
+	paymentService := payments.NewService(&appConfig.Stripe, db)
+	paymentHandler := payments.NewHandler(paymentService)
+
+	router.POST("/api/v1/webhooks/stripe/payment", paymentHandler.HandlePaymentIntents)
 
 	authRoutes := router.Group("/api/auth")
 	{

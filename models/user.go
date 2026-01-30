@@ -1,6 +1,8 @@
 package models
 
 import (
+	"context"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -62,4 +64,61 @@ type Certification struct {
 	IssueDate      time.Time  `json:"issue_date" binding:"required"`
 	ExpirationDate *time.Time `json:"expiration_date"` // Pointer allows null (no expiry)`
 	ImageURL       string     `json:"image_url" binding:"required"`
+}
+
+type ReferralReward struct {
+	BaseModel
+	ReferrerID       string `gorm:"index;not null"`    // Who gets the money
+	RefereeID        string `gorm:"index;not null"`    // The new user who joined
+	ContractID       string `gorm:"index"`             // The job that triggered the reward
+	Amount           int64  `gorm:"not null"`          // Amount in cents
+	Status           string `gorm:"default:'pending'"` // pending, paid, cancelled
+	StripeTransferID string `gorm:"index"`             // Proof of payment via Stripe
+}
+
+type ReferralCode struct {
+	BaseModel
+	Code    string `gorm:"type:varchar(20);uniqueIndex;not null"`
+	OwnerID string `gorm:"index;not null"` // The User who owns the code
+	Owner   User   `gorm:"foreignKey:OwnerID"`
+
+	Type         string `gorm:"type:varchar(20);default:'standard'"` // standard, influencer, seasonal
+	RewardAmount int64  `gorm:"default:500"`                         // Amount in cents (£5)
+	MaxUses      int    `gorm:"default:-1"`                          // -1 for unlimited
+	CurrentUses  int    `gorm:"default:0"`
+	IsActive     bool   `gorm:"default:true"`
+	ExpiresAt    *time.Time
+}
+type ReferralUsage struct {
+	BaseModel
+	ReferralCodeID string       `gorm:"index;not null" json:"referral_code_id"`
+	ReferralCode   ReferralCode `gorm:"foreignKey:ReferralCodeID"`
+
+	ReferrerID string `gorm:"index;not null" json:"referrer_id"`
+	RefereeID  string `gorm:"uniqueIndex;not null" json:"referee_id"`
+
+	RewardAmount int64  `json:"reward_amount"`
+	Status       string `gorm:"type:varchar(20);default:'pending'"`
+
+	IsQualified bool       `gorm:"default:false"`
+	QualifiedAt *time.Time `json:"qualified_at,omitempty"`
+}
+
+// 1. Use AfterCreate, not AfterSave. We only increment when a NEW usage is created.
+func (u *ReferralUsage) AfterCreate(tx *gorm.DB) (err error) {
+	// 2. Atomic Increment: Much faster and safer than Count(*)
+	// We update the 'ReferralCode' table where ID matches the Usage's foreign key
+	err = tx.Model(&ReferralCode{}).
+		Where("id = ?", u.ReferralCodeID).
+		UpdateColumn("current_uses", gorm.Expr("current_uses + ?", 1)).
+		Error
+
+	if err != nil {
+		return err // This will roll back the transaction automatically
+	}
+	return nil
+}
+
+func (ReferralUsage) TableName() string {
+	return "referral_usages"
 }

@@ -100,7 +100,7 @@ func (h *Handler) StripeIdentityWebhookHandler(c *gin.Context) {
 		return
 	}
 
-	endpointSecret := h.service.appConfig.Stripe.IdentityWebhookSecret
+	endpointSecret := h.service.appConfig.Stripe.WebhookSecret
 
 	if endpointSecret == "" {
 		logger.Log.Error("Stripe Identity Webhook Secret is missing")
