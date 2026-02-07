@@ -166,6 +166,7 @@ func GetMyJobs(c *gin.Context) {
 		})
 		return
 	}
+
 	jobsList := make([]JobPostResponse, 0, len(jobs))
 	for _, job := range jobs {
 		jobsList = append(jobsList, serializeJobPost(job))

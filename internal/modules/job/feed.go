@@ -35,6 +35,7 @@ func (s *Service) GetJobFeed(category, searchQuery string, page, limit int) ([]J
 	jobsArray := make([]JobPostValue, 0, len(jobResults))
 	for _, post := range jobResults {
 		mediaList := make([]TypeMedia, 0, len(post.JobMedia))
+
 		for _, m := range post.JobMedia {
 			mediaList = append(mediaList, TypeMedia{
 				URL:       m.URL,
@@ -77,3 +78,5 @@ func (s *Service) GetJobFeed(category, searchQuery string, page, limit int) ([]J
 
 	return jobsArray, total, nil
 }
+
+

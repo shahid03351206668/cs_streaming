@@ -174,10 +174,6 @@ func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.T
 }
 
 func generateHLS(input string, output string) error {
-	fmt.Println("generating gls video")
-	fmt.Println(input)
-	fmt.Println(output)
-
 	cmd := exec.Command("ffmpeg",
 		"-y", "-i", input,
 		"-filter_complex", "[0:v]split=2[v1][v2]; [v1]scale=w=1280:h=720[v1out]; [v2]scale=w=854:h=480[v2out]",

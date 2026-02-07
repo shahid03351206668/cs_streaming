@@ -5,12 +5,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"tasksy/db"
 	"tasksy/models"
+	"tasksy/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/webhook"
+	"go.uber.org/zap"
 )
+
+var CACHED_SYSTEM_SETTINGS *models.SystemSettings
 
 type StripePaymentHandler struct {
 	service *PaymentService
@@ -23,7 +29,6 @@ func NewHandler(service *PaymentService) *StripePaymentHandler {
 func (s *StripePaymentHandler) HandlePaymentIntents(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, int64(65536))
 	payload, err := io.ReadAll(c.Request.Body)
-
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "error",
@@ -33,81 +38,68 @@ func (s *StripePaymentHandler) HandlePaymentIntents(c *gin.Context) {
 
 	endpointSecret := s.service.config.WebhookSecret
 	signature := c.GetHeader("Stripe-Signature")
-
 	event, err := webhook.ConstructEvent(payload, signature, endpointSecret)
-
 	if err != nil {
+		logger.Log.Error("webhook signature verification failed", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
 			"error":   err.Error(),
 		})
+		return
 	}
 
 	switch event.Type {
-	case "payment_intent.succeeded":
-		var intent stripe.PaymentIntent
+	case "charge.succeeded":
+		var charge stripe.Charge
 
-		err := json.Unmarshal(event.Data.Raw, &intent)
+		err := json.Unmarshal(event.Data.Raw, &charge)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error":   fmt.Sprintf("Error parsing PaymentIntent JSON: %v\n", err),
+				"error":   fmt.Sprintf("Error parsing Charge JSON: %v\n", err),
 				"message": "error",
 			})
 			return
 		}
 
-		receiptURL, cardBrand, last4 := "", "", ""
+		proposal_id := charge.Metadata["proposal_id"]
+		fmt.Println(charge.Metadata)
 
-		fmt.Println("intent.Amount")
-		fmt.Println(intent.Amount)
-
-		appFee := int64((intent.Amount / 100) * 10)
-		userID := intent.Metadata["user_id"]
-		jobID := intent.Metadata["job_id"]
-		netAmount := intent.Amount - appFee
-
-		if intent.LatestCharge != nil &&
-
-			intent.LatestCharge.PaymentMethodDetails != nil &&
-			intent.LatestCharge.PaymentMethodDetails.Card != nil {
-			cardBrand = string(intent.LatestCharge.PaymentMethodDetails.Card.Brand)
-			last4 = intent.LatestCharge.PaymentMethodDetails.Card.Last4
-			receiptURL = intent.LatestCharge.ReceiptURL
-
-		} else {
-			fmt.Println("Card details missing in webhook, using defaults.")
-		}
-
-		payment := models.Payment{
-			UserID:               userID,
-			JobID:                jobID,
-			PaymentIntentID:      intent.ID,
-			StripeEventID:        event.ID,
-			ChargeID:             intent.LatestCharge.ID,
-			Amount:               intent.Amount,
-			ApplicationFeeAmount: appFee,
-			NetAmount:            netAmount,
-			Currency:             string(intent.Currency),
-			Status:               "succeeded",
-			ReceiptURL:           receiptURL,
-			CardBrand:            cardBrand,
-			Last4:                last4,
+		var proposal *models.Proposal
+		if proposal_id != "" {
+			s.service.db.Where("id = ?", proposal_id).Preload("JobPost").First(&proposal)
 		}
 
 		tx := s.service.db.Begin()
+
 		defer func() {
-			if r := recover(); r != nil {
+			if recover() != nil {
 				tx.Rollback()
 			}
 		}()
 
-		if err := tx.Create(&payment).Error; err != nil {
-			tx.Rollback()
-			c.JSON(http.StatusForbidden, gin.H{
-				"message": "error",
-				"error":   err.Error(),
-			})
-			return
+		if proposal != nil {
+			payment, err := MakeContractPaymentFromCharge(proposal, &event, &charge)
+			if err != nil {
+				logger.Log.Error("error while create payment transaction on stripe webhook", zap.Error(err))
+			}
+
+			// Apply referral discount for first transaction
+			payerID := proposal.FreelancerID
+			if err := s.service.ApplyReferralDiscountToPayment(payment, payerID); err != nil {
+				logger.Log.Warn("failed to apply referral discount", zap.Error(err))
+			}
+
+			if err := tx.Create(&payment).Error; err != nil {
+				logger.Log.Error("error while creating payment transaction", zap.Error(err))
+			} else {
+				// Mark referral as qualified after successful payment
+				if payment.DiscountAmount > 0 {
+					if err := s.service.ProcessReferralAfterPayment(payment.ID, payerID, payment.DiscountAmount); err != nil {
+						logger.Log.Warn("failed to process referral after payment", zap.Error(err))
+					}
+				}
+			}
+
 		}
 
 		if err := tx.Commit().Error; err != nil {
@@ -121,7 +113,161 @@ func (s *StripePaymentHandler) HandlePaymentIntents(c *gin.Context) {
 
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
 		return
-		// fmt.Println("payment created successfully was attached to a Customer!")
 
+	case "payment_intent.created", "payment_intent.succeeded", "charge.updated":
+		// Acknowledge these events but no action needed
+		logger.Log.Info("received stripe event", zap.String("type", string(event.Type)))
+		c.JSON(http.StatusOK, gin.H{"message": "received"})
+		return
+
+	default:
+		// Handle unknown event types gracefully
+		logger.Log.Info("unhandled stripe event type", zap.String("type", string(event.Type)))
+		c.JSON(http.StatusOK, gin.H{"message": "received"})
+		return
 	}
+}
+
+func GetSystemSettings() (*models.SystemSettings, error) {
+	if CACHED_SYSTEM_SETTINGS == nil {
+		var settings models.SystemSettings
+		err := db.DB.First(&settings).Error
+		if err == nil {
+			CACHED_SYSTEM_SETTINGS = &settings
+		}
+		return &settings, err
+	}
+	return CACHED_SYSTEM_SETTINGS, nil
+}
+
+func MakeContractPayment(contract *models.Contract, event *stripe.Event, intent *stripe.PaymentIntent) (*models.PaymentTransaction, error) {
+	var appFee int64
+
+	settings, _ := GetSystemSettings()
+
+	totalAmount := contract.TotalAmount
+	commissionPercentage := settings.ClientCommissionPercentage
+
+	if totalAmount != 0 {
+		appFee = int64(totalAmount / 100 * commissionPercentage)
+	} else {
+		appFee = 0
+	}
+
+	metadata, _ := json.Marshal(intent.Metadata)
+
+	// Get ChargeID from the latest charge if available
+	var chargeID string
+	if intent.LatestCharge != nil {
+		chargeID = intent.LatestCharge.ID
+	}
+
+	payment := models.PaymentTransaction{
+		FromUserID:    contract.ClientID,
+		ToUserID:      contract.FreelancerID,
+		MetaData:      metadata,
+		ReferenceType: "contract",
+		ReferenceID:   contract.ID,
+
+		Status:        models.PaymentStatusSuccess,
+		AppFeeAmount:  appFee,
+		StripeEventID: event.ID,
+
+		Amount:    int64(contract.TotalAmount),
+		NetAmount: int64(contract.TotalAmount) - appFee,
+
+		PaymentIntentID: intent.ID,
+		ChargeID:        chargeID,
+	}
+
+	return &payment, nil
+}
+
+func MakeContractPaymentFromCharge(proposal *models.Proposal, event *stripe.Event, charge *stripe.Charge) (*models.PaymentTransaction, error) {
+	var appFee int64
+
+	settings, _ := GetSystemSettings()
+
+	totalAmount := proposal.BidAmount
+	commissionPercentage := settings.ClientCommissionPercentage
+
+	if totalAmount != 0 {
+		appFee = int64(totalAmount / 100 * commissionPercentage)
+	} else {
+		appFee = 0
+	}
+
+	metadata, _ := json.Marshal(charge.Metadata)
+
+	var paymentIntentID string
+	if charge.PaymentIntent != nil {
+		paymentIntentID = charge.PaymentIntent.ID
+	}
+
+	amount := int64(proposal.BidAmount)
+
+	payment := models.PaymentTransaction{
+		FromUserID:     proposal.FreelancerID,
+		ToUserID:       proposal.JobPost.CreatedByID,
+		MetaData:       metadata,
+		ReferenceType:  "contract",
+		ReferenceID:    proposal.ID,
+		DiscountAmount: 0,
+
+		Status:        models.PaymentStatusSuccess,
+		AppFeeAmount:  appFee,
+		StripeEventID: event.ID,
+
+		Amount:    amount,
+		NetAmount: amount - appFee,
+
+		PaymentIntentID: paymentIntentID,
+		ChargeID:        charge.ID,
+	}
+
+	return &payment, nil
+}
+
+// ApplyReferralDiscountToPayment applies referral discount to a payment and marks referral as qualified
+func (s *PaymentService) ApplyReferralDiscountToPayment(payment *models.PaymentTransaction, userID string) error {
+	// Check if user has a pending referral usage
+	var usage models.ReferralUsage
+	if err := s.db.Preload("ReferralCode").Where("referee_id = ? AND is_qualified = ?", userID, false).First(&usage).Error; err != nil {
+		// No pending referral, nothing to apply
+		return nil
+	}
+
+	// Calculate discount based on referral code
+	referralCode := usage.ReferralCode
+	var discount int64
+
+	if referralCode.DiscountAmount > 0 {
+		discount = referralCode.DiscountAmount
+	} else if referralCode.DiscountPercentage > 0 {
+		discount = (payment.Amount * referralCode.DiscountPercentage) / 100
+	}
+
+	// Cap discount at app fee amount (discount reduces commission, not the payment)
+	if discount > payment.AppFeeAmount {
+		discount = payment.AppFeeAmount
+	}
+
+	// Apply discount to payment
+	payment.DiscountAmount = discount
+	payment.AppFeeAmount = payment.AppFeeAmount - discount
+	payment.NetAmount = payment.Amount - payment.AppFeeAmount
+	payment.ReferralCodeID = &referralCode.ID
+
+	return nil
+}
+
+// ProcessReferralAfterPayment marks the referral as qualified after successful payment
+func (s *PaymentService) ProcessReferralAfterPayment(paymentID string, userID string, discountApplied int64) error {
+	var usage models.ReferralUsage
+	if err := s.db.Where("referee_id = ? AND is_qualified = ?", userID, false).First(&usage).Error; err != nil {
+		// No pending referral
+		return nil
+	}
+
+	return s.MarkReferralAsQualified(&usage, paymentID, discountApplied)
 }

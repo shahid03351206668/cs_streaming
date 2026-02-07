@@ -29,13 +29,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 
 	queueClient := asynq.NewClient(redisOpt)
 
-	// defer func() {
-	// 	if recover() != nil {
-	// 		fmt.Println(recover())
-	// 		queueClient.Close()
-	// 	}
-	// }()
-
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowAllOrigins = true
 	corsConfig.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization"}
@@ -56,6 +49,47 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 
 	router.POST("/api/v1/webhooks/stripe/payment", paymentHandler.HandlePaymentIntents)
 
+	// Payment transaction routes
+	paymentRoutes := router.Group("/api/v1/payments")
+	{
+		paymentRoutes.GET("/transactions", paymentHandler.GetPaymentTransactions)
+		paymentRoutes.GET("/transactions/:id", paymentHandler.GetPaymentTransactionByID)
+	}
+
+	// Authenticated payment routes
+	paymentProtected := router.Group("/api/v1/payments")
+	paymentProtected.Use(middleware.AuthMiddleware())
+	{
+		paymentProtected.GET("/transactions/my", paymentHandler.GetUserPaymentTransactions)
+	}
+
+	// Referral routes (public)
+	referralRoutes := router.Group("/api/v1/referrals")
+	{
+		referralRoutes.GET("/validate/:code", paymentHandler.ValidateReferralCode)
+	}
+
+	// Referral routes (authenticated)
+	referralProtected := router.Group("/api/v1/referrals")
+	referralProtected.Use(middleware.AuthMiddleware())
+	{
+		referralProtected.POST("/codes", paymentHandler.CreateReferralCode)
+		referralProtected.GET("/codes/my", paymentHandler.GetMyReferralCodes)
+		referralProtected.GET("/codes/:id", paymentHandler.GetReferralCodeByID)
+		referralProtected.PUT("/codes/:id", paymentHandler.UpdateReferralCode)
+		referralProtected.DELETE("/codes/:id", paymentHandler.DeleteReferralCode)
+		referralProtected.GET("/my", paymentHandler.GetMyReferrals)
+		referralProtected.GET("/status", paymentHandler.GetMyReferralStatus)
+	}
+
+	// Admin referral routes
+	referralAdmin := router.Group("/api/v1/admin/referrals")
+	referralAdmin.Use(middleware.AuthMiddleware())
+	{
+		referralAdmin.GET("/codes", paymentHandler.GetAllReferralCodes)
+		referralAdmin.GET("/usages", paymentHandler.GetAllReferralUsages)
+	}
+
 	authRoutes := router.Group("/api/auth")
 	{
 		authRoutes.POST("/register", userHandler.RegisterUser)
@@ -71,8 +105,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 		proposalRoutes.POST("/:id/decision", controllers.ManageProposalDecision)
 	}
 
-	jobRoutes := router.Group("/api/jobs")
-
+	jobRoutes := router.Group("/api/job")
 	jobRoutes.Use(middleware.AuthMiddleware())
 	{
 		jobRoutes.POST("/create", jobPostHandler.CreateJobPost)
@@ -80,7 +113,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 		jobRoutes.GET("/proposals/my", controllers.GetMyProposals)
 		jobRoutes.POST("/send-proposal", controllers.CreateProposal)
 
-		// Wildcard routes come LAST
 		jobRoutes.GET("/:id/contract", controllers.GetContracts)
 		jobRoutes.GET("/:id/proposal", controllers.GetJobProposals)
 		jobRoutes.POST("/update/:id", controllers.UpdateJob)
@@ -88,7 +120,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 
 	publicRoutes := router.Group("/api/v1")
 	{
-		// /api/v1/user/:id/profile
 		userGroup := publicRoutes.Group("/user/:id")
 		{
 			userGroup.GET("/profile", userHandler.GetUserProfile)

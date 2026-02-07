@@ -348,16 +348,16 @@ func (s *Service) RedeemCode(tx *gorm.DB, code string, UserID string) error {
 	// }
 
 	// 3. Audit Trail: Create the Usage record
-	usage := models.ReferralUsage{
-		ReferralCodeID: refCode.ID,
-		ReferrerID:     refCode.OwnerID,
-		RefereeID:      UserID,
-		RewardAmount:   refCode.RewardAmount,
-		Status:         "pending",
-	}
-	if err := tx.Create(&usage).Error; err != nil {
-		return err
-	}
+	// usage := models.ReferralUsage{
+	// 	ReferralCodeID: refCode.ID,
+	// 	ReferrerID:     refCode.OwnerID,
+	// 	RefereeID:      UserID,
+	// 	RewardAmount:   refCode.,
+	// 	Status:         "pending",
+	// }
+	// if err := tx.Create(&usage).Error; err != nil {
+	// 	return err
+	// }
 
 	return tx.Model(&refCode).UpdateColumn("current_uses", gorm.Expr("current_uses + ?", 1)).Error
 }

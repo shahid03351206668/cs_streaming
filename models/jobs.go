@@ -119,14 +119,6 @@ const (
 	ContractStatusTerminated = "terminated"
 )
 
-const (
-	PaymentStatusPending    = "pending"
-	PaymentStatusProcessing = "processing"
-	PaymentStatusCompleted  = "completed"
-	PaymentStatusFailed     = "failed"
-	PaymentStatusRefunded   = "refunded"
-)
-
 type Contract struct {
 	BaseModel
 	JobPostID           string     `gorm:"not null;index" json:"job_post_id"`
@@ -153,39 +145,8 @@ type Contract struct {
 	Reviews []Review `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"reviews,omitempty"`
 }
 
-type Payment struct {
-	BaseModel
-
-	FromUser   string `gorm:"index"`
-	ToUser   string `gorm:"index"`
-
-	UserID     string `gorm:"index"`
-	JobID      string `gorm:"index"`
-	ContractID string `gorm:"index"`
-
-	PaymentIntentID string `gorm:"uniqueIndex;type:varchar(100);not null"`
-	ChargeID        string `gorm:"index;type:varchar(100)"`
-	StripeEventID   string `gorm:"uniqueIndex;type:varchar(100)"` // Critical for Webhook Idempotency
-	CustomerID      string `gorm:"index;type:varchar(100)"`
-
-	// Financial Data (Always in Cents)
-	Amount               int64  `gorm:"not null"`  // Total charged to client
-	ApplicationFeeAmount int64  `gorm:"default:0"` // Your commission
-	NetAmount            int64  `gorm:"not null"`  // What the freelancer gets
-	Currency             string `gorm:"type:varchar(3);default:'gbp'"`
-
-	Status     string
-	ReceiptURL string `gorm:"type:text"`
-	CardBrand  string `gorm:"type:text"`
-	Last4      string `gorm:"type:text"`
-}
-
 func (Contract) TableName() string {
 	return "contracts"
-}
-
-func (Payment) TableName() string {
-	return "payments"
 }
 
 type Review struct {
@@ -205,4 +166,3 @@ type Review struct {
 func (Review) TableName() string {
 	return "reviews"
 }
-

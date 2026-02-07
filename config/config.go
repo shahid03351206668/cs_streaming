@@ -5,14 +5,18 @@ import (
 	"log"
 	"os"
 
+	// "tasksy/models"
+
+	// "github.com/golang/vscode-go/survey"
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	Server   ServerConfig
-	Database DatabaseConfig
-	AWS      AWSConfig
-	Stripe   StripeConfig
+	Server         ServerConfig
+	Database       DatabaseConfig
+	AWS            AWSConfig
+	Stripe         StripeConfig
+	SystemSettings SystemSettings
 }
 
 type ServerConfig struct {
@@ -39,6 +43,12 @@ type StripeConfig struct {
 	APIKey        string
 }
 
+type SystemSettings struct {
+	ClientCommissionPercentage     float64
+	FreelancerCommissionPercentage float64
+	ApplicationFeeAmount           int64
+}
+
 func LoadConfig() *Config {
 	if err := godotenv.Load(); err != nil {
 		log.Println("Info: No .env file found, relying on system environment variables")
@@ -56,6 +66,7 @@ func LoadConfig() *Config {
 	}
 
 	return &Config{
+		// SystemSettings: SystemSettings{},
 		Server: ServerConfig{
 			Host: host,
 			Port: port,
@@ -65,7 +76,7 @@ func LoadConfig() *Config {
 			URI: dbURI,
 		},
 		Stripe: StripeConfig{
-			WebhookSecret: getEnv("STRIPE_WEBHOOK_SECRET", ""),
+			WebhookSecret: getEnv("STRIPE_WEBHOOK_SIGNING_SECRET", ""),
 			SecretKey:     getEnv("STRIPE_SECRET_KEY", ""),
 			APIKey:        getEnv("STRIPE_API_KEY", ""),
 		},

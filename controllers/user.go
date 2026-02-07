@@ -248,6 +248,7 @@ func UpdateProfile(c *gin.Context) {
 	if body.FirstName != "" {
 		updates["first_name"] = body.FirstName
 	}
+
 	if body.LastName != "" {
 		updates["last_name"] = body.LastName
 	}

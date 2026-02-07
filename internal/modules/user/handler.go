@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"tasksy/lib"
@@ -53,14 +54,21 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 }
 
 func (h *Handler) RegisterUser(c *gin.Context) {
-	var data UserData
+	var data struct {
+		UserData
+		ReferralCode string `form:"referral_code" json:"referral_code"`
+	}
 
 	if err := c.ShouldBind(&data); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "error",
+			"error":   err.Error(),
+		})
 		return
 	}
 
 	file, _ := c.FormFile("image")
-	user, err := h.service.CreateUser(data, file)
+	user, err := h.service.CreateUser(data.UserData, file)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -70,8 +78,59 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 		return
 	}
 
+	// Handle referral code if provided
+	var referralApplied bool
+	var referralError string
+	if data.ReferralCode != "" {
+		var refCode models.ReferralCode
+		if err := h.service.db.Where("UPPER(code) = ? AND is_active = ?", strings.ToUpper(data.ReferralCode), true).First(&refCode).Error; err == nil {
+			// Check if code is not expired
+			if refCode.ExpiresAt == nil || refCode.ExpiresAt.After(time.Now()) {
+				// Check max uses
+				if refCode.MaxUses == -1 || refCode.CurrentUses < refCode.MaxUses {
+					// Check user is not using their own code
+					if refCode.OwnerID != user.ID {
+						// Create referral usage
+						usage := models.ReferralUsage{
+							ReferralCodeID: refCode.ID,
+							ReferrerID:     refCode.OwnerID,
+							RefereeID:      user.ID,
+							Status:         "pending",
+							IsQualified:    false,
+						}
+
+						tx := h.service.db.Begin()
+						if err := tx.Create(&usage).Error; err == nil {
+							// Increment usage count
+							if err := tx.Model(&models.ReferralCode{}).Where("id = ?", refCode.ID).
+								Update("current_uses", refCode.CurrentUses+1).Error; err == nil {
+								tx.Commit()
+								referralApplied = true
+							} else {
+								tx.Rollback()
+								referralError = "failed to update referral code usage"
+							}
+						} else {
+							tx.Rollback()
+							referralError = "failed to create referral usage"
+						}
+					} else {
+						referralError = "cannot use your own referral code"
+					}
+				} else {
+					referralError = "referral code has reached maximum uses"
+				}
+			} else {
+				referralError = "referral code has expired"
+			}
+		} else {
+			referralError = "invalid or inactive referral code"
+		}
+	}
+
 	tokens, err := lib.GenerateAuthTokens(user.ID, 0)
-	c.JSON(http.StatusCreated, gin.H{
+
+	response := gin.H{
 		"message": "success",
 		"user": map[string]any{
 			"id":            user.ID,
@@ -84,7 +143,16 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 			"profile_photo": user.ProfilePhoto,
 		},
 		"tokens": tokens,
-	})
+	}
+
+	if data.ReferralCode != "" {
+		response["referral_applied"] = referralApplied
+		if referralError != "" {
+			response["referral_error"] = referralError
+		}
+	}
+
+	c.JSON(http.StatusCreated, response)
 }
 
 func (h *Handler) StripeIdentityWebhookHandler(c *gin.Context) {

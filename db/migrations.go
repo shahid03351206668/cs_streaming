@@ -79,6 +79,7 @@ func Connect(dsn string) (*gorm.DB, error) {
 }
 func ApplyMigrations() error {
 	modelsToMigrate := []interface{}{
+		&models.SystemSettings{},
 		&models.User{},
 		&models.Role{},
 		&models.Permission{},
@@ -90,7 +91,7 @@ func ApplyMigrations() error {
 		&models.ProposalAttachment{},
 		&models.Review{},
 		&models.Contract{},
-		&models.Payment{},
+		&models.PaymentTransaction{},
 		&models.ChatConversation{},
 		&models.ChatMessage{},
 		&models.ChatAttachment{},
@@ -98,6 +99,8 @@ func ApplyMigrations() error {
 		&models.File{},
 		&models.Portfolio{},
 		&models.Certification{},
+		&models.ReferralCode{},
+		&models.ReferralUsage{},
 	}
 
 	if err := DB.AutoMigrate(modelsToMigrate...); err != nil {

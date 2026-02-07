@@ -75,6 +75,25 @@ func NewService(db *gorm.DB, s3Client *aws_services.S3Client, queueClient *asynq
 func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*multipart.FileHeader) (*models.JobPost, error) {
 	fmt.Println("test create job")
 
+	// Separate video files from other media files
+	var videoFiles []*multipart.FileHeader
+	var otherFiles []*multipart.FileHeader
+
+	for _, f := range media {
+		fileType := f.Header.Get("Content-Type")
+		if slices.Contains([]string{"video/mp4", "video/mov", "video/quicktime"}, fileType) {
+			videoFiles = append(videoFiles, f)
+		} else {
+			otherFiles = append(otherFiles, f)
+		}
+	}
+
+	// Determine initial status based on whether there are videos to process
+	initialStatus := models.JobStatusOpen
+	if len(videoFiles) > 0 {
+		initialStatus = models.JobStatusProcessing
+	}
+
 	jobPost := models.JobPost{
 		CreatedByID: user.ID,
 		CategoryID:  data.CategoryID,
@@ -83,9 +102,45 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 		Budget:      data.Budget,
 		OpenBudget:  data.OpenBudget,
 		Address:     data.Address,
-		Status:      models.JobStatusProcessing,
+		Status:      initialStatus,
 	}
 
+	// Upload non-video files to S3 first (outside transaction for better performance)
+	type uploadedMedia struct {
+		URL       string
+		Key       string
+		FileName  string
+		FileSize  int64
+		MediaType string
+	}
+	var uploadedFiles []uploadedMedia
+
+	for _, f := range otherFiles {
+		fileType := f.Header.Get("Content-Type")
+		file, err := f.Open()
+		if err != nil {
+			logger.Log.Error("failed to open file", zap.Error(err))
+			return nil, err
+		}
+
+		fileUrl, key, err := s.s3Client.UploadFileToBucket(file, f.Filename, fileType, "tasksy-storage")
+		file.Close()
+
+		if err != nil {
+			logger.Log.Error("failed to upload file to s3 bucket", zap.Error(err))
+			return nil, err
+		}
+
+		uploadedFiles = append(uploadedFiles, uploadedMedia{
+			URL:       fileUrl,
+			Key:       key,
+			FileName:  f.Filename,
+			FileSize:  f.Size,
+			MediaType: fileType,
+		})
+	}
+
+	// Now use transaction only for database operations
 	tx := s.db.Begin()
 
 	defer func() {
@@ -99,74 +154,51 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 		return nil, err
 	}
 
-	fmt.Println("media files")
-	fmt.Println(media)
-
-	for _, f := range media {
-		fileType := f.Header.Get("Content-Type")
-		fmt.Println("fileType", fileType)
-
-		if slices.Contains([]string{"video/mp4", "video/mov", "video/quicktime"}, fileType) {
-			rawKey := fmt.Sprintf("raw/%s/%s", jobPost.ID, f.Filename)
-			file, err := f.Open()
-
-			if err != nil {
-				file.Close()
-				tx.Rollback()
-				logger.Log.Error("faild to open file", zap.Error(err))
-				return nil, err
-			}
-
-			_, key, err := s.s3Client.UploadFileToBucket(file, rawKey, fileType, "tasksy-raw-media")
-			if err != nil {
-				file.Close()
-				tx.Rollback()
-				logger.Log.Error("failed to upload file to s3 bucket", zap.Error(err))
-
-				return nil, err
-			}
-			task, _ := worker.NewVideoTranscodeTask(jobPost.ID, key, f.Filename, fileType, f.Size)
-
-			if _, err := s.queueClient.Enqueue(task, asynq.MaxRetry(3), asynq.Timeout(10*time.Minute)); err != nil {
-				fmt.Println("error while adding task into queue")
-				fmt.Println(err.Error())
-				return nil, err
-			}
-
-		} else {
-			file, err := f.Open()
-			if err != nil {
-				file.Close()
-				tx.Rollback()
-				logger.Log.Error("faild to open file", zap.Error(err))
-				return nil, err
-			}
-
-			fileUrl, key, err := s.s3Client.UploadFileToBucket(file, f.Filename, fileType, "tasksy-storage")
-
-			if err != nil {
-				file.Close()
-				tx.Rollback()
-				logger.Log.Error("faild to update file to s3 bucket", zap.Error(err))
-				return nil, err
-			}
-
-			if err := tx.Create(&models.JobMedia{
-				JobID:     jobPost.ID,
-				URL:       fileUrl,
-				ObjectKey: key,
-				FileName:  f.Filename,
-				FileSize:  f.Size,
-				MediaType: fileType,
-			}).Error; err != nil {
-				tx.Rollback()
-				return nil, err
-			}
+	// Create media records for non-video files
+	for _, uploaded := range uploadedFiles {
+		if err := tx.Create(&models.JobMedia{
+			JobID:     jobPost.ID,
+			URL:       uploaded.URL,
+			ObjectKey: uploaded.Key,
+			FileName:  uploaded.FileName,
+			FileSize:  uploaded.FileSize,
+			MediaType: uploaded.MediaType,
+		}).Error; err != nil {
+			tx.Rollback()
+			return nil, err
 		}
 	}
 
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
+	}
+
+	// Upload video files and queue for processing (after transaction commits)
+	for _, f := range videoFiles {
+		fileType := f.Header.Get("Content-Type")
+		rawKey := fmt.Sprintf("raw/%s/%s", jobPost.ID, f.Filename)
+		file, err := f.Open()
+
+		if err != nil {
+			logger.Log.Error("failed to open file", zap.Error(err))
+			return nil, err
+		}
+
+		_, key, err := s.s3Client.UploadFileToBucket(file, rawKey, fileType, "tasksy-raw-media")
+		file.Close()
+
+		if err != nil {
+			logger.Log.Error("failed to upload file to s3 bucket", zap.Error(err))
+			return nil, err
+		}
+
+		task, _ := worker.NewVideoTranscodeTask(jobPost.ID, key, f.Filename, fileType, f.Size)
+
+		fmt.Println("sending video files into queue")
+		if _, err := s.queueClient.Enqueue(task, asynq.MaxRetry(3), asynq.Timeout(10*time.Minute)); err != nil {
+			logger.Log.Error("error while adding task into queue", zap.Error(err))
+			return nil, err
+		}
 	}
 
 	return &jobPost, nil
