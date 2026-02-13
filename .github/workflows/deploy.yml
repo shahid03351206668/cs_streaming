@@ -5,6 +5,7 @@ on:
     branches:
       - working
       # - deployment
+
 jobs:
   test-build-deploy:
     runs-on: ubuntu-latest
@@ -21,18 +22,24 @@ jobs:
       - name: install project dependencies
         run: go mod download
 
-      - name: build the golang code
+      - name: build binaries
         run: |
+          # 1. Build API Server
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o server ./cmd/api/main.go
+          
+          # 2. Build Worker (Add this line)
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o worker ./cmd/worker/main.go
+          
           ls -lah
       
-      - name: copy binary to vps
+      - name: copy binaries to vps
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
-          source: "server" 
+          # Upload BOTH files (comma separated)
+          source: "server,worker" 
           target: "/home/ubuntu/"
 
       - name: restart linux systems services
@@ -42,7 +49,18 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           script: |
-            mv /home/ubuntu/server /home/ubuntu/tasksy-server
-            chmod +x /home/ubuntu/tasksy-server
+            # Move Server Binary
+            mv /home/ubuntu/server /home/ubuntu/tasksy-server/server
+            chmod +x /home/ubuntu/tasksy-server/server
+            
+            # Move Worker Binary
+            mv /home/ubuntu/worker /home/ubuntu/tasksy-server/worker
+            chmod +x /home/ubuntu/tasksy-server/worker
+
+            # Restart BOTH Services
+            sudo systemctl daemon-reload
             sudo systemctl restart tasksy-server.service
-            sudo systemctl status tasksy-server.service --no-pager
+            sudo systemctl restart tasksy-worker.service
+            
+            # Check Status
+            sudo systemctl status tasksy-worker.service --no-pager
