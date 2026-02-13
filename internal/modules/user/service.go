@@ -216,7 +216,6 @@ func (s *Service) AddPortfolio(User *models.User, data models.Portfolio, files [
 		return nil, err
 	}
 
-	// Reload portfolio with media
 	s.db.Preload("Media", "entity_type = ?", "portfolios").First(&data, "id = ?", data.ID)
 
 	return &data, nil
@@ -292,10 +291,12 @@ func (s *Service) AddCertification(userID string, cert models.Certification, fil
 	tx := s.db.Begin()
 	cert.UserID = userID
 
+	fmt.Println("certification file:", file)
 	if file != nil {
 		src, _ := file.Open()
 		defer src.Close()
 		url, _, err := s.s3Client.UploadFile(src, file.Filename, file.Header.Get("Content-Type"), "", "")
+		fmt.Println("certification file upload url:", url)
 		if err != nil {
 			tx.Rollback()
 			return nil, err

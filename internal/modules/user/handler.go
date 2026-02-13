@@ -101,7 +101,6 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 
 						tx := h.service.db.Begin()
 						if err := tx.Create(&usage).Error; err == nil {
-							// Increment usage count
 							if err := tx.Model(&models.ReferralCode{}).Where("id = ?", refCode.ID).
 								Update("current_uses", refCode.CurrentUses+1).Error; err == nil {
 								tx.Commit()
@@ -334,9 +333,34 @@ func (h *Handler) GetPortfolio(c *gin.Context) {
 		return
 	}
 
+	type Portfolio struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		ProjectURL  string `json:"project_url"`
+		MediaURL    string `json:"media_url"`
+	}
+
+	var response []Portfolio
+
+	for _, portfolio := range data {
+		mediaURL := ""
+
+		if len(portfolio.Media) > 0 {
+			mediaURL = portfolio.Media[len(portfolio.Media)-1].URL
+		}
+
+		response = append(response, Portfolio{
+			Title:       portfolio.Title,
+			ProjectURL:  portfolio.ProjectURL,
+			Description: portfolio.Description,
+			MediaURL:    mediaURL,
+		})
+
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
-		"data":    data,
+		"data":    response,
 	})
 
 }
@@ -360,17 +384,39 @@ func (h *Handler) DeletePortfolio(c *gin.Context) {
 }
 
 func (h *Handler) GetCertifications(c *gin.Context) {
-	var results []models.Certification
+
 	userID := c.Param("id")
 
-	if err := h.service.db.Where("user_id = ?", userID).Find(&results).Error; err != nil {
+	type UserCertification struct {
+		Name           string `json:"name"`
+		IssuingOrg     string `json:"org"`
+		IssueDate      string `json:"issue_date"`
+		ExpirationDate string `json:"expiry_date"`
+		MediaURL       string `json:"media_url"`
+	}
+
+	var data []models.Certification
+
+	if err := h.service.db.Where("user_id = ?", userID).Order("created_at DESC").Find(&data).Error; err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{
 			"message": "error",
 			"error":   err.Error(),
 		})
-
 		return
+
 	}
+
+	var results []UserCertification
+	for _, i := range data {
+		results = append(results, UserCertification{
+			Name:           i.Name,
+			IssuingOrg:     i.IssuingOrg,
+			IssueDate:      i.IssueDate.String(),
+			ExpirationDate: i.ExpirationDate.String(),
+			MediaURL:       i.ImageURL,
+		})
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"data":    results,
@@ -394,7 +440,7 @@ func (h *Handler) AddCertification(c *gin.Context) {
 		ExpirationDate: expiryDate,
 	}
 
-	file, _ := c.FormFile("image")
+	file, _ := c.FormFile("media")
 	result, err := h.service.AddCertification(user.ID, cert, file)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
