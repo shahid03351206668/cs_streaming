@@ -11,3 +11,7 @@ type File struct {
 	EntityID   string `gorm:"index" json:"entity_id"`
 	EntityType string `gorm:"index" json:"entity_type"`
 }
+
+func (File) TableName() string {
+	return "files"
+}

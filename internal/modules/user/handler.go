@@ -323,7 +323,10 @@ func (h *Handler) GetPortfolio(c *gin.Context) {
 
 	id := c.Param("id")
 
-	if err := h.service.db.Preload("Media").Where("user_id = ?", id).Find(&data).Error; err != nil {
+	if err := h.service.db.
+		Preload("Media", "entity_type = ?", "portfolios").
+		Where("user_id = ?", id).
+		Find(&data).Error; err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "error",
 			"error":   err.Error(),

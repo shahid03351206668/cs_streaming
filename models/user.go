@@ -51,7 +51,11 @@ type Portfolio struct {
 	Title       string `json:"title" binding:"required"`
 	Description string `json:"description"`
 	ProjectURL  string `json:"project_url"`
-	Media       []File `gorm:"polymorphic:Entity;polymorphicValue:portfolios" json:"media"`
+	Media       []File `gorm:"foreignKey:EntityID;references:ID;constraint:OnDelete:CASCADE" json:"media"`
+}
+
+func (Portfolio) TableName() string {
+	return "portfolios"
 }
 
 type Certification struct {
@@ -62,4 +66,8 @@ type Certification struct {
 	IssueDate      time.Time  `json:"issue_date" binding:"required"`
 	ExpirationDate *time.Time `json:"expiration_date"` // Pointer allows null (no expiry)`
 	ImageURL       string     `json:"image_url" binding:"required"`
+}
+
+func (Certification) TableName() string {
+	return "certifications"
 }

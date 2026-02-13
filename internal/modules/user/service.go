@@ -216,6 +216,9 @@ func (s *Service) AddPortfolio(User *models.User, data models.Portfolio, files [
 		return nil, err
 	}
 
+	// Reload portfolio with media
+	s.db.Preload("Media", "entity_type = ?", "portfolios").First(&data, "id = ?", data.ID)
+
 	return &data, nil
 }
 
