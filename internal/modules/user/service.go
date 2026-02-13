@@ -291,7 +291,6 @@ func (s *Service) AddCertification(userID string, cert models.Certification, fil
 	tx := s.db.Begin()
 	cert.UserID = userID
 
-	fmt.Println("certification file:", file)
 	if file != nil {
 		src, _ := file.Open()
 		defer src.Close()

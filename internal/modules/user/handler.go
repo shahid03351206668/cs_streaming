@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -385,7 +386,14 @@ func (h *Handler) DeletePortfolio(c *gin.Context) {
 
 func (h *Handler) GetCertifications(c *gin.Context) {
 
-	userID := c.Param("id")
+	userIDParam := c.Param("id")
+	userID, err := strconv.Atoi(userIDParam)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "invalid user id",
+		})
+		return
+	}
 
 	type UserCertification struct {
 		Name           string `json:"name"`
@@ -397,13 +405,16 @@ func (h *Handler) GetCertifications(c *gin.Context) {
 
 	var data []models.Certification
 
-	if err := h.service.db.Where("user_id = ?", userID).Order("created_at DESC").Find(&data).Error; err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{
+	if err := h.service.db.
+		Where("user_id = ?", userID).
+		Order("created_at DESC").
+		Find(&data).Error; err != nil {
+
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "error",
 			"error":   err.Error(),
 		})
 		return
-
 	}
 
 	var results []UserCertification
@@ -411,8 +422,8 @@ func (h *Handler) GetCertifications(c *gin.Context) {
 		results = append(results, UserCertification{
 			Name:           i.Name,
 			IssuingOrg:     i.IssuingOrg,
-			IssueDate:      i.IssueDate.String(),
-			ExpirationDate: i.ExpirationDate.String(),
+			IssueDate:      i.IssueDate.Format("2006-01-02"),
+			ExpirationDate: i.ExpirationDate.Format("2006-01-02"),
 			MediaURL:       i.ImageURL,
 		})
 	}
