@@ -18,15 +18,15 @@ import (
 
 var CACHED_SYSTEM_SETTINGS *models.SystemSettings
 
-type StripePaymentHandler struct {
+type PaymentHandler struct {
 	service *PaymentService
 }
 
-func NewHandler(service *PaymentService) *StripePaymentHandler {
-	return &StripePaymentHandler{service: service}
+func NewHandler(service *PaymentService) *PaymentHandler {
+	return &PaymentHandler{service: service}
 }
 
-func (s *StripePaymentHandler) HandlePaymentIntents(c *gin.Context) {
+func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, int64(65536))
 	payload, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -83,7 +83,6 @@ func (s *StripePaymentHandler) HandlePaymentIntents(c *gin.Context) {
 				logger.Log.Error("error while create payment transaction on stripe webhook", zap.Error(err))
 			}
 
-			// Apply referral discount for first transaction
 			payerID := proposal.FreelancerID
 			if err := s.service.ApplyReferralDiscountToPayment(payment, payerID); err != nil {
 				logger.Log.Warn("failed to apply referral discount", zap.Error(err))
@@ -115,7 +114,6 @@ func (s *StripePaymentHandler) HandlePaymentIntents(c *gin.Context) {
 		return
 
 	case "payment_intent.created", "payment_intent.succeeded", "charge.updated":
-		// Acknowledge these events but no action needed
 		logger.Log.Info("received stripe event", zap.String("type", string(event.Type)))
 		c.JSON(http.StatusOK, gin.H{"message": "received"})
 		return
@@ -228,16 +226,12 @@ func MakeContractPaymentFromCharge(proposal *models.Proposal, event *stripe.Even
 	return &payment, nil
 }
 
-// ApplyReferralDiscountToPayment applies referral discount to a payment and marks referral as qualified
 func (s *PaymentService) ApplyReferralDiscountToPayment(payment *models.PaymentTransaction, userID string) error {
-	// Check if user has a pending referral usage
 	var usage models.ReferralUsage
 	if err := s.db.Preload("ReferralCode").Where("referee_id = ? AND is_qualified = ?", userID, false).First(&usage).Error; err != nil {
-		// No pending referral, nothing to apply
 		return nil
 	}
 
-	// Calculate discount based on referral code
 	referralCode := usage.ReferralCode
 	var discount int64
 
@@ -247,12 +241,10 @@ func (s *PaymentService) ApplyReferralDiscountToPayment(payment *models.PaymentT
 		discount = (payment.Amount * referralCode.DiscountPercentage) / 100
 	}
 
-	// Cap discount at app fee amount (discount reduces commission, not the payment)
 	if discount > payment.AppFeeAmount {
 		discount = payment.AppFeeAmount
 	}
 
-	// Apply discount to payment
 	payment.DiscountAmount = discount
 	payment.AppFeeAmount = payment.AppFeeAmount - discount
 	payment.NetAmount = payment.Amount - payment.AppFeeAmount
@@ -261,7 +253,6 @@ func (s *PaymentService) ApplyReferralDiscountToPayment(payment *models.PaymentT
 	return nil
 }
 
-// ProcessReferralAfterPayment marks the referral as qualified after successful payment
 func (s *PaymentService) ProcessReferralAfterPayment(paymentID string, userID string, discountApplied int64) error {
 	var usage models.ReferralUsage
 	if err := s.db.Where("referee_id = ? AND is_qualified = ?", userID, false).First(&usage).Error; err != nil {

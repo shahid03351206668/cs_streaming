@@ -7,7 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (s *StripePaymentHandler) GetPaymentTransactions(c *gin.Context) {
+func (s *PaymentHandler) GetPaymentTransactions(c *gin.Context) {
 	var params TransactionListParams
 	if err := c.ShouldBindQuery(&params); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -26,7 +26,6 @@ func (s *StripePaymentHandler) GetPaymentTransactions(c *gin.Context) {
 		return
 	}
 
-	// Calculate total pages safely
 	limit := params.Limit
 	if limit <= 0 {
 		limit = 20
@@ -48,8 +47,7 @@ func (s *StripePaymentHandler) GetPaymentTransactions(c *gin.Context) {
 	})
 }
 
-// GetPaymentTransactionByID handles GET /api/v1/payments/transactions/:id
-func (s *StripePaymentHandler) GetPaymentTransactionByID(c *gin.Context) {
+func (s *PaymentHandler) GetPaymentTransactionByID(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -74,7 +72,7 @@ func (s *StripePaymentHandler) GetPaymentTransactionByID(c *gin.Context) {
 	})
 }
 
-func (s *StripePaymentHandler) GetUserPaymentTransactions(c *gin.Context) {
+func (s *PaymentHandler) GetUserPaymentTransactions(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 	userID := user.ID
 
@@ -106,5 +104,75 @@ func (s *StripePaymentHandler) GetUserPaymentTransactions(c *gin.Context) {
 			"limit":       params.Limit,
 			"total_pages": (total + int64(params.Limit) - 1) / int64(params.Limit),
 		},
+	})
+}
+
+func (s *PaymentHandler) GetProposalPaymentDetails(c *gin.Context) {
+	proposalID := c.Param("id")
+	user := c.MustGet("user").(models.User)
+
+	var proposal models.Proposal
+	if err := s.service.db.Where("id = ?", proposalID).First(&proposal).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Proposal not found"})
+		return
+	}
+
+	settings, _ := GetSystemSettings()
+
+	bidAmount := int64(proposal.BidAmount * 100)
+	appFees := int64(settings.ApplicationFeeAmount)
+	commissionPct := int64(settings.ClientCommissionPercentage)
+	commissionAmount := int64(0)
+
+	if commissionPct > 0 {
+		commissionAmount = (bidAmount * commissionPct) / 100
+	}
+
+	discountAmount := int64(0)
+	referralCode := ""
+
+	var discountPct int64 = 0
+	var userReferral models.ReferralUsage
+
+	if err := s.service.db.Preload("ReferralCode").
+		Where("referee_id = ? AND is_qualified = ?", user.ID, false).
+		First(&userReferral).Error; err == nil {
+
+		referralCode = userReferral.ReferralCode.Code
+		discountPct = int64(userReferral.ReferralCode.DiscountPercentage)
+
+		if discountPct > 0 {
+			discountAmount = (commissionAmount * discountPct) / 100
+		}
+
+		if discountAmount > commissionAmount {
+			discountAmount = commissionAmount
+		}
+	}
+
+	finalCommission := commissionAmount - discountAmount
+	grandTotal := bidAmount + finalCommission + appFees
+	response := gin.H{
+		"proposal_id": proposal.ID,
+		"currency":    "gbp",
+		"bid_amount":  bidAmount,
+		"commission": gin.H{
+			"original_amount":  commissionAmount,
+			"percentage":       commissionPct,
+			"discount_applied": discountAmount,
+			"final_amount":     finalCommission,
+		},
+		"app_fees": appFees,
+		"referral": gin.H{
+			"code":       referralCode,
+			"percentage": discountPct,
+			"saved":      discountAmount,
+		},
+		"grand_total": grandTotal,
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data":    response,
 	})
 }

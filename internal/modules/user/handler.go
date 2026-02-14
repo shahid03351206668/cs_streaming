@@ -1,12 +1,13 @@
 package user
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,20 @@ type Handler struct {
 
 func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
+}
+
+// generateUserReferralCode generates a random referral code for new users
+func generateUserReferralCode(length int) (string, error) {
+	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	result := make([]byte, length)
+	for i := range result {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", err
+		}
+		result[i] = charset[n.Int64()]
+	}
+	return string(result), nil
 }
 
 func (h *Handler) GetUserProfile(c *gin.Context) {
@@ -57,7 +72,7 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 func (h *Handler) RegisterUser(c *gin.Context) {
 	var data struct {
 		UserData
-		ReferralCode string `form:"referral_code" json:"referral_code"`
+		ReferralCode string `form:"referrer_code" json:"referrer_code"`
 	}
 
 	if err := c.ShouldBind(&data); err != nil {
@@ -79,13 +94,11 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 		return
 	}
 
-	// Handle referral code if provided
 	var referralApplied bool
 	var referralError string
 	if data.ReferralCode != "" {
 		var refCode models.ReferralCode
 		if err := h.service.db.Where("UPPER(code) = ? AND is_active = ?", strings.ToUpper(data.ReferralCode), true).First(&refCode).Error; err == nil {
-			// Check if code is not expired
 			if refCode.ExpiresAt == nil || refCode.ExpiresAt.After(time.Now()) {
 				// Check max uses
 				if refCode.MaxUses == -1 || refCode.CurrentUses < refCode.MaxUses {
@@ -128,7 +141,36 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 		}
 	}
 
-	tokens, err := lib.GenerateAuthTokens(user.ID, 0)
+	// Create a referral code for the new user automatically
+	var userReferralCode *models.ReferralCode
+	code, err := generateUserReferralCode(8)
+	if err == nil {
+		// Try to create the referral code with retries in case of collision
+		for i := 0; i < 3; i++ {
+			var existingCode models.ReferralCode
+			if err := h.service.db.Where("UPPER(code) = ?", code).First(&existingCode).Error; err != nil {
+				// Code doesn't exist, we can use it
+				newCode := models.ReferralCode{
+					Code:               code,
+					OwnerID:            user.ID,
+					Type:               "user",
+					DiscountAmount:     0,
+					DiscountPercentage: 10, // 10% discount for referrals
+					MaxUses:            -1, // Unlimited uses
+					CurrentUses:        0,
+					IsActive:           true,
+				}
+				if err := h.service.db.Create(&newCode).Error; err == nil {
+					userReferralCode = &newCode
+					break
+				}
+			}
+			// Generate a new code if collision occurred
+			code, _ = generateUserReferralCode(8)
+		}
+	}
+
+	tokens, tokenErr := lib.GenerateAuthTokens(user.ID, 0)
 
 	response := gin.H{
 		"message": "success",
@@ -145,11 +187,24 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 		"tokens": tokens,
 	}
 
+	// Include the user's own referral code
+	if userReferralCode != nil {
+		response["my_referral_code"] = map[string]any{
+			"code":                userReferralCode.Code,
+			"discount_percentage": userReferralCode.DiscountPercentage,
+			"discount_amount":     userReferralCode.DiscountAmount,
+		}
+	}
+
 	if data.ReferralCode != "" {
 		response["referral_applied"] = referralApplied
 		if referralError != "" {
 			response["referral_error"] = referralError
 		}
+	}
+
+	if tokenErr != nil {
+		logger.Log.Error("failed to generate auth tokens", zap.Error(tokenErr))
 	}
 
 	c.JSON(http.StatusCreated, response)
@@ -385,17 +440,12 @@ func (h *Handler) DeletePortfolio(c *gin.Context) {
 }
 
 func (h *Handler) GetCertifications(c *gin.Context) {
-
-	userIDParam := c.Param("id")
-	userID, err := strconv.Atoi(userIDParam)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "invalid user id",
-		})
-		return
-	}
+	userID := c.Param("id")
+	fmt.Println("Certification user id")
+	fmt.Println(userID)
 
 	type UserCertification struct {
+		ID             string `json:"id"`
 		Name           string `json:"name"`
 		IssuingOrg     string `json:"org"`
 		IssueDate      string `json:"issue_date"`
@@ -418,8 +468,10 @@ func (h *Handler) GetCertifications(c *gin.Context) {
 	}
 
 	var results []UserCertification
+
 	for _, i := range data {
 		results = append(results, UserCertification{
+			ID:             i.ID,
 			Name:           i.Name,
 			IssuingOrg:     i.IssuingOrg,
 			IssueDate:      i.IssueDate.Format("2006-01-02"),

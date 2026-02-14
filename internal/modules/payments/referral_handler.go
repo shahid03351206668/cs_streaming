@@ -8,7 +8,7 @@ import (
 )
 
 // CreateReferralCode handles POST /api/v1/referrals/codes
-func (s *StripePaymentHandler) CreateReferralCode(c *gin.Context) {
+func (s *PaymentHandler) CreateReferralCode(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
 	var params CreateReferralCodeParams
@@ -39,7 +39,7 @@ func (s *StripePaymentHandler) CreateReferralCode(c *gin.Context) {
 }
 
 // ValidateReferralCode handles GET /api/v1/referrals/validate/:code
-func (s *StripePaymentHandler) ValidateReferralCode(c *gin.Context) {
+func (s *PaymentHandler) ValidateReferralCode(c *gin.Context) {
 	code := c.Param("code")
 	if code == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -72,7 +72,7 @@ func (s *StripePaymentHandler) ValidateReferralCode(c *gin.Context) {
 }
 
 // GetMyReferralCodes handles GET /api/v1/referrals/codes/my
-func (s *StripePaymentHandler) GetMyReferralCodes(c *gin.Context) {
+func (s *PaymentHandler) GetMyReferralCodes(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
 	codes, err := s.service.GetReferralCodesByOwner(user.ID)
@@ -91,7 +91,7 @@ func (s *StripePaymentHandler) GetMyReferralCodes(c *gin.Context) {
 }
 
 // GetMyReferrals handles GET /api/v1/referrals/my
-func (s *StripePaymentHandler) GetMyReferrals(c *gin.Context) {
+func (s *PaymentHandler) GetMyReferrals(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
 	usages, err := s.service.GetReferralUsagesByReferrer(user.ID)
@@ -111,7 +111,7 @@ func (s *StripePaymentHandler) GetMyReferrals(c *gin.Context) {
 
 // GetMyReferralStatus handles GET /api/v1/referrals/status
 // Returns the referral status for the authenticated user (as a referee)
-func (s *StripePaymentHandler) GetMyReferralStatus(c *gin.Context) {
+func (s *PaymentHandler) GetMyReferralStatus(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
 	usage, err := s.service.GetReferralUsageForUser(user.ID)
@@ -149,7 +149,7 @@ func (s *StripePaymentHandler) GetMyReferralStatus(c *gin.Context) {
 }
 
 // GetReferralCodeByID handles GET /api/v1/referrals/codes/:id
-func (s *StripePaymentHandler) GetReferralCodeByID(c *gin.Context) {
+func (s *PaymentHandler) GetReferralCodeByID(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -175,7 +175,7 @@ func (s *StripePaymentHandler) GetReferralCodeByID(c *gin.Context) {
 }
 
 // UpdateReferralCode handles PUT /api/v1/referrals/codes/:id
-func (s *StripePaymentHandler) UpdateReferralCode(c *gin.Context) {
+func (s *PaymentHandler) UpdateReferralCode(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 	id := c.Param("id")
 
@@ -234,7 +234,7 @@ func (s *StripePaymentHandler) UpdateReferralCode(c *gin.Context) {
 }
 
 // DeleteReferralCode handles DELETE /api/v1/referrals/codes/:id
-func (s *StripePaymentHandler) DeleteReferralCode(c *gin.Context) {
+func (s *PaymentHandler) DeleteReferralCode(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 	id := c.Param("id")
 
@@ -278,7 +278,7 @@ func (s *StripePaymentHandler) DeleteReferralCode(c *gin.Context) {
 }
 
 // GetAllReferralCodes handles GET /api/v1/referrals/codes (admin)
-func (s *StripePaymentHandler) GetAllReferralCodes(c *gin.Context) {
+func (s *PaymentHandler) GetAllReferralCodes(c *gin.Context) {
 	var codes []models.ReferralCode
 	if err := s.service.db.Preload("Owner").Order("created_at DESC").Find(&codes).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -313,7 +313,7 @@ func (s *StripePaymentHandler) GetAllReferralCodes(c *gin.Context) {
 }
 
 // GetAllReferralUsages handles GET /api/v1/referrals/usages (admin)
-func (s *StripePaymentHandler) GetAllReferralUsages(c *gin.Context) {
+func (s *PaymentHandler) GetAllReferralUsages(c *gin.Context) {
 	var usages []models.ReferralUsage
 	if err := s.service.db.Preload("ReferralCode").Preload("Referrer").Preload("Referee").
 		Order("created_at DESC").Find(&usages).Error; err != nil {

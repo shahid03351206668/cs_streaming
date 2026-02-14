@@ -49,7 +49,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 
 	router.POST("/api/v1/webhooks/stripe/payment", paymentHandler.HandlePaymentIntents)
 
-	// Payment transaction routes
 	paymentRoutes := router.Group("/api/v1/payments")
 	{
 		paymentRoutes.GET("/transactions", paymentHandler.GetPaymentTransactions)
@@ -80,9 +79,9 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 		referralProtected.DELETE("/codes/:id", paymentHandler.DeleteReferralCode)
 		referralProtected.GET("/my", paymentHandler.GetMyReferrals)
 		referralProtected.GET("/status", paymentHandler.GetMyReferralStatus)
+
 	}
 
-	// Admin referral routes
 	referralAdmin := router.Group("/api/v1/admin/referrals")
 	referralAdmin.Use(middleware.AuthMiddleware())
 	{
@@ -103,6 +102,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 	proposalRoutes.Use(middleware.AuthMiddleware())
 	{
 		proposalRoutes.POST("/:id/decision", controllers.ManageProposalDecision)
+		proposalRoutes.GET("/:id/payment-summary", paymentHandler.GetProposalPaymentDetails)
 	}
 
 	jobRoutes := router.Group("/api/job")

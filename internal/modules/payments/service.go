@@ -19,7 +19,6 @@ func NewService(config *config.StripeConfig, db *gorm.DB) *PaymentService {
 	}
 }
 
-// TransactionUser represents a minimal user for transaction responses
 type TransactionUser struct {
 	ID           string `json:"id"`
 	FirstName    string `json:"first_name"`
@@ -28,7 +27,6 @@ type TransactionUser struct {
 	ProfilePhoto string `json:"profile_photo"`
 }
 
-// PaymentTransactionResponse represents a payment transaction in API responses
 type PaymentTransactionResponse struct {
 	ID              string          `json:"id"`
 	TransactionDate string          `json:"transaction_date"`
@@ -46,7 +44,6 @@ type PaymentTransactionResponse struct {
 	CreatedAt       string          `json:"created_at"`
 }
 
-// TransactionListParams represents query parameters for transaction list
 type TransactionListParams struct {
 	Page     int    `form:"page"`
 	Limit    int    `form:"limit"`
@@ -57,7 +54,6 @@ type TransactionListParams struct {
 	Search   string `form:"search"`
 }
 
-// GetPaymentTransactions retrieves a paginated list of payment transactions
 func (s *PaymentService) GetPaymentTransactions(params TransactionListParams) ([]PaymentTransactionResponse, int64, error) {
 	var transactions []models.PaymentTransaction
 	var total int64

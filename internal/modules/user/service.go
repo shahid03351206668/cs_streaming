@@ -350,7 +350,6 @@ func (s *Service) RedeemCode(tx *gorm.DB, code string, UserID string) error {
 	// 	return err
 	// }
 
-	// 3. Audit Trail: Create the Usage record
 	// usage := models.ReferralUsage{
 	// 	ReferralCodeID: refCode.ID,
 	// 	ReferrerID:     refCode.OwnerID,
