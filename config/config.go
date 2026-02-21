@@ -46,7 +46,10 @@ type StripeConfig struct {
 type SystemSettings struct {
 	ClientCommissionPercentage     float64
 	FreelancerCommissionPercentage float64
+	AppFeePercentage               float64
 	ApplicationFeeAmount           int64
+	ReferralDiscountPercentage     float64
+	ReferralRewardAmount           int64
 }
 
 func LoadConfig() *Config {

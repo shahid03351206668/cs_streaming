@@ -7,6 +7,8 @@ import (
 	"strings"
 	"tasksy/models"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // ReferralCodeResponse represents a referral code in API responses
@@ -249,13 +251,22 @@ func (s *PaymentService) CalculateReferralDiscount(userID string, amount int64) 
 // MarkReferralAsQualified marks a referral as qualified after first transaction
 func (s *PaymentService) MarkReferralAsQualified(usage *models.ReferralUsage, transactionID string, discountApplied int64) error {
 	now := time.Now()
-	return s.db.Model(&models.ReferralUsage{}).Where("id = ?", usage.ID).Updates(map[string]interface{}{
+	settings, _ := GetSystemSettings()
+	reward := settings.ReferralRewardAmount
+	// Update referral usage
+	err := s.db.Model(&models.ReferralUsage{}).Where("id = ?", usage.ID).Updates(map[string]interface{}{
 		"is_qualified":         true,
 		"qualified_at":         now,
 		"status":               models.ReferralStatusQualified,
 		"first_transaction_id": transactionID,
 		"discount_applied":     discountApplied,
+		"reward_amount":        reward,
 	}).Error
+	if err != nil {
+		return err
+	}
+	// Credit reward to referrer (simple balance update, adjust as needed)
+	return s.db.Model(&models.User{}).Where("id = ?", usage.ReferrerID).UpdateColumn("referral_reward_balance", gorm.Expr("referral_reward_balance + ?", reward)).Error
 }
 
 // GetReferralCodeByOwner gets all referral codes for an owner

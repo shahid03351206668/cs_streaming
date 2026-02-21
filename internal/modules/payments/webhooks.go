@@ -139,90 +139,101 @@ func GetSystemSettings() (*models.SystemSettings, error) {
 }
 
 func MakeContractPayment(contract *models.Contract, event *stripe.Event, intent *stripe.PaymentIntent) (*models.PaymentTransaction, error) {
-	var appFee int64
-
 	settings, _ := GetSystemSettings()
-
 	totalAmount := contract.TotalAmount
-	commissionPercentage := settings.ClientCommissionPercentage
+	freelancerCommissionPct := settings.FreelancerCommissionPercentage
+	clientCommissionPct := settings.ClientCommissionPercentage
+	appFeePct := settings.AppFeePercentage
+	referralDiscountPct := settings.ReferralDiscountPercentage
 
-	if totalAmount != 0 {
-		appFee = int64(totalAmount / 100 * commissionPercentage)
-	} else {
-		appFee = 0
-	}
+	// Calculate commissions
+	freelancerCommission := int64(float64(totalAmount) * freelancerCommissionPct / 100)
+	clientCommission := int64(float64(totalAmount) * clientCommissionPct / 100)
+	appFee := int64(float64(totalAmount) * appFeePct / 100)
+
+	// Referral discount
+	referralDiscount := int64(float64(freelancerCommission+clientCommission) * referralDiscountPct / 100)
+
+	netAmount := int64(totalAmount) - freelancerCommission - clientCommission - appFee + referralDiscount
 
 	metadata, _ := json.Marshal(intent.Metadata)
-
-	// Get ChargeID from the latest charge if available
 	var chargeID string
 	if intent.LatestCharge != nil {
 		chargeID = intent.LatestCharge.ID
 	}
 
 	payment := models.PaymentTransaction{
-		FromUserID:    contract.ClientID,
-		ToUserID:      contract.FreelancerID,
-		MetaData:      metadata,
-		ReferenceType: "contract",
-		ReferenceID:   contract.ID,
-
-		Status:        models.PaymentStatusSuccess,
-		AppFeeAmount:  appFee,
-		StripeEventID: event.ID,
-
-		Amount:    int64(contract.TotalAmount),
-		NetAmount: int64(contract.TotalAmount) - appFee,
-
-		PaymentIntentID: intent.ID,
-		ChargeID:        chargeID,
+		FromUserID:                     contract.ClientID,
+		ToUserID:                       contract.FreelancerID,
+		MetaData:                       metadata,
+		ReferenceType:                  "contract",
+		ReferenceID:                    contract.ID,
+		Status:                         models.PaymentStatusSuccess,
+		StripeEventID:                  event.ID,
+		Amount:                         int64(contract.TotalAmount),
+		Currency:                       "gbp",
+		PaymentMethod:                  "gateway", // update as needed
+		GatewayRefID:                   chargeID,
+		FreelancerCommissionPercentage: freelancerCommissionPct,
+		FreelancerCommissionAmount:     freelancerCommission,
+		ClientCommissionPercentage:     clientCommissionPct,
+		ClientCommissionAmount:         clientCommission,
+		AppFeePercentage:               appFeePct,
+		AppFeeAmount:                   appFee,
+		ReferralDiscountPercentage:     referralDiscountPct,
+		ReferralDiscountAmount:         referralDiscount,
+		NetAmount:                      netAmount,
+		PaymentIntentID:                intent.ID,
+		ChargeID:                       chargeID,
 	}
-
 	return &payment, nil
 }
 
 func MakeContractPaymentFromCharge(proposal *models.Proposal, event *stripe.Event, charge *stripe.Charge) (*models.PaymentTransaction, error) {
-	var appFee int64
-
 	settings, _ := GetSystemSettings()
-
 	totalAmount := proposal.BidAmount
-	commissionPercentage := settings.ClientCommissionPercentage
+	freelancerCommissionPct := settings.FreelancerCommissionPercentage
+	clientCommissionPct := settings.ClientCommissionPercentage
+	appFeePct := settings.AppFeePercentage
+	referralDiscountPct := settings.ReferralDiscountPercentage
 
-	if totalAmount != 0 {
-		appFee = int64(totalAmount / 100 * commissionPercentage)
-	} else {
-		appFee = 0
-	}
+	freelancerCommission := int64(float64(totalAmount) * freelancerCommissionPct / 100)
+	clientCommission := int64(float64(totalAmount) * clientCommissionPct / 100)
+	appFee := int64(float64(totalAmount) * appFeePct / 100)
+	referralDiscount := int64(float64(freelancerCommission+clientCommission) * referralDiscountPct / 100)
+	netAmount := int64(totalAmount) - freelancerCommission - clientCommission - appFee + referralDiscount
 
 	metadata, _ := json.Marshal(charge.Metadata)
-
 	var paymentIntentID string
 	if charge.PaymentIntent != nil {
 		paymentIntentID = charge.PaymentIntent.ID
 	}
-
 	amount := int64(proposal.BidAmount)
 
 	payment := models.PaymentTransaction{
-		FromUserID:     proposal.FreelancerID,
-		ToUserID:       proposal.JobPost.CreatedByID,
-		MetaData:       metadata,
-		ReferenceType:  "contract",
-		ReferenceID:    proposal.ID,
-		DiscountAmount: 0,
-
-		Status:        models.PaymentStatusSuccess,
-		AppFeeAmount:  appFee,
-		StripeEventID: event.ID,
-
-		Amount:    amount,
-		NetAmount: amount - appFee,
-
-		PaymentIntentID: paymentIntentID,
-		ChargeID:        charge.ID,
+		FromUserID:                     proposal.FreelancerID,
+		ToUserID:                       proposal.JobPost.CreatedByID,
+		MetaData:                       metadata,
+		ReferenceType:                  "contract",
+		ReferenceID:                    proposal.ID,
+		Status:                         models.PaymentStatusSuccess,
+		StripeEventID:                  event.ID,
+		Amount:                         amount,
+		Currency:                       "gbp",
+		PaymentMethod:                  "gateway", // update as needed
+		GatewayRefID:                   charge.ID,
+		FreelancerCommissionPercentage: freelancerCommissionPct,
+		FreelancerCommissionAmount:     freelancerCommission,
+		ClientCommissionPercentage:     clientCommissionPct,
+		ClientCommissionAmount:         clientCommission,
+		AppFeePercentage:               appFeePct,
+		AppFeeAmount:                   appFee,
+		ReferralDiscountPercentage:     referralDiscountPct,
+		ReferralDiscountAmount:         referralDiscount,
+		NetAmount:                      netAmount,
+		PaymentIntentID:                paymentIntentID,
+		ChargeID:                       charge.ID,
 	}
-
 	return &payment, nil
 }
 

@@ -23,6 +23,7 @@ const (
 
 type PaymentTransaction struct {
 	BaseModel
+
 	MetaData        datatypes.JSON `gorm:"type:jsonb"`
 	TransactionDate time.Time      `gorm:"not null" json:"transaction_date"`
 	FromUserID      string         `gorm:"index;not null" json:"from_user_id"`
@@ -38,17 +39,33 @@ type PaymentTransaction struct {
 	ChargeID        string `gorm:"index;type:varchar(100)"`
 	StripeEventID   string `gorm:"uniqueIndex;type:varchar(100)"`
 
-	Amount         int64  `gorm:"not null" json:"amount"`
-	AppFeeAmount   int64  `gorm:"default:0" json:"app_fee_amount"`
-	DiscountAmount int64  `gorm:"default:0" json:"discount_amount"`
-	NetAmount      int64  `gorm:"not null" json:"net_amount"`
-	Currency       string `gorm:"type:varchar(3);default:'gbp'"`
+	Amount        int64  `gorm:"not null" json:"amount"`
+	Currency      string `gorm:"type:varchar(3);default:'gbp'"`
+	PaymentMethod string `gorm:"type:varchar(50);not null" json:"payment_method"`
+	GatewayRefID  string `gorm:"type:varchar(100);index" json:"gateway_ref_id"`
+
+	FreelancerCommissionPercentage float64 `gorm:"default:0" json:"freelancer_commission_percentage"`
+	FreelancerCommissionAmount     int64   `gorm:"default:0" json:"freelancer_commission_amount"`
+	ClientCommissionPercentage     float64 `gorm:"default:0" json:"client_commission_percentage"`
+	ClientCommissionAmount         int64   `gorm:"default:0" json:"client_commission_amount"`
+	AppFeePercentage               float64 `gorm:"default:0" json:"app_fee_percentage"`
+	AppFeeAmount                   int64   `gorm:"default:0" json:"app_fee_amount"`
+	ReferralDiscountPercentage     float64 `gorm:"default:0" json:"referral_discount_percentage"`
+	ReferralDiscountAmount         int64   `gorm:"default:0" json:"referral_discount_amount"`
+	NetAmount                      int64   `gorm:"not null" json:"net_amount"`
+
+	DiscountAmount int64 `gorm:"default:0" json:"discount_amount"` // legacy, for backward compatibility
 
 	// Referral tracking
-	ReferralCodeID *string       `gorm:"index" json:"referral_code_id,omitempty"`
-	ReferralCode   *ReferralCode `gorm:"foreignKey:ReferralCodeID" json:"referral_code,omitempty"`
+	ReferralCodeID       *string       `gorm:"index" json:"referral_code_id,omitempty"`
+	ReferralCode         *ReferralCode `gorm:"foreignKey:ReferralCodeID" json:"referral_code,omitempty"`
+	ReferrerID           *string       `gorm:"index" json:"referrer_id,omitempty"`
+	Referrer             *User         `gorm:"foreignKey:ReferrerID" json:"referrer,omitempty"`
+	ReferralRewardAmount int64         `gorm:"default:0" json:"referral_reward_amount"`
 
-	Status string `gorm:"index;not null"`
+	Status   string             `gorm:"index;not null"`
+	PayoutID *string            `gorm:"index" json:"payout_id,omitempty"`
+	Payout   *PayoutTransaction `gorm:"foreignKey:PayoutID" json:"payout,omitempty"`
 }
 
 func (PaymentTransaction) TableName() string {
@@ -116,4 +133,19 @@ type ReferralUsage struct {
 
 func (ReferralUsage) TableName() string {
 	return "referral_usages"
+}
+
+type GLEntry struct {
+	BaseModel
+
+	PostingDate time.Time `gorm:"index"`
+	AccountID   string    `gorm:"type:uuid;index;not null"`
+
+	Debit  int64 `gorm:"default:0"` // in
+	Credit int64 `gorm:"default:0"` // out
+
+	VoucherType string `gorm:"type:varchar(50)"`
+	VoucherNo   string `gorm:"type:uuid;index"`
+	Remarks     string `gorm:"type:text"`
+	IsCancelled bool   `gorm:"default:false"`
 }

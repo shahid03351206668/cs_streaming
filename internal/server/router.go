@@ -149,6 +149,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 	protected := router.Group("/")
 	protected.Use(middleware.AuthMiddleware())
 	{
+		protected.GET("/api/jobs/:id/payment-details", paymentHandler.GetJobPostPaymentDetails)
 		protected.GET("/api/user/profile", controllers.GetProfile)
 		protected.POST("/api/user/verify-credentials", controllers.VerifyUserCredential)
 		protected.POST("/api/user/update", controllers.UpdateProfile)
