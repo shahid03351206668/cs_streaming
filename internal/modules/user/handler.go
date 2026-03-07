@@ -44,17 +44,12 @@ func generateUserReferralCode(length int) (string, error) {
 }
 
 func (h *Handler) GetUserProfile(c *gin.Context) {
-	paramID := c.Param("id")
-	var id string
+	userID := c.Param("id")
 
-	if paramID != "" {
-		id = paramID
-	} else {
-		user := c.MustGet("user").(models.User)
-		id = user.ID
-	}
+	fmt.Println("User ID")
+	fmt.Println(userID)
 
-	res, err := h.service.GetUserProfile(id)
+	res, err := h.service.GetUserProfile(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   err.Error(),
@@ -67,10 +62,11 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 
 	if err := h.service.db.
 		Preload("Media", "entity_type = ?", "portfolios").
-		Where("user_id = ?", id).
+		Where("user_id = ?", userID).
 		Find(&portfolios).Error; err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "error",
+			"step":    "portolio",
 			"error":   err.Error(),
 		})
 		return
@@ -113,19 +109,18 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 	}
 
 	if err := h.service.db.
-		Where("user_id = ?", id).
+		Where("user_id = ?", userID).
 		Order("created_at DESC").
 		Find(&certifications).Error; err != nil {
-
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "error",
+			"step":    "certification",
 			"error":   err.Error(),
 		})
 		return
 	}
 
 	var userCertification []UserCertification
-
 	for _, i := range certifications {
 		userCertification = append(userCertification, UserCertification{
 			ID:             i.ID,
