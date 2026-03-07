@@ -76,7 +76,7 @@ func (h *Handler) InitiateChat(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "target_id is required"})
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
