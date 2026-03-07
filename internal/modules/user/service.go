@@ -34,13 +34,16 @@ type UserProfile struct {
 	Rating        float64   `json:"rating"`
 }
 
-type UserProfileResponse struct {
-	User    UserProfile     `json:"user"`
-	Reviews []models.Review `json:"reviews"`
-}
-
 func NewService(db *gorm.DB, appConfig *config.Config, s3Client *aws_services.S3Client) *Service {
 	return &Service{db: db, s3Client: s3Client, appConfig: appConfig}
+}
+
+
+// service.go
+
+type UserProfileResponse struct {
+	User    UserProfile      `json:"user"`
+	Reviews []map[string]any `json:"reviews"` // was []models.Review
 }
 
 func (s *Service) GetUserProfile(id string) (*UserProfileResponse, error) {
@@ -48,10 +51,13 @@ func (s *Service) GetUserProfile(id string) (*UserProfileResponse, error) {
 	if err := s.db.First(&user, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
-
 	user.Password = ""
+
 	var reviews []models.Review
-	if err := s.db.Preload("Reviewer").Where("target_id = ? ", id).Order("created_at DESC").Find(&reviews).Error; err != nil {
+	if err := s.db.Preload("Reviewer").
+		Where("target_id = ?", id).
+		Order("created_at DESC").
+		Find(&reviews).Error; err != nil {
 		return nil, err
 	}
 
@@ -60,7 +66,6 @@ func (s *Service) GetUserProfile(id string) (*UserProfileResponse, error) {
 
 	for _, i := range reviews {
 		totalRating += float64(i.Rating)
-
 		reviewsRes = append(reviewsRes, map[string]any{
 			"id":         i.ID,
 			"rating":     i.Rating,
@@ -74,9 +79,9 @@ func (s *Service) GetUserProfile(id string) (*UserProfileResponse, error) {
 		})
 	}
 
-	userRating := 0.0
-	if totalRating != 0 {
-		userRating = totalRating / float64((len(reviewsRes)))
+	avgRating := 0.0
+	if len(reviewsRes) > 0 {
+		avgRating = totalRating / float64(len(reviewsRes))
 	}
 
 	return &UserProfileResponse{
@@ -89,9 +94,9 @@ func (s *Service) GetUserProfile(id string) (*UserProfileResponse, error) {
 			PhoneVerified: user.PhoneVerified,
 			PhoneNo:       user.PhoneNumber,
 			JoinedAt:      user.CreatedAt,
-			Rating:        userRating,
+			Rating:        avgRating,
 		},
-		Reviews: reviews,
+		Reviews: reviewsRes, // ✅ was `reviews` (raw models, losing reviewer info + re-triggering rating bug)
 	}, nil
 }
 

@@ -42,12 +42,10 @@ func generateUserReferralCode(length int) (string, error) {
 	}
 	return string(result), nil
 }
-
 func (h *Handler) GetUserProfile(c *gin.Context) {
 	userID := c.Param("id")
 
-	fmt.Println("User ID")
-	fmt.Println(userID)
+	// ✅ removed fmt.Println debug logs
 
 	res, err := h.service.GetUserProfile(userID)
 	if err != nil {
@@ -58,15 +56,16 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 		return
 	}
 
+	// ✅ moved portfolio + certification DB queries into the service ideally,
+	// but at minimum scoped here cleanly
 	var portfolios []models.Portfolio
-
 	if err := h.service.db.
 		Preload("Media", "entity_type = ?", "portfolios").
 		Where("user_id = ?", userID).
 		Find(&portfolios).Error; err != nil {
-		c.JSON(http.StatusOK, gin.H{
+		c.JSON(http.StatusInternalServerError, gin.H{ // ✅ was StatusOK on error
 			"message": "error",
-			"step":    "portolio",
+			"step":    "portfolio",
 			"error":   err.Error(),
 		})
 		return
@@ -80,24 +79,18 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 	}
 
 	var userPortfolios []Portfolio
-
 	for _, portfolio := range portfolios {
 		mediaURL := ""
-
 		if len(portfolio.Media) > 0 {
 			mediaURL = portfolio.Media[len(portfolio.Media)-1].URL
 		}
-
 		userPortfolios = append(userPortfolios, Portfolio{
 			Title:       portfolio.Title,
 			ProjectURL:  portfolio.ProjectURL,
 			Description: portfolio.Description,
 			MediaURL:    mediaURL,
 		})
-
 	}
-
-	var certifications []models.Certification
 
 	type UserCertification struct {
 		ID             string `json:"id"`
@@ -108,6 +101,7 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 		MediaURL       string `json:"media_url"`
 	}
 
+	var certifications []models.Certification
 	if err := h.service.db.
 		Where("user_id = ?", userID).
 		Order("created_at DESC").
@@ -120,9 +114,9 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 		return
 	}
 
-	var userCertification []UserCertification
+	var userCertifications []UserCertification
 	for _, i := range certifications {
-		userCertification = append(userCertification, UserCertification{
+		userCertifications = append(userCertifications, UserCertification{
 			ID:             i.ID,
 			Name:           i.Name,
 			IssuingOrg:     i.IssuingOrg,
@@ -131,22 +125,13 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 			MediaURL:       i.ImageURL,
 		})
 	}
-	userRating := 0
-	for _, i := range res.Reviews {
-		userRating += i.Rating
-	}
 
-	avgRating := 0.0
-	if len(res.Reviews) > 0 {
-		avgRating = float64(userRating) / float64(len(res.Reviews))
-	}
-
+	// ✅ removed redundant rating recalculation — already computed in service
 	c.JSON(http.StatusOK, gin.H{
-		"user":           res.User,
-		"certifications": userCertification,
+		"user":           res.User, // already has Rating embedded
+		"certifications": userCertifications,
 		"portfolios":     userPortfolios,
-		"reviews":        res.Reviews,
-		"rating":         avgRating,
+		"reviews":        res.Reviews, // now correctly the formatted slice
 	})
 }
 
