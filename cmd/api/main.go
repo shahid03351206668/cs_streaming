@@ -25,6 +25,7 @@ func main() {
 		logger.Log.Error("error while applying migrations", zap.Error(err), zap.String("db", "db-transaction"))
 		return
 	}
+
 	func() {
 		if err := db.DB.Raw("INSERT INTO system_settings (id, client_commission_percentage, freelancer_commission_percentage, application_fee_amount ) VALUES ('system_settings', 0, 0, 0) ON CONFLICT (id) DO NOTHING;").Error; err != nil {
 			logger.Log.Error("error while initializing system settings", zap.Error(err), zap.String("operation", "server-op"))
@@ -33,7 +34,6 @@ func main() {
 		fmt.Println("System Settings Initialized")
 	}()
 
-	fmt.Println(db.DB)
 	router := server.MakeRouter(db.DB, appConfig)
 	address := appConfig.Server.Addr
 

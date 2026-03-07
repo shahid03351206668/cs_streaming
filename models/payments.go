@@ -54,9 +54,8 @@ type PaymentTransaction struct {
 	ReferralDiscountAmount         int64   `gorm:"default:0" json:"referral_discount_amount"`
 	NetAmount                      int64   `gorm:"not null" json:"net_amount"`
 
-	DiscountAmount int64 `gorm:"default:0" json:"discount_amount"` // legacy, for backward compatibility
+	DiscountAmount int64 `gorm:"default:0" json:"discount_amount"`
 
-	// Referral tracking
 	ReferralCodeID       *string       `gorm:"index" json:"referral_code_id,omitempty"`
 	ReferralCode         *ReferralCode `gorm:"foreignKey:ReferralCodeID" json:"referral_code,omitempty"`
 	ReferrerID           *string       `gorm:"index" json:"referrer_id,omitempty"`
@@ -148,4 +147,18 @@ type GLEntry struct {
 	VoucherNo   string `gorm:"type:uuid;index"`
 	Remarks     string `gorm:"type:text"`
 	IsCancelled bool   `gorm:"default:false"`
+}
+
+type TestPaymentTransactions struct {
+	Amount          int64 `gorm:"not null" json:"amount"`
+	TransactionDate *time.Time
+
+	UserID        string `gorm:"index;not null" json:"user_id"`
+	AgainstUserID string `gorm:"index;not null" json:"against_user_id"`
+
+	User        User `gorm:"foreignKey:UserID" json:"user"`
+	AgainstUser User `gorm:"foreignKey:AgainstUserID" json:"against_user"`
+
+	ReferenceType string `json:"reference_type"`
+	ReferenceNo   string `json:"reference_no"`
 }

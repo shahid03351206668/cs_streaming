@@ -148,7 +148,6 @@ func (s *PaymentService) GetPaymentTransactions(params TransactionListParams) ([
 	return result, total, nil
 }
 
-// GetPaymentTransactionByID retrieves a single payment transaction by ID
 func (s *PaymentService) GetPaymentTransactionByID(id string) (*PaymentTransactionResponse, error) {
 	var txn models.PaymentTransaction
 

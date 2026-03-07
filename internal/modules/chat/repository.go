@@ -9,7 +9,7 @@ import (
 )
 
 type Repository interface {
-	CreateConversation(participants []string) (*models.ChatConversation, error)
+	CreateConversation(participants []string, jobID string) (*models.ChatConversation, error)
 	FindPrivateChat(userA, userB string) (*models.ChatConversation, error)
 	GetUserConversations(userID string) ([]models.ChatConversation, error)
 	SaveMessage(msg *models.ChatMessage) error
@@ -61,7 +61,7 @@ func (r *chatRepository) GetHistory(conversationID string, limit, offset int) ([
 
 }
 
-func (r *chatRepository) CreateConversation(participants []string) (*models.ChatConversation, error) {
+func (r *chatRepository) CreateConversation(participants []string, jobID string) (*models.ChatConversation, error) {
 	tx := r.db.Begin()
 
 	fmt.Println(participants)
@@ -83,7 +83,7 @@ func (r *chatRepository) CreateConversation(participants []string) (*models.Chat
 		}
 	}
 
-	chat := models.ChatConversation{LastSentAt: time.Now()}
+	chat := models.ChatConversation{LastSentAt: time.Now(), JobPostID: jobID}
 
 	if err := tx.Create(&chat).Error; err != nil {
 		tx.Rollback()
@@ -156,6 +156,8 @@ func (r *chatRepository) GetUserConversations(userID string) ([]models.ChatConve
 		Where("cp.user_id = ?", userID).
 		Preload("Participants").
 		Preload("Participants.User").
+		Preload("JobPost").
+		Preload("JobPost.CreatedBy").
 		Order("last_sent_at DESC").
 		Find(&chats).Error
 

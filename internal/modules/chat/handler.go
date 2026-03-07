@@ -72,6 +72,7 @@ func (h *Handler) InitiateChat(c *gin.Context) {
 
 	var req struct {
 		TargetID string `json:"target_id" binding:"required"`
+		JobID    string `json:"job_id" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -84,7 +85,7 @@ func (h *Handler) InitiateChat(c *gin.Context) {
 		return
 	}
 
-	chat, err := h.service.InitiateChat(user.ID, req.TargetID)
+	chat, err := h.service.InitiateChat(user.ID, req.TargetID, req.JobID)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return

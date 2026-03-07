@@ -21,7 +21,7 @@ import (
 )
 
 type Service interface {
-	InitiateChat(userA, userB string) (*models.ChatConversation, error)
+	InitiateChat(userA, userB, title string) (*models.ChatConversation, error)
 	SendMessage(senderID, convID, content, msgType string, files []*multipart.FileHeader) (*models.ChatMessage, error)
 	GetInbox(userID string) ([]models.ChatConversation, error)
 	GetChatHistory(conversationID string, page, limit int) ([]models.ChatMessage, error)
@@ -97,14 +97,14 @@ func (s *chatService) uploadToS3(file io.Reader, filename, mimeType string) (str
 	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucketName, region, key), nil
 }
 
-func (s *chatService) InitiateChat(userA, userB string) (*models.ChatConversation, error) {
+func (s *chatService) InitiateChat(userA, userB, jobID string) (*models.ChatConversation, error) {
 	existing, err := s.repo.FindPrivateChat(userA, userB)
 
 	if err == nil {
 		return existing, nil
 	}
 
-	return s.repo.CreateConversation([]string{userA, userB})
+	return s.repo.CreateConversation([]string{userA, userB}, jobID)
 }
 
 func (s *chatService) SendMessage(senderID, convID, content, msgType string, files []*multipart.FileHeader) (*models.ChatMessage, error) {

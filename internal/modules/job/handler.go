@@ -10,6 +10,8 @@ import (
 	"tasksy/models"
 )
 
+// search radius in Kilometers
+const JOB_SEARCH_RADIUS = 50
 const MAX_JOBS_PER_PAGE = 20
 
 type Handler struct {
@@ -21,11 +23,32 @@ func NewHandler(s Service) *Handler {
 }
 
 func (h *Handler) JobFeedHandler(c *gin.Context) {
-
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "5"))
 	category := c.Query("category")
 	searchQuery := c.Query("query")
+
+	// Parse optional location parameters for radius-based filtering
+	var lat, lng *float64
+	if latStr := c.Query("lat"); latStr != "" {
+		if v, err := strconv.ParseFloat(latStr, 64); err == nil {
+			lat = &v
+		}
+	}
+	if lngStr := c.Query("long"); lngStr != "" {
+		if v, err := strconv.ParseFloat(lngStr, 64); err == nil {
+			lng = &v
+		}
+	}
+
+	// Both lat and long must be provided together
+	if (lat != nil && lng == nil) || (lat == nil && lng != nil) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "both 'lat' and 'long' query parameters are required for location filtering",
+			"message": "error",
+		})
+		return
+	}
 
 	if page < 1 {
 		page = 1
@@ -37,7 +60,17 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 		limit = MAX_JOBS_PER_PAGE
 	}
 
-	jobs, count, err := h.service.GetJobFeed(category, searchQuery, page, limit)
+	params := JobFeedParams{
+		Category:    category,
+		SearchQuery: searchQuery,
+		Page:        page,
+		Limit:       limit,
+		Latitude:    lat,
+		Longitude:   lng,
+		RadiusKM:    JOB_SEARCH_RADIUS,
+	}
+
+	jobs, count, err := h.service.GetJobFeed(params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   err.Error(),
@@ -46,14 +79,20 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 		return
 	}
 
+	meta := map[string]any{
+		"page":  page,
+		"limit": MAX_JOBS_PER_PAGE,
+		"total": count,
+	}
+	if lat != nil && lng != nil {
+		meta["radius_km"] = JOB_SEARCH_RADIUS
+		meta["location"] = map[string]float64{"lat": *lat, "long": *lng}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"data":    jobs,
 		"message": "success",
-		"meta": map[string]any{
-			"page":  page,
-			"limit": MAX_JOBS_PER_PAGE,
-			"total": count,
-		},
+		"meta":    meta,
 	})
 }
 

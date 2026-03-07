@@ -74,6 +74,17 @@ type JobPostVideo struct {
 	S3ObjectKey string `gorm:"type:varchar(255);not null" json:"s3_object_key"`
 }
 
+type JobPostLocation struct {
+	JobPostID  string  `gorm:"type:string;not null" json:"job_post_id"`
+	Latitude   float64 `gorm:"type:decimal(11,8);not null" json:"latitude"`
+	Longitude  float64 `gorm:"type:decimal(11,8);not null" json:"longitude"`
+	PostalCode string  `json:"pincode"`
+	Street     string  `json:"street"`
+	City       string  `gorm:"not null" json:"city"`
+	State      string  `gorm:"not null" json:"state"`
+	Country    string  `gorm:"not null" json:"country"`
+}
+
 func (Category) TableName() string {
 	return "categories"
 }

@@ -13,6 +13,8 @@ const (
 type ChatConversation struct {
 	BaseModel
 
+	JobPostID   string        `gorm:"index" json:"jobpost_id"`
+	JobPost     *JobPost      `gorm:"foreignKey:JobPostID" json:"jobpost,omitempty"`
 	LastMessage string        `gorm:"type:text" json:"last_message"`
 	LastSentAt  time.Time     `json:"last_sent_at"`
 	Messages    []ChatMessage `gorm:"foreignKey:ConversationID" json:"-"`

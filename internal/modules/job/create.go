@@ -49,6 +49,7 @@ type JobPostValue struct {
 	CreatedBy   TypeUser     `json:"created_by"`
 	Category    TypeCategory `json:"category"`
 	Media       []TypeMedia  `json:"media"`
+	DistanceKM  *float64     `json:"distance_km,omitempty"`
 	CreatedAt   time.Time    `json:"created_at"`
 	UpdatedAt   time.Time    `json:"updated_at"`
 }
@@ -60,6 +61,16 @@ type JobPostData struct {
 	Budget      float64 `form:"budget"`
 	OpenBudget  bool    `form:"open_budget"`
 	Address     string  `form:"address"`
+
+	// job location fields for job job post
+
+	City       string  `form:"city"`
+	State      string  `form:"state"`
+	Latitude   float64 `form:"latitude"`
+	Longitude  float64 `form:"longitude"`
+	PostalCode string  `form:"postalcode"`
+	Street     string  `form:"street"`
+	Country    string  `form:"country"`
 }
 
 type Service struct {
@@ -75,22 +86,21 @@ func NewService(db *gorm.DB, s3Client *aws_services.S3Client, queueClient *asynq
 func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*multipart.FileHeader) (*models.JobPost, error) {
 	fmt.Println("test create job")
 
-	// Separate video files from other media files
-	var videoFiles []*multipart.FileHeader
-	var otherFiles []*multipart.FileHeader
+	var videos []*multipart.FileHeader
+	var images []*multipart.FileHeader
 
 	for _, f := range media {
 		fileType := f.Header.Get("Content-Type")
 		if slices.Contains([]string{"video/mp4", "video/mov", "video/quicktime"}, fileType) {
-			videoFiles = append(videoFiles, f)
-		} else {
-			otherFiles = append(otherFiles, f)
+			videos = append(videos, f)
+
+		} else if slices.Contains([]string{"image/jpeg", "image/webp", "image/png"}, fileType) {
+			images = append(images, f)
 		}
 	}
 
-	// Determine initial status based on whether there are videos to process
 	initialStatus := models.JobStatusOpen
-	if len(videoFiles) > 0 {
+	if len(videos) > 0 {
 		initialStatus = models.JobStatusProcessing
 	}
 
@@ -105,7 +115,6 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 		Status:      initialStatus,
 	}
 
-	// Upload non-video files to S3 first (outside transaction for better performance)
 	type uploadedMedia struct {
 		URL       string
 		Key       string
@@ -113,11 +122,13 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 		FileSize  int64
 		MediaType string
 	}
-	var uploadedFiles []uploadedMedia
 
-	for _, f := range otherFiles {
+	var uploadedFiles []uploadedMedia
+	for _, f := range images {
+
 		fileType := f.Header.Get("Content-Type")
 		file, err := f.Open()
+
 		if err != nil {
 			logger.Log.Error("failed to open file", zap.Error(err))
 			return nil, err
@@ -140,7 +151,6 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 		})
 	}
 
-	// Now use transaction only for database operations
 	tx := s.db.Begin()
 
 	defer func() {
@@ -151,10 +161,10 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 
 	if err := tx.Create(&jobPost).Error; err != nil {
 		logger.Log.Error("Failed to create job post", zap.Error(err))
+		tx.Rollback()
 		return nil, err
 	}
 
-	// Create media records for non-video files
 	for _, uploaded := range uploadedFiles {
 		if err := tx.Create(&models.JobMedia{
 			JobID:     jobPost.ID,
@@ -169,12 +179,25 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 		}
 	}
 
+	if err := tx.Create(&models.JobPostLocation{
+		JobPostID:  jobPost.ID,
+		City:       data.City,
+		State:      data.State,
+		Latitude:   data.Latitude,
+		Longitude:  data.Longitude,
+		PostalCode: data.PostalCode,
+		Street:     data.Street,
+		Country:    data.Country,
+	}).Error; err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
 	}
 
 	// Upload video files and queue for processing (after transaction commits)
-	for _, f := range videoFiles {
+	for _, f := range videos {
 		fileType := f.Header.Get("Content-Type")
 		rawKey := fmt.Sprintf("raw/%s/%s", jobPost.ID, f.Filename)
 		file, err := f.Open()

@@ -80,6 +80,7 @@ func Connect(dsn string) (*gorm.DB, error) {
 func ApplyMigrations() error {
 	modelsToMigrate := []interface{}{
 		&models.SystemSettings{},
+		&models.JobPostLocation{}, 
 		&models.User{},
 		&models.Role{},
 		&models.Permission{},

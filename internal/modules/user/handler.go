@@ -63,9 +63,95 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 		return
 	}
 
+	var portfolios []models.Portfolio
+
+	if err := h.service.db.
+		Preload("Media", "entity_type = ?", "portfolios").
+		Where("user_id = ?", id).
+		Find(&portfolios).Error; err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "error",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	type Portfolio struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		ProjectURL  string `json:"project_url"`
+		MediaURL    string `json:"media_url"`
+	}
+
+	var userPortfolios []Portfolio
+
+	for _, portfolio := range portfolios {
+		mediaURL := ""
+
+		if len(portfolio.Media) > 0 {
+			mediaURL = portfolio.Media[len(portfolio.Media)-1].URL
+		}
+
+		userPortfolios = append(userPortfolios, Portfolio{
+			Title:       portfolio.Title,
+			ProjectURL:  portfolio.ProjectURL,
+			Description: portfolio.Description,
+			MediaURL:    mediaURL,
+		})
+
+	}
+
+	var certifications []models.Certification
+
+	type UserCertification struct {
+		ID             string `json:"id"`
+		Name           string `json:"name"`
+		IssuingOrg     string `json:"org"`
+		IssueDate      string `json:"issue_date"`
+		ExpirationDate string `json:"expiry_date"`
+		MediaURL       string `json:"media_url"`
+	}
+
+	if err := h.service.db.
+		Where("user_id = ?", id).
+		Order("created_at DESC").
+		Find(&certifications).Error; err != nil {
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "error",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	var userCertification []UserCertification
+
+	for _, i := range certifications {
+		userCertification = append(userCertification, UserCertification{
+			ID:             i.ID,
+			Name:           i.Name,
+			IssuingOrg:     i.IssuingOrg,
+			IssueDate:      i.IssueDate.Format("2006-01-02"),
+			ExpirationDate: i.ExpirationDate.Format("2006-01-02"),
+			MediaURL:       i.ImageURL,
+		})
+	}
+	userRating := 0
+	for _, i := range res.Reviews {
+		userRating += i.Rating
+	}
+
+	avgRating := 0.0
+	if len(res.Reviews) > 0 {
+		avgRating = float64(userRating) / float64(len(res.Reviews))
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"user":    res.User,
-		"reviews": res.Reviews,
+		"user":           res.User,
+		"certifications": userCertification,
+		"portfolios":     userPortfolios,
+		"reviews":        res.Reviews,
+		"rating":         avgRating,
 	})
 }
 
