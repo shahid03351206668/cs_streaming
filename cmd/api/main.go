@@ -6,22 +6,29 @@ import (
 	"tasksy/config"
 	"tasksy/db"
 	"tasksy/internal/server"
+	"tasksy/pkg/fcm"
 	"tasksy/pkg/logger"
 
 	"go.uber.org/zap"
 )
 
 func main() {
+
 	appConfig := config.LoadConfig()
 	logger.InitLogger()
+
+	fcmClient, err := fcm.NewFCMClient(appConfig.Firebase.CredentialsFile)
+	if err != nil {
+		logger.Log.Error("failed to initialize FCM client", zap.Error(err))
+		return
+	}
 
 	if err := db.ConnectDB(appConfig.Database.URI); err != nil {
 		logger.Log.Error("failed to connect to database", zap.Error(err), zap.String("operation", "server-op"))
 		return
 	}
 
-	err := db.ApplyMigrations()
-	if err != nil {
+	if db.ApplyMigrations() != nil {
 		logger.Log.Error("error while applying migrations", zap.Error(err), zap.String("db", "db-transaction"))
 		return
 	}
@@ -34,7 +41,7 @@ func main() {
 		fmt.Println("System Settings Initialized")
 	}()
 
-	router := server.MakeRouter(db.DB, appConfig)
+	router := server.MakeRouter(db.DB, appConfig, fcmClient)
 	address := appConfig.Server.Addr
 
 	log.Printf("Server starting on address %s", address)

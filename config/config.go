@@ -11,12 +11,17 @@ import (
 	"github.com/joho/godotenv"
 )
 
+type FirebaseConfig struct {
+	CredentialsFile string `mapstructure:"credentials_file"`
+}
+
 type Config struct {
 	Server         ServerConfig
 	Database       DatabaseConfig
 	AWS            AWSConfig
 	Stripe         StripeConfig
 	SystemSettings SystemSettings
+	Firebase       FirebaseConfig
 }
 
 type ServerConfig struct {
@@ -89,6 +94,9 @@ func LoadConfig() *Config {
 			Region:          getEnv("AWS_S3_BUCKET_REGION", "eu-north-1"),
 			BucketName:      getEnv("AWS_S3_BUCKET_NAME", ""),
 			BucketURL:       getEnv("AWS_S3_BUCKET_URL", ""),
+		},
+		Firebase: FirebaseConfig{
+			CredentialsFile: getEnv("FIREBASE_CONFIG", ""),
 		},
 	}
 }

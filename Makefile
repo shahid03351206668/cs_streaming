@@ -9,6 +9,8 @@ worker:
 	go run cmd/worker/main.go
 
 server:
+	docker start ac489deedd8b	
+	docker start 4e014fe7c4ec
 	go run cmd/api/main.go
 
 run-all: redis

@@ -38,6 +38,32 @@ func NewService(db *gorm.DB, appConfig *config.Config, s3Client *aws_services.S3
 	return &Service{db: db, s3Client: s3Client, appConfig: appConfig}
 }
 
+func (s *Service) UpsertDeviceToken(userID, token, platform string) error {
+	token = strings.TrimSpace(token)
+	platform = strings.TrimSpace(strings.ToLower(platform))
+	if token == "" {
+		return errors.New("token is required")
+	}
+
+	now := time.Now()
+
+	var existing models.DeviceToken
+	err := s.db.Where("token = ?", token).First(&existing).Error
+	if err == nil {
+		updates := map[string]any{"user_id": userID, "last_seen_at": now}
+		if platform != "" {
+			updates["platform"] = platform
+		}
+		return s.db.Model(&models.DeviceToken{}).Where("id = ?", existing.ID).Updates(updates).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	dt := models.DeviceToken{UserID: userID, Token: token, Platform: platform, LastSeenAt: now}
+	return s.db.Create(&dt).Error
+}
+
 
 // service.go
 

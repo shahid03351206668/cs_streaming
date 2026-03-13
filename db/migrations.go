@@ -82,6 +82,7 @@ func ApplyMigrations() error {
 		&models.SystemSettings{},
 		&models.JobPostLocation{}, 
 		&models.User{},
+		&models.DeviceToken{},
 		&models.Role{},
 		&models.Permission{},
 		&models.Category{},

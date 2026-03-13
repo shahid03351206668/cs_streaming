@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -12,6 +13,61 @@ import (
 
 type Handler struct {
 	service Service
+}
+
+func (h *Handler) GetUnreadMessages(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	conversationID := c.Param("id")
+	if conversationID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "conversation is missing", "message": "error"})
+		return
+	}
+
+	pageStr := c.DefaultQuery("page", "1")
+	page, err := strconv.Atoi(pageStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "invalid page"})
+		return
+	}
+	limitStr := c.DefaultQuery("limit", "50")
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "invalid limit"})
+		return
+	}
+
+	msgs, err := h.service.GetUnreadMessages(conversationID, user.ID, page, limit)
+	if err != nil {
+		if errors.Is(err, ErrNotParticipant) {
+			c.JSON(http.StatusForbidden, gin.H{"message": "error", "error": "forbidden"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "count": len(msgs), "data": msgs, "page": page})
+}
+
+func (h *Handler) MarkConversationRead(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	conversationID := c.Param("id")
+	if conversationID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "conversation is missing", "message": "error"})
+		return
+	}
+
+	count, err := h.service.MarkConversationRead(conversationID, user.ID)
+	if err != nil {
+		if errors.Is(err, ErrNotParticipant) {
+			c.JSON(http.StatusForbidden, gin.H{"message": "error", "error": "forbidden"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "updated": count})
 }
 
 func (h *Handler) GetChatHistory(c *gin.Context) {

@@ -1,14 +1,17 @@
 package server
 
 import (
+	"fmt"
 	"tasksy/config"
 	"tasksy/controllers"
 	"tasksy/internal/modules/chat"
 	"tasksy/internal/modules/job"
+	"tasksy/internal/modules/notifications"
 	"tasksy/internal/modules/payments"
 	"tasksy/internal/modules/user"
 	"tasksy/middleware"
 	aws_services "tasksy/pkg"
+	"tasksy/pkg/fcm"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -16,12 +19,14 @@ import (
 	"gorm.io/gorm"
 )
 
-func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
+func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient) *gin.Engine {
 	router := gin.Default()
 	router.Static("/media", "./media")
 	router.Use(middleware.LoggerMiddleware())
 
 	s3Client := aws_services.NewS3Client(appConfig)
+	notifService := notifications.NewService(fcmClient)
+	fmt.Println(notifService)
 
 	redisOpt := asynq.RedisClientOpt{
 		Addr: "127.0.0.1:6379",
@@ -151,6 +156,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 	{
 		protected.GET("/api/jobs/:id/payment-details", paymentHandler.GetJobPostPaymentDetails)
 		protected.GET("/api/user/profile", controllers.GetProfile)
+		protected.POST("/api/user/device-token", userHandler.SaveDeviceToken)
 		protected.POST("/api/user/verify-credentials", controllers.VerifyUserCredential)
 		protected.POST("/api/user/update", controllers.UpdateProfile)
 		protected.POST("/api/user/change-password", controllers.ChangePassword)
@@ -168,7 +174,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 	}
 
 	chatRepo := chat.NewRepository(db)
-	chatService := chat.NewService(chatRepo, appConfig)
+	chatService := chat.NewService(chatRepo, appConfig, notifService)
 	chatHandler := chat.NewHandler(chatService)
 
 	chatGroup := router.Group("/chat")
@@ -179,6 +185,8 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config) *gin.Engine {
 		chatProtected.GET("/inbox", chatHandler.GetInbox)
 		chatProtected.POST("/init", chatHandler.InitiateChat)
 		chatProtected.GET("/:id/history", chatHandler.GetChatHistory)
+		chatProtected.GET("/:id/unread", chatHandler.GetUnreadMessages)
+		chatProtected.POST("/:id/read", chatHandler.MarkConversationRead)
 		chatProtected.POST("/:id/message", chatHandler.SendMessage)
 	}
 

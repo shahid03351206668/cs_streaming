@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -20,17 +21,26 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
+var ErrNotParticipant = errors.New("not a participant")
+
 type Service interface {
 	InitiateChat(userA, userB, title string) (*models.ChatConversation, error)
 	SendMessage(senderID, convID, content, msgType string, files []*multipart.FileHeader) (*models.ChatMessage, error)
 	GetInbox(userID string) ([]models.ChatConversation, error)
 	GetChatHistory(conversationID string, page, limit int) ([]models.ChatMessage, error)
+	GetUnreadMessages(conversationID, userID string, page, limit int) ([]models.ChatMessage, error)
+	MarkConversationRead(conversationID, userID string) (int64, error)
 	RegisterClient(client *Client)
 	UnregisterClient(client *Client)
 }
 
+type Notifier interface {
+	NotifyNewMessage(ctx context.Context, deviceToken, senderName string) error
+}
+
 type chatService struct {
 	repo Repository
+	notifier Notifier
 	// In-Memory Connection Store
 	// UserID -> *Client
 	clients   map[string]*Client
@@ -39,7 +49,7 @@ type chatService struct {
 	appConfig *config.Config
 }
 
-func NewService(repo Repository, appConfig *config.Config) Service {
+func NewService(repo Repository, appConfig *config.Config, notifier Notifier) Service {
 
 	creds := credentials.NewStaticCredentialsProvider(
 		appConfig.AWS.AccessKeyID,
@@ -59,6 +69,7 @@ func NewService(repo Repository, appConfig *config.Config) Service {
 	}
 	return &chatService{
 		repo:      repo,
+		notifier:  notifier,
 		clients:   make(map[string]*Client),
 		s3Client:  s3Client,
 		appConfig: appConfig,
@@ -190,28 +201,84 @@ func (s *chatService) SendMessage(senderID, convID, content, msgType string, fil
 		return nil, err
 	}
 
+	// Increment unread counters for other participants
+	if err := s.repo.IncrementUnreadCount(convID, senderID); err != nil {
+		return nil, err
+	}
+
 	go func() {
 		participants, err := s.repo.GetParticipantIDs(convID)
 		if err != nil {
 			return
 		}
 
-		s.mu.RLock()
-		defer s.mu.RUnlock()
+		senderName := strings.TrimSpace(strings.TrimSpace(sender.FirstName) + " " + strings.TrimSpace(sender.LastName))
+		if senderName == "" {
+			senderName = "Someone"
+		}
 
+		// Broadcast to online recipients (short lock duration)
+		s.mu.RLock()
 		for _, uid := range participants {
 			if client, isOnline := s.clients[uid]; isOnline {
 				select {
-				case client.Send <- msg: // Send the specific message struct
-					// Success
+				case client.Send <- msg:
 				default:
-					// Client buffer full or disconnected
 				}
 			}
+		}
+		s.mu.RUnlock()
+
+		// FCM push to recipients (skip sender)
+		if s.notifier == nil {
+			return
+		}
+		for _, uid := range participants {
+			if uid == senderID {
+				continue
+			}
+			tokens, err := s.repo.GetDeviceTokensByUserID(uid)
+			if err != nil || len(tokens) == 0 {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			for _, t := range tokens {
+				_ = s.notifier.NotifyNewMessage(ctx, t, senderName)
+			}
+			cancel()
 		}
 	}()
 
 	return msg, nil
+}
+
+func (s *chatService) GetUnreadMessages(conversationID, userID string, page, limit int) ([]models.ChatMessage, error) {
+	ok, err := s.repo.IsUserParticipant(conversationID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrNotParticipant
+	}
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	offset := (page - 1) * limit
+	return s.repo.GetUnreadMessages(conversationID, userID, limit, offset)
+}
+
+func (s *chatService) MarkConversationRead(conversationID, userID string) (int64, error) {
+	ok, err := s.repo.IsUserParticipant(conversationID, userID)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, ErrNotParticipant
+	}
+	return s.repo.MarkConversationRead(conversationID, userID)
 }
 func (s *chatService) GetInbox(userID string) ([]models.ChatConversation, error) {
 	return s.repo.GetUserConversations(userID)
