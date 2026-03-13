@@ -64,7 +64,6 @@ func (s *Service) UpsertDeviceToken(userID, token, platform string) error {
 	return s.db.Create(&dt).Error
 }
 
-
 // service.go
 
 type UserProfileResponse struct {

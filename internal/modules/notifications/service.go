@@ -2,7 +2,9 @@ package notifications
 
 import (
 	"context"
+	"encoding/json"
 	"tasksy/pkg/fcm"
+	"time"
 )
 
 type Service struct {
@@ -38,11 +40,28 @@ func (s *Service) NotifyProposalDecision(ctx context.Context, deviceToken, decis
 }
 
 // NotifyNewMessage notifies a user about a new chat message
-func (s *Service) NotifyNewMessage(ctx context.Context, deviceToken, senderName string) error {
+// and includes the conversation_id inside a "record" object in the data payload
+// so the mobile app can deep-link into the correct chat screen.
+func (s *Service) NotifyNewMessage(ctx context.Context, deviceToken, senderName, conversationID, jobPostID string) error {
+	record := map[string]string{
+		"id":         conversationID,
+		"jobpost_id": jobPostID,
+	}
+
+	recordJSON, _ := json.Marshal(record)
+
+	data := map[string]string{
+		"type":              "new_message",
+		"notification_time": time.Now().Format("2006-01-02 15:04:05"),
+		"click_action":      "FLUTTER_NOTIFICATION_CLICK",
+		"screen":            "/chat",
+		"record":            string(recordJSON),
+	}
+
 	_, err := s.fcm.SendToDevice(ctx, deviceToken,
 		"New Message",
 		senderName+" sent you a message",
-		map[string]string{"type": "new_message"},
+		data,
 	)
 	return err
 }

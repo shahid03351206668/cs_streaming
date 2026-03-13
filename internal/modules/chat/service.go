@@ -35,11 +35,11 @@ type Service interface {
 }
 
 type Notifier interface {
-	NotifyNewMessage(ctx context.Context, deviceToken, senderName string) error
+	NotifyNewMessage(ctx context.Context, deviceToken, senderName, conversationID, jobPostID string) error
 }
 
 type chatService struct {
-	repo Repository
+	repo     Repository
 	notifier Notifier
 	// In-Memory Connection Store
 	// UserID -> *Client
@@ -242,8 +242,10 @@ func (s *chatService) SendMessage(senderID, convID, content, msgType string, fil
 				continue
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			// jobpost_id := ""
+
 			for _, t := range tokens {
-				_ = s.notifier.NotifyNewMessage(ctx, t, senderName)
+				_ = s.notifier.NotifyNewMessage(ctx, t, senderName, convID, "")
 			}
 			cancel()
 		}
