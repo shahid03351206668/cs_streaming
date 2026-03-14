@@ -79,6 +79,7 @@ type Service struct {
 	s3Client    *aws_services.S3Client
 	queueClient *asynq.Client
 	notifier    JobNotifier
+	feedCache   *jobFeedCache
 }
 
 type JobNotifier interface {
@@ -86,7 +87,14 @@ type JobNotifier interface {
 }
 
 func NewService(db *gorm.DB, s3Client *aws_services.S3Client, queueClient *asynq.Client, notifier JobNotifier) Service {
-	return Service{db: *db, s3Client: s3Client, queueClient: queueClient, notifier: notifier}
+	return Service{db: *db, s3Client: s3Client, queueClient: queueClient, notifier: notifier, feedCache: newJobFeedCache(jobFeedCacheTTL)}
+}
+
+func (s *Service) InvalidateJobFeedCache() {
+	if s.feedCache == nil {
+		return
+	}
+	s.feedCache.Clear()
 }
 
 func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*multipart.FileHeader) (*models.JobPost, error) {
@@ -203,6 +211,9 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
 	}
+
+	// New job posts affect the public feed; ensure cached feed pages refresh quickly.
+	s.InvalidateJobFeedCache()
 
 	if s.notifier != nil && jobPost.Status == models.JobStatusOpen {
 		go func(post models.JobPost, loc models.JobPostLocation) {

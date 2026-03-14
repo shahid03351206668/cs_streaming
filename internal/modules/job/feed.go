@@ -2,6 +2,7 @@ package job
 
 import (
 	"fmt"
+	"math"
 
 	"tasksy/models"
 )
@@ -38,15 +39,35 @@ const haversineSelect = `
 `
 
 func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error) {
+	if s.feedCache != nil {
+		key := jobFeedCacheKey(params)
+		if jobs, total, ok := s.feedCache.Get(key); ok {
+			return jobs, total, nil
+		}
+	}
+
 	var total int64
 
 	useLocation := params.Latitude != nil && params.Longitude != nil
 	jobQuery := s.db.Model(&models.JobPost{}).Where("job_posts.status = ?", models.JobStatusOpen)
 
 	if useLocation {
+		lat := *params.Latitude
+		lng := *params.Longitude
+
+		// Bounding-box prefilter to reduce rows before Haversine math.
+		// 1 degree latitude is ~111km. Longitude degrees shrink by cos(latitude).
+		latDelta := params.RadiusKM / 111.0
+		lngDelta := params.RadiusKM / (111.320 * math.Cos(lat*math.Pi/180.0))
+		if math.IsNaN(lngDelta) || math.IsInf(lngDelta, 0) || lngDelta > 180 {
+			lngDelta = 180
+		}
+
 		jobQuery = jobQuery.
 			Joins("JOIN job_post_locations jpl ON jpl.job_post_id = job_posts.id").
-			Where(haversineWhere+" <= ?", *params.Latitude, *params.Longitude, *params.Latitude, params.RadiusKM)
+			Where("jpl.latitude BETWEEN ? AND ?", lat-latDelta, lat+latDelta).
+			Where("jpl.longitude BETWEEN ? AND ?", lng-lngDelta, lng+lngDelta).
+			Where(haversineWhere+" <= ?", lat, lng, lat, params.RadiusKM)
 	}
 
 	if params.Category != "" {
@@ -140,6 +161,11 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 		}
 
 		jobsArray = append(jobsArray, job)
+	}
+
+	if s.feedCache != nil {
+		key := jobFeedCacheKey(params)
+		s.feedCache.Set(key, jobsArray, total)
 	}
 
 	return jobsArray, total, nil
