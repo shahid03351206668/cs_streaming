@@ -1,6 +1,7 @@
 package job
 
 import (
+	"context"
 	"fmt"
 	"mime/multipart"
 	"slices"
@@ -77,10 +78,15 @@ type Service struct {
 	db          gorm.DB
 	s3Client    *aws_services.S3Client
 	queueClient *asynq.Client
+	notifier    JobNotifier
 }
 
-func NewService(db *gorm.DB, s3Client *aws_services.S3Client, queueClient *asynq.Client) Service {
-	return Service{db: *db, s3Client: s3Client, queueClient: queueClient}
+type JobNotifier interface {
+	NotifyNewJobPostedToInterestedUsers(ctx context.Context, job *models.JobPost, loc *models.JobPostLocation) error
+}
+
+func NewService(db *gorm.DB, s3Client *aws_services.S3Client, queueClient *asynq.Client, notifier JobNotifier) Service {
+	return Service{db: *db, s3Client: s3Client, queueClient: queueClient, notifier: notifier}
 }
 
 func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*multipart.FileHeader) (*models.JobPost, error) {
@@ -179,7 +185,7 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 		}
 	}
 
-	if err := tx.Create(&models.JobPostLocation{
+	jobLocation := models.JobPostLocation{
 		JobPostID:  jobPost.ID,
 		City:       data.City,
 		State:      data.State,
@@ -188,12 +194,22 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 		PostalCode: data.PostalCode,
 		Street:     data.Street,
 		Country:    data.Country,
-	}).Error; err != nil {
+	}
+
+	if err := tx.Create(&jobLocation).Error; err != nil {
 		return nil, err
 	}
 
 	if err := tx.Commit().Error; err != nil {
 		return nil, err
+	}
+
+	if s.notifier != nil && jobPost.Status == models.JobStatusOpen {
+		go func(post models.JobPost, loc models.JobPostLocation) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = s.notifier.NotifyNewJobPostedToInterestedUsers(ctx, &post, &loc)
+		}(jobPost, jobLocation)
 	}
 
 	// Upload video files and queue for processing (after transaction commits)

@@ -25,7 +25,9 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	router.Use(middleware.LoggerMiddleware())
 
 	s3Client := aws_services.NewS3Client(appConfig)
-	notifService := notifications.NewService(fcmClient)
+	notifService := notifications.NewService(db, fcmClient)
+	notifHandler := notifications.NewHandler(notifService)
+	controllers.SetNotificationService(notifService)
 	fmt.Println(notifService)
 
 	redisOpt := asynq.RedisClientOpt{
@@ -46,7 +48,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 
 	userService := user.NewService(db, appConfig, s3Client)
 	userHandler := user.NewHandler(userService)
-	jobPostService := job.NewService(db, s3Client, queueClient)
+	jobPostService := job.NewService(db, s3Client, queueClient, notifService)
 	jobPostHandler := job.NewHandler(jobPostService)
 
 	paymentService := payments.NewService(&appConfig.Stripe, db)
@@ -160,6 +162,8 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		protected.POST("/api/user/verify-credentials", controllers.VerifyUserCredential)
 		protected.POST("/api/user/update", controllers.UpdateProfile)
 		protected.POST("/api/user/change-password", controllers.ChangePassword)
+		protected.GET("/api/v1/notifications/preferences", notifHandler.GetPreferences)
+		protected.PUT("/api/v1/notifications/preferences", notifHandler.UpsertPreferences)
 
 		protected.GET("/api/proposals/get-contract", controllers.GetContracts)
 		protected.POST("/api/proposals/create-contract", controllers.CreateContract)
@@ -174,7 +178,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	}
 
 	chatRepo := chat.NewRepository(db)
-	chatService := chat.NewService(chatRepo, appConfig, notifService)
+	chatService := chat.NewService(chatRepo, appConfig, notifService, db)
 	chatHandler := chat.NewHandler(chatService)
 
 	chatGroup := router.Group("/chat")

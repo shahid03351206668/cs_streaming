@@ -3,51 +3,260 @@ package notifications
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"math"
+	"strings"
+	"tasksy/models"
 	"tasksy/pkg/fcm"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type Service struct {
+	db  *gorm.DB
 	fcm *fcm.FCMClient
 }
 
-func NewService(fcmClient *fcm.FCMClient) *Service {
-	return &Service{fcm: fcmClient}
+func NewService(db *gorm.DB, fcmClient *fcm.FCMClient) *Service {
+	return &Service{db: db, fcm: fcmClient}
 }
 
-// NotifyProposalReceived notifies a job poster when a proposal is submitted
-func (s *Service) NotifyProposalReceived(ctx context.Context, deviceToken, jobTitle string) error {
-	_, err := s.fcm.SendToDevice(ctx, deviceToken,
+type UpsertPreferencesInput struct {
+	EnableProposalSent     *bool
+	EnableProposalReceived *bool
+	EnableProposalDecision *bool
+	EnableNewJobs          *bool
+	JobRadiusKM            *float64
+	City                   *string
+	Latitude               *float64
+	Longitude              *float64
+	CategoryIDs            *[]string
+}
+
+func (s *Service) defaultPreference(userID string) models.NotificationPreference {
+	return models.NotificationPreference{
+		UserID:                 userID,
+		EnableProposalSent:     true,
+		EnableProposalReceived: true,
+		EnableProposalDecision: true,
+		EnableNewJobs:          true,
+		JobRadiusKM:            50,
+	}
+}
+
+func (s *Service) GetNotificationPreferences(userID string) (*models.NotificationPreference, error) {
+	if s.db == nil {
+		return nil, nil
+	}
+
+	var pref models.NotificationPreference
+	err := s.db.Preload("Categories").Preload("Categories.Category").Where("user_id = ?", userID).First(&pref).Error
+	if err == nil {
+		return &pref, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	pref = s.defaultPreference(userID)
+	if err := s.db.Create(&pref).Error; err != nil {
+		return nil, err
+	}
+	if err := s.db.Preload("Categories").Preload("Categories.Category").First(&pref, "id = ?", pref.ID).Error; err != nil {
+		return nil, err
+	}
+	return &pref, nil
+}
+
+func (s *Service) UpsertNotificationPreferences(userID string, input UpsertPreferencesInput) (*models.NotificationPreference, error) {
+	if s.db == nil {
+		return nil, nil
+	}
+
+	pref, err := s.GetNotificationPreferences(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	if input.Latitude != nil && input.Longitude == nil {
+		return nil, errors.New("longitude is required when latitude is provided")
+	}
+	if input.Longitude != nil && input.Latitude == nil {
+		return nil, errors.New("latitude is required when longitude is provided")
+	}
+	if input.JobRadiusKM != nil && *input.JobRadiusKM < 0 {
+		return nil, errors.New("job_radius_km must be non-negative")
+	}
+
+	tx := s.db.Begin()
+	updates := map[string]any{}
+	if input.EnableProposalSent != nil {
+		updates["enable_proposal_sent"] = *input.EnableProposalSent
+	}
+	if input.EnableProposalReceived != nil {
+		updates["enable_proposal_received"] = *input.EnableProposalReceived
+	}
+	if input.EnableProposalDecision != nil {
+		updates["enable_proposal_decision"] = *input.EnableProposalDecision
+	}
+	if input.EnableNewJobs != nil {
+		updates["enable_new_jobs"] = *input.EnableNewJobs
+	}
+	if input.JobRadiusKM != nil {
+		updates["job_radius_km"] = *input.JobRadiusKM
+	}
+	if input.City != nil {
+		updates["city"] = strings.TrimSpace(*input.City)
+	}
+	if input.Latitude != nil {
+		updates["latitude"] = *input.Latitude
+	}
+	if input.Longitude != nil {
+		updates["longitude"] = *input.Longitude
+	}
+
+	if len(updates) > 0 {
+		if err := tx.Model(&models.NotificationPreference{}).Where("id = ?", pref.ID).Updates(updates).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
+	if input.CategoryIDs != nil {
+		if err := tx.Where("preference_id = ?", pref.ID).Delete(&models.NotificationPreferenceCategory{}).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		for _, cid := range *input.CategoryIDs {
+			cid = strings.TrimSpace(cid)
+			if cid == "" {
+				continue
+			}
+			item := models.NotificationPreferenceCategory{PreferenceID: pref.ID, CategoryID: cid}
+			if err := tx.Create(&item).Error; err != nil {
+				tx.Rollback()
+				return nil, err
+			}
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+
+	return s.GetNotificationPreferences(userID)
+}
+
+func (s *Service) getUserDeviceTokens(userID string) ([]string, error) {
+	var tokens []string
+	err := s.db.Model(&models.DeviceToken{}).Where("user_id = ?", userID).Pluck("token", &tokens).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return []string{}, nil
+	}
+	return tokens, err
+}
+
+func (s *Service) isNotificationEnabled(userID, notifType string) (bool, error) {
+	var pref models.NotificationPreference
+	err := s.db.Where("user_id = ?", userID).First(&pref).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	switch notifType {
+	case "proposal_sent":
+		return pref.EnableProposalSent, nil
+	case "proposal_received":
+		return pref.EnableProposalReceived, nil
+	case "proposal_decision":
+		return pref.EnableProposalDecision, nil
+	case "new_job":
+		return pref.EnableNewJobs, nil
+	default:
+		return true, nil
+	}
+}
+
+func (s *Service) notifyUser(ctx context.Context, userID, title, body, notifType, screen string, record map[string]string) error {
+	if s.fcm == nil || s.db == nil {
+		return nil
+	}
+	enabled, err := s.isNotificationEnabled(userID, notifType)
+	if err != nil || !enabled {
+		return err
+	}
+	tokens, err := s.getUserDeviceTokens(userID)
+	if err != nil || len(tokens) == 0 {
+		return err
+	}
+
+	recordJSON, _ := json.Marshal(record)
+	data := map[string]string{
+		"type":              notifType,
+		"notification_time": time.Now().Format("2006-01-02 15:04:05"),
+		"click_action":      "FLUTTER_NOTIFICATION_CLICK",
+		"screen":            screen,
+		"record":            string(recordJSON),
+	}
+
+	for _, token := range tokens {
+		_, _ = s.fcm.SendToDevice(ctx, token, title, body, data)
+	}
+	return nil
+}
+
+func (s *Service) NotifyProposalReceived(ctx context.Context, recipientUserID, jobTitle, proposalID, jobPostID string) error {
+	return s.notifyUser(
+		ctx,
+		recipientUserID,
 		"New Proposal Received",
 		"You received a new proposal for: "+jobTitle,
-		map[string]string{"type": "proposal_received"},
+		"proposal_received",
+		"/proposal",
+		map[string]string{"proposal_id": proposalID, "job_post_id": jobPostID},
 	)
-	return err
 }
 
-// NotifyProposalDecision notifies a freelancer when their proposal is accepted/rejected
-func (s *Service) NotifyProposalDecision(ctx context.Context, deviceToken, decision string) error {
-	title := "Proposal Accepted 🎉"
+func (s *Service) NotifyProposalDecision(ctx context.Context, recipientUserID, decision, proposalID, jobPostID string) error {
+	title := "Proposal Accepted"
 	if decision == "rejected" {
 		title = "Proposal Update"
 	}
-	_, err := s.fcm.SendToDevice(ctx, deviceToken,
+	return s.notifyUser(
+		ctx,
+		recipientUserID,
 		title,
 		"Your proposal has been "+decision,
-		map[string]string{"type": "proposal_decision", "decision": decision},
+		"proposal_decision",
+		"/proposal",
+		map[string]string{"decision": decision, "proposal_id": proposalID, "job_post_id": jobPostID},
 	)
-	return err
 }
 
-// NotifyNewMessage notifies a user about a new chat message
-// and includes the conversation_id inside a "record" object in the data payload
-// so the mobile app can deep-link into the correct chat screen.
+func (s *Service) NotifyProposalSent(ctx context.Context, recipientUserID, jobTitle, proposalID, jobPostID string) error {
+	return s.notifyUser(
+		ctx,
+		recipientUserID,
+		"Proposal Submitted",
+		"Your proposal for '"+jobTitle+"' was sent successfully",
+		"proposal_sent",
+		"/proposal",
+		map[string]string{"proposal_id": proposalID, "job_post_id": jobPostID},
+	)
+}
+
+// NotifyNewMessage notifies a user about a new chat message.
 func (s *Service) NotifyNewMessage(ctx context.Context, deviceToken, senderName, conversationID, jobPostID string) error {
 	record := map[string]string{
-		"id":         conversationID,
-		"jobpost_id": jobPostID,
+		"conversation_id": conversationID,
 	}
-
+	if strings.TrimSpace(jobPostID) != "" {
+		record["job_post_id"] = jobPostID
+	}
 	recordJSON, _ := json.Marshal(record)
 
 	data := map[string]string{
@@ -64,4 +273,68 @@ func (s *Service) NotifyNewMessage(ctx context.Context, deviceToken, senderName,
 		data,
 	)
 	return err
+}
+
+func haversineKM(lat1, lon1, lat2, lon2 float64) float64 {
+	const earthRadiusKM = 6371.0
+	dLat := (lat2 - lat1) * math.Pi / 180.0
+	dLon := (lon2 - lon1) * math.Pi / 180.0
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(lat1*math.Pi/180.0)*math.Cos(lat2*math.Pi/180.0)*
+			math.Sin(dLon/2)*math.Sin(dLon/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+	return earthRadiusKM * c
+}
+
+func (s *Service) NotifyNewJobPostedToInterestedUsers(ctx context.Context, job *models.JobPost, loc *models.JobPostLocation) error {
+	if s.db == nil || s.fcm == nil || job == nil || loc == nil {
+		return nil
+	}
+
+	var prefs []models.NotificationPreference
+	if err := s.db.Preload("Categories").Where("enable_new_jobs = ?", true).Find(&prefs).Error; err != nil {
+		return err
+	}
+
+	for _, pref := range prefs {
+		if pref.UserID == job.CreatedByID {
+			continue
+		}
+
+		if pref.City != "" && !strings.EqualFold(strings.TrimSpace(pref.City), strings.TrimSpace(loc.City)) {
+			continue
+		}
+
+		if len(pref.Categories) > 0 {
+			matchesCategory := false
+			for _, c := range pref.Categories {
+				if c.CategoryID == job.CategoryID {
+					matchesCategory = true
+					break
+				}
+			}
+			if !matchesCategory {
+				continue
+			}
+		}
+
+		if pref.Latitude != nil && pref.Longitude != nil && pref.JobRadiusKM > 0 {
+			distance := haversineKM(*pref.Latitude, *pref.Longitude, loc.Latitude, loc.Longitude)
+			if distance > pref.JobRadiusKM {
+				continue
+			}
+		}
+
+		_ = s.notifyUser(
+			ctx,
+			pref.UserID,
+			"New Job Posted",
+			job.Title,
+			"new_job",
+			"/job",
+			map[string]string{"job_post_id": job.ID, "category_id": job.CategoryID, "city": loc.City},
+		)
+	}
+
+	return nil
 }

@@ -1,10 +1,12 @@
 package controllers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"tasksy/db"
 	"tasksy/models"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -153,6 +155,15 @@ func CreateProposal(c *gin.Context) {
 		"message": "success",
 		"data":    proposal,
 	})
+
+	if notificationService != nil {
+		go func(p models.Proposal, actor models.User) {
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel()
+			_ = notificationService.NotifyProposalSent(ctx, actor.ID, p.JobPost.Title, p.ID, p.JobPostID)
+			_ = notificationService.NotifyProposalReceived(ctx, p.JobPost.CreatedByID, p.JobPost.Title, p.ID, p.JobPostID)
+		}(proposal, user)
+	}
 }
 
 func UpdateProposal(c *gin.Context) {
@@ -574,6 +585,14 @@ func ManageProposalDecision(c *gin.Context) {
 			return
 		}
 
+		if notificationService != nil {
+			go func(p models.Proposal) {
+				ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+				defer cancel()
+				_ = notificationService.NotifyProposalDecision(ctx, p.FreelancerID, models.ProposalStatusRejected, p.ID, p.JobPostID)
+			}(proposal)
+		}
+
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Proposal rejected",
 			"status":  models.ProposalStatusRejected,
@@ -625,6 +644,14 @@ func ManageProposalDecision(c *gin.Context) {
 		if err := tx.Commit().Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Transaction failed"})
 			return
+		}
+
+		if notificationService != nil {
+			go func(p models.Proposal) {
+				ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+				defer cancel()
+				_ = notificationService.NotifyProposalDecision(ctx, p.FreelancerID, models.ProposalStatusAccepted, p.ID, p.JobPostID)
+			}(proposal)
 		}
 
 		c.JSON(http.StatusOK, gin.H{

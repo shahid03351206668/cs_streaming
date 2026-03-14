@@ -19,6 +19,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"gorm.io/gorm"
 )
 
 var ErrNotParticipant = errors.New("not a participant")
@@ -41,6 +42,7 @@ type Notifier interface {
 type chatService struct {
 	repo     Repository
 	notifier Notifier
+	db       *gorm.DB
 	// In-Memory Connection Store
 	// UserID -> *Client
 	clients   map[string]*Client
@@ -49,7 +51,7 @@ type chatService struct {
 	appConfig *config.Config
 }
 
-func NewService(repo Repository, appConfig *config.Config, notifier Notifier) Service {
+func NewService(repo Repository, appConfig *config.Config, notifier Notifier, db *gorm.DB) Service {
 
 	creds := credentials.NewStaticCredentialsProvider(
 		appConfig.AWS.AccessKeyID,
@@ -68,6 +70,7 @@ func NewService(repo Repository, appConfig *config.Config, notifier Notifier) Se
 		fmt.Printf("AWS Config Error: %v\n", err)
 	}
 	return &chatService{
+		db:        db,
 		repo:      repo,
 		notifier:  notifier,
 		clients:   make(map[string]*Client),
@@ -201,10 +204,12 @@ func (s *chatService) SendMessage(senderID, convID, content, msgType string, fil
 		return nil, err
 	}
 
-	// Increment unread counters for other participants
 	if err := s.repo.IncrementUnreadCount(convID, senderID); err != nil {
 		return nil, err
 	}
+
+	var JobPostID string
+	s.db.Raw("select job_post_id from chat_conversation where id = ? ", convID).Scan(&JobPostID)
 
 	go func() {
 		participants, err := s.repo.GetParticipantIDs(convID)
@@ -217,7 +222,6 @@ func (s *chatService) SendMessage(senderID, convID, content, msgType string, fil
 			senderName = "Someone"
 		}
 
-		// Broadcast to online recipients (short lock duration)
 		s.mu.RLock()
 		for _, uid := range participants {
 			if client, isOnline := s.clients[uid]; isOnline {
@@ -242,10 +246,9 @@ func (s *chatService) SendMessage(senderID, convID, content, msgType string, fil
 				continue
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			// jobpost_id := ""
 
 			for _, t := range tokens {
-				_ = s.notifier.NotifyNewMessage(ctx, t, senderName, convID, "")
+				_ = s.notifier.NotifyNewMessage(ctx, t, senderName, convID, JobPostID)
 			}
 			cancel()
 		}

@@ -103,6 +103,8 @@ func ApplyMigrations() error {
 		&models.Certification{},
 		&models.ReferralCode{},
 		&models.ReferralUsage{},
+		&models.NotificationPreference{},
+		&models.NotificationPreferenceCategory{},
 	}
 
 	if err := DB.AutoMigrate(modelsToMigrate...); err != nil {
