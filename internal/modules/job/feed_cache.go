@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	jobFeedCacheTTL   = 15 * time.Second
+	jobFeedCacheTTL        = 15 * time.Second
 	jobFeedCacheMaxEntries = 200
 )
 
