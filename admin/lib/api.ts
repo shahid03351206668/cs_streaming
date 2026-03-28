@@ -1,6 +1,10 @@
 import axios from "axios";
 
-const API_BASE_URL = "http://192.168.18.52:5000";
+// Server-side (SSR/RSC): call backend directly via env var.
+// Client-side (browser): use relative URLs — Next.js rewrites proxy /api/* to the backend.
+const API_BASE_URL = typeof window === 'undefined'
+  ? (process.env.BACKEND_URL || 'http://localhost:5000')
+  : '';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
