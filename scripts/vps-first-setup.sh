@@ -32,7 +32,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/tasksy-admin
 Environment=NODE_ENV=production
-Environment=PORT=3000
+Environment=PORT=8080
 Environment=HOSTNAME=127.0.0.1
 ExecStart=/usr/bin/node /home/ubuntu/tasksy-admin/server.js
 Restart=always
