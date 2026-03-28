@@ -31,6 +31,7 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/tasksy-admin
+EnvironmentFile=/home/ubuntu/tasksy-admin/.env
 Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=HOSTNAME=127.0.0.1
