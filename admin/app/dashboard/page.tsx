@@ -90,7 +90,7 @@ export default function DashboardPage() {
         const transactions =
           transactionsRes.status === "fulfilled"
             ? transactionsRes.value.data
-            : [];
+            : ([] as any[]);
 
         const promotionsList = Array.isArray(promotions) ? promotions : (promotions?.data || []);
         const codesList = Array.isArray(codes) ? codes : (codes?.data || []);
