@@ -14,7 +14,6 @@ import (
 	aws_services "tasksy/pkg"
 	"tasksy/pkg/fcm"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
 	"gorm.io/gorm"
@@ -23,26 +22,31 @@ import (
 func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient) *gin.Engine {
 	router := gin.Default()
 	router.Static("/media", "./media")
-	router.Use(middleware.LoggerMiddleware())
-
+	
 	s3Client := aws_services.NewS3Client(appConfig)
 	notifService := notifications.NewService(db, fcmClient)
 	notifHandler := notifications.NewHandler(notifService)
 	controllers.SetNotificationService(notifService)
 	fmt.Println(notifService)
-
+	
 	redisOpt := asynq.RedisClientOpt{
 		Addr: "127.0.0.1:6379",
 	}
 
 	queueClient := asynq.NewClient(redisOpt)
-
-	corsConfig := cors.DefaultConfig()
-	corsConfig.AllowAllOrigins = true
-	corsConfig.AllowHeaders = []string{"Origin", "Content-Length", "Content-Type", "Authorization"}
-	corsConfig.AllowMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
-	router.Use(cors.New(corsConfig))
-
+	
+	router.Use(func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Length, Content-Type, Authorization")
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+		c.Next()
+	})
+	
+	router.Use(middleware.LoggerMiddleware())
 	router.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "pong"})
 	})
