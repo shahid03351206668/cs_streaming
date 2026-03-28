@@ -135,14 +135,16 @@ jobs:
           script: |
             set -e
 
-            mkdir -p /home/ubuntu/tasksy-admin
+            # Stop first — frees the port and prevents MODULE_NOT_FOUND from
+            # tar extracting over files that the running process has open
+            sudo systemctl stop tasksy-admin.service || true
 
-            # Unpack new build (overwrites previous deployment in-place)
+            mkdir -p /home/ubuntu/tasksy-admin
             tar -xzf /home/ubuntu/admin-build.tar.gz -C /home/ubuntu/tasksy-admin
             rm /home/ubuntu/admin-build.tar.gz
 
             sudo systemctl daemon-reload
-            sudo systemctl restart tasksy-admin.service
+            sudo systemctl start tasksy-admin.service
 
             # Verify it came up
             sleep 3
