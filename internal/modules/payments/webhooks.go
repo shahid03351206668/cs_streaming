@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"tasksy/db"
 	"tasksy/models"
@@ -62,6 +63,7 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 		}
 
 		proposal_id := charge.Metadata["proposal_id"]
+		fmt.Println("meta data")
 		fmt.Println(charge.Metadata)
 
 		var proposal *models.Proposal
@@ -78,6 +80,8 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 		}()
 
 		if proposal != nil {
+			fmt.Println("job post title")
+			fmt.Println(proposal.JobPost.Title)
 			payment, err := MakeContractPaymentFromCharge(proposal, &event, &charge)
 			if err != nil {
 				logger.Log.Error("error while create payment transaction on stripe webhook", zap.Error(err))
@@ -113,7 +117,92 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "success"})
 		return
 
-	case "payment_intent.created", "payment_intent.succeeded", "charge.updated":
+	case "payment_intent.amount_capturable_updated":
+		// Escrow: funds are authorized (held) — mark contract escrow as "funded"
+		var pi stripe.PaymentIntent
+		if err := json.Unmarshal(event.Data.Raw, &pi); err != nil {
+			logger.Log.Error("failed to parse payment_intent.amount_capturable_updated", zap.Error(err))
+			c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "JSON parse error"})
+			return
+		}
+
+		if err := s.service.MarkEscrowFunded(pi.ID); err != nil {
+			logger.Log.Warn("failed to mark escrow funded", zap.String("payment_intent_id", pi.ID), zap.Error(err))
+		} else {
+			logger.Log.Info("escrow marked as funded", zap.String("payment_intent_id", pi.ID))
+		}
+
+		// If the contract is in release_pending (both parties completed), capture immediately
+		var contract models.Contract
+		if err := s.service.db.Where("escrow_payment_intent_id = ? AND escrow_status = ?", pi.ID, "release_pending").
+			First(&contract).Error; err == nil {
+			if captureErr := s.service.CaptureEscrow(contract.ID); captureErr != nil {
+				logger.Log.Error("failed to auto-capture escrow after fund confirmation", zap.Error(captureErr))
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "received"})
+		return
+
+	case "payment_intent.succeeded":
+		// Escrow capture completed — record the payment transaction
+		var pi stripe.PaymentIntent
+		if err := json.Unmarshal(event.Data.Raw, &pi); err != nil {
+			c.JSON(http.StatusOK, gin.H{"message": "received"})
+			return
+		}
+
+		contractID := pi.Metadata["contract_id"]
+		if contractID == "" {
+			c.JSON(http.StatusOK, gin.H{"message": "received"})
+			return
+		}
+
+		var contract models.Contract
+		if err := s.service.db.First(&contract, "id = ?", contractID).Error; err != nil {
+			c.JSON(http.StatusOK, gin.H{"message": "received"})
+			return
+		}
+
+		settings, _ := GetSystemSettings()
+		amount := pi.AmountReceived
+		appFee := int64(settings.ApplicationFeeAmount)
+		freelancerCommPct := settings.FreelancerCommissionPercentage
+		freelancerComm := int64(float64(amount) * freelancerCommPct / 100)
+		netAmount := amount - freelancerComm - appFee
+
+		payment := models.PaymentTransaction{
+			FromUserID:                     contract.ClientID,
+			ToUserID:                       contract.FreelancerID,
+			ReferenceType:                  "contract",
+			ReferenceID:                    contractID,
+			Status:                         models.PaymentStatusSuccess,
+			StripeEventID:                  event.ID,
+			PaymentIntentID:                pi.ID,
+			Amount:                         amount,
+			Currency:                       string(pi.Currency),
+			PaymentMethod:                  "escrow",
+			AppFeeAmount:                   appFee,
+			AppFeePercentage:               settings.AppFeePercentage,
+			FreelancerCommissionPercentage: freelancerCommPct,
+			FreelancerCommissionAmount:     freelancerComm,
+			NetAmount:                      netAmount,
+			TransactionDate:                time.Unix(event.Created, 0),
+		}
+
+		if err := s.service.db.Create(&payment).Error; err != nil {
+			logger.Log.Error("failed to create payment transaction for escrow capture", zap.Error(err))
+		}
+
+		// Process referral reward
+		if err := s.service.ProcessReferralAfterPayment(payment.ID, contract.ClientID, payment.DiscountAmount); err != nil {
+			logger.Log.Warn("failed to process referral after escrow capture", zap.Error(err))
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "received"})
+		return
+
+	case "payment_intent.created", "charge.updated":
 		logger.Log.Info("received stripe event", zap.String("type", string(event.Type)))
 		c.JSON(http.StatusOK, gin.H{"message": "received"})
 		return

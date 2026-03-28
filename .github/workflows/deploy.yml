@@ -6,61 +6,144 @@ on:
       - working
       # - deployment
 
+# Cancel any in-flight deployment for the same branch
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test-build-deploy:
+  # ─────────────────────────────────────────────────────────────
+  # Job 1: Build Go binaries and deploy to VPS
+  # ─────────────────────────────────────────────────────────────
+  deploy-backend:
+    name: Build & Deploy Go Backend
     runs-on: ubuntu-latest
 
     steps:
-      - name: checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: setup golang
+      - name: Setup Go 1.23
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23' 
+          go-version: '1.23'
+          cache: true
 
-      - name: install project dependencies
+      - name: Install dependencies
         run: go mod download
 
-      - name: build binaries
+      - name: Build binaries (linux/amd64)
         run: |
-          # 1. Build API Server
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o server ./cmd/api/main.go
-          
-          # 2. Build Worker (Add this line)
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o worker ./cmd/worker/main.go
-          
-          ls -lah
-      
-      - name: copy binaries to vps
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o server ./cmd/api/main.go
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o worker ./cmd/worker/main.go
+          ls -lah server worker
+
+      - name: Copy binaries to VPS
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
-          # Upload BOTH files (comma separated)
-          source: "server,worker" 
+          source: "server,worker"
           target: "/home/ubuntu/"
 
-      - name: restart linux systems services
+      - name: Restart backend services
         uses: appleboy/ssh-action@v0.1.10
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
           script: |
-            # Move Server Binary
+            set -e
+
+            # Atomic swap: move new binaries into place
             mv /home/ubuntu/server /home/ubuntu/tasksy-server/server
             chmod +x /home/ubuntu/tasksy-server/server
-            
-            # Move Worker Binary
+
             mv /home/ubuntu/worker /home/ubuntu/tasksy-server/worker
             chmod +x /home/ubuntu/tasksy-server/worker
 
-            # Restart BOTH Services
             sudo systemctl daemon-reload
             sudo systemctl restart tasksy-server.service
             sudo systemctl restart tasksy-worker.service
-            
-            # Check Status
-            sudo systemctl status tasksy-worker.service --no-pager
+
+            # Wait a moment and verify both services are active
+            sleep 3
+            sudo systemctl is-active --quiet tasksy-server.service && echo "[ok] tasksy-server running" || (echo "[fail] tasksy-server failed to start" && sudo journalctl -u tasksy-server.service -n 30 --no-pager && exit 1)
+            sudo systemctl is-active --quiet tasksy-worker.service && echo "[ok] tasksy-worker running" || (echo "[fail] tasksy-worker failed to start" && sudo journalctl -u tasksy-worker.service -n 30 --no-pager && exit 1)
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 2: Build Next.js admin panel and deploy to VPS
+  #         Runs after backend is confirmed healthy
+  # ─────────────────────────────────────────────────────────────
+  deploy-admin:
+    name: Build & Deploy Next.js Admin Panel
+    runs-on: ubuntu-latest
+    needs: deploy-backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Install admin dependencies
+        working-directory: admin
+        run: npm ci --prefer-offline
+
+      - name: Build admin panel (standalone output)
+        working-directory: admin
+        env:
+          # The VPS-internal URL Next.js rewrites proxy to at runtime
+          BACKEND_URL: http://localhost:5000
+          NODE_ENV: production
+        run: npm run build
+
+      - name: Package standalone build
+        run: |
+          # Next.js standalone doesn't include static/public — copy them in
+          cp -r admin/.next/static admin/.next/standalone/.next/static
+
+          # Only copy public if it exists and has files
+          if [ -d "admin/public" ] && [ "$(ls -A admin/public)" ]; then
+            cp -r admin/public admin/.next/standalone/public
+          fi
+
+          tar -czf admin-build.tar.gz -C admin/.next/standalone .
+          echo "Archive size: $(du -sh admin-build.tar.gz | cut -f1)"
+
+      - name: Copy admin build to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          source: "admin-build.tar.gz"
+          target: "/home/ubuntu/"
+
+      - name: Deploy admin panel on VPS
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+
+            mkdir -p /home/ubuntu/tasksy-admin
+
+            # Unpack new build (overwrites previous deployment in-place)
+            tar -xzf /home/ubuntu/admin-build.tar.gz -C /home/ubuntu/tasksy-admin
+            rm /home/ubuntu/admin-build.tar.gz
+
+            sudo systemctl daemon-reload
+            sudo systemctl restart tasksy-admin.service
+
+            # Verify it came up
+            sleep 3
+            sudo systemctl is-active --quiet tasksy-admin.service && echo "[ok] tasksy-admin running" || (echo "[fail] tasksy-admin failed to start" && sudo journalctl -u tasksy-admin.service -n 30 --no-pager && exit 1)

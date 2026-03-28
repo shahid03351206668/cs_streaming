@@ -152,6 +152,11 @@ type Contract struct {
 	FreelancerCompleted bool       `gorm:"default:false" json:"freelancer_completed"`
 	CompletedAt         *time.Time `json:"completed_at,omitempty"`
 
+	// Escrow fields
+	EscrowPaymentIntentID string `gorm:"type:varchar(100)" json:"escrow_payment_intent_id,omitempty"`
+	EscrowStatus          string `gorm:"type:varchar(20);default:'pending'" json:"escrow_status"`
+	EscrowAmount          int64  `gorm:"default:0" json:"escrow_amount"`
+
 	// Payments []Payment `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"payments,omitempty"`
 	Reviews []Review `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"reviews,omitempty"`
 }

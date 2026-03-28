@@ -2,7 +2,7 @@
 
 # Portfolio and Certification API Test Script
 
-BASE_URL="http://192.168.18.52:8080"
+BASE_URL="http://192.168.18.52:5000"
 
 echo "======================================"
 echo "Portfolio & Certification API Tests"

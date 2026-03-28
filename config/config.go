@@ -63,7 +63,7 @@ func LoadConfig() *Config {
 	}
 
 	host := getEnv("SERVER_HOST", "localhost")
-	port := getEnv("SERVER_PORT", "8080")
+	port := getEnv("SERVER_PORT", "5000")
 	dbURI := getEnv("DB_URI", "")
 
 	// fmt.Println("host, port")

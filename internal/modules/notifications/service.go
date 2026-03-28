@@ -249,6 +249,32 @@ func (s *Service) NotifyProposalSent(ctx context.Context, recipientUserID, jobTi
 	)
 }
 
+// NotifyJobCompleted notifies both parties that a contract was fully completed.
+func (s *Service) NotifyJobCompleted(ctx context.Context, recipientUserID, jobTitle, contractID, jobPostID string) error {
+	return s.notifyUser(
+		ctx,
+		recipientUserID,
+		"Job Completed 🎉",
+		"'"+jobTitle+"' has been marked as complete by both parties",
+		"job_completed",
+		"/contract",
+		map[string]string{"contract_id": contractID, "job_post_id": jobPostID},
+	)
+}
+
+// NotifyAwaitingCompletion notifies one party that the other has marked the contract complete.
+func (s *Service) NotifyAwaitingCompletion(ctx context.Context, recipientUserID, jobTitle, contractID, jobPostID string) error {
+	return s.notifyUser(
+		ctx,
+		recipientUserID,
+		"Action Required",
+		"The other party has marked '"+jobTitle+"' as complete. Please confirm to release payment.",
+		"awaiting_completion",
+		"/contract",
+		map[string]string{"contract_id": contractID, "job_post_id": jobPostID},
+	)
+}
+
 // NotifyNewMessage notifies a user about a new chat message.
 func (s *Service) NotifyNewMessage(ctx context.Context, deviceToken, senderName, conversationID, jobPostID string) error {
 	record := map[string]string{

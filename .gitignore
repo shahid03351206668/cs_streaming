@@ -1,27 +1,79 @@
-# Ignore build and temporary files
+# =============================================================================
+# Go
+# =============================================================================
 tmp/
 *.exe
 *.out
 *.test
-
-# Ignore media files (large binary files)
-media/
-
-# Ignore Go build artifacts
 *.a
 *.so
 
-# Ignore log files
+# Compiled binaries at repo root (produced by CI/CD build step)
+/server
+/worker
+
+# Air live-reloader config
+.air.toml
+
+# =============================================================================
+# Environment & Secrets
+# =============================================================================
+.env
+.env.*
+!.env.example
+*.pem
+*firebase*.json
+service-account*.json
+
+# =============================================================================
+# Logs
+# =============================================================================
 *.log
 logs/
 
-# Ignore environment variable files
-.env
-.env.*
+# =============================================================================
+# Next.js Admin Panel (admin/)
+# =============================================================================
+admin/.next/
+admin/out/
+admin/build/
+admin/node_modules/
+admin/.npm
+admin/.pnp
+admin/.pnp.js
+admin/coverage/
+admin/.vercel
+admin/*.tsbuildinfo
+admin/next-env.d.ts
 
-# Ignore IDE/editor files
+# =============================================================================
+# Node / npm (root-level, if any)
+# =============================================================================
+node_modules/
+.npm
+.pnp
+.pnp.js
+coverage/
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+
+# =============================================================================
+# IDE / Editor
+# =============================================================================
 .vscode/
+.idea/
 .history/
+*.swp
+*.swo
 
-# Optionally, ignore the Air live reloader config if you don't want to track it
-.air.toml
+# =============================================================================
+# OS
+# =============================================================================
+.DS_Store
+Thumbs.db
+
+# =============================================================================
+# Media / Large assets
+# =============================================================================
+media/

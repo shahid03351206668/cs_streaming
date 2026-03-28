@@ -105,6 +105,9 @@ func ApplyMigrations() error {
 		&models.ReferralUsage{},
 		&models.NotificationPreference{},
 		&models.NotificationPreferenceCategory{},
+		&models.PromotionalOffer{},
+		&models.UserBankAccount{},
+		&models.PayoutTransaction{},
 	}
 
 	if err := DB.AutoMigrate(modelsToMigrate...); err != nil {

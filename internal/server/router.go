@@ -8,6 +8,7 @@ import (
 	"tasksy/internal/modules/job"
 	"tasksy/internal/modules/notifications"
 	"tasksy/internal/modules/payments"
+	"tasksy/internal/modules/promotions"
 	"tasksy/internal/modules/user"
 	"tasksy/middleware"
 	aws_services "tasksy/pkg"
@@ -53,6 +54,10 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 
 	paymentService := payments.NewService(&appConfig.Stripe, db)
 	paymentHandler := payments.NewHandler(paymentService)
+	payoutService := payments.NewPayoutService(db, &appConfig.Stripe)
+
+	promotionService := promotions.NewService(db)
+	promotionHandler := promotions.NewHandler(promotionService)
 
 	router.POST("/api/v1/webhooks/stripe/payment", paymentHandler.HandlePaymentIntents)
 
@@ -67,6 +72,19 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	paymentProtected.Use(middleware.AuthMiddleware())
 	{
 		paymentProtected.GET("/transactions/my", paymentHandler.GetUserPaymentTransactions)
+	}
+
+	// Wallet / withdrawal routes (authenticated)
+	walletRoutes := router.Group("/api/v1/wallet")
+	walletRoutes.Use(middleware.AuthMiddleware())
+	{
+		walletRoutes.GET("/balance", payoutService.GetWalletBalance)
+		walletRoutes.POST("/withdraw", payoutService.RequestPayout)
+		walletRoutes.GET("/withdrawals", payoutService.GetPayoutHistory)
+		walletRoutes.GET("/bank-accounts", payoutService.ListBankAccounts)
+		walletRoutes.POST("/bank-accounts", payoutService.AddBankAccount)
+		walletRoutes.PUT("/bank-accounts/:id/default", payoutService.SetDefaultBankAccount)
+		walletRoutes.DELETE("/bank-accounts/:id", payoutService.DeleteBankAccount)
 	}
 
 	// Referral routes (public)
@@ -94,6 +112,51 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	{
 		referralAdmin.GET("/codes", paymentHandler.GetAllReferralCodes)
 		referralAdmin.GET("/usages", paymentHandler.GetAllReferralUsages)
+	}
+
+	// Escrow routes (authenticated)
+	escrowRoutes := router.Group("/api/v1/escrow")
+	escrowRoutes.Use(middleware.AuthMiddleware())
+	{
+		escrowRoutes.POST("/contracts/:id/deposit", paymentHandler.InitiateEscrowDeposit)
+		escrowRoutes.GET("/contracts/:id/status", paymentHandler.GetEscrowStatus)
+		escrowRoutes.POST("/contracts/:id/refund", paymentHandler.RefundEscrow)
+		escrowRoutes.GET("/contracts/:id/summary", paymentHandler.GetPaymentSummaryWithPromotion)
+	}
+
+	// Promotional offer routes (public list)
+	router.GET("/api/v1/promotions", promotionHandler.ListActiveOffers)
+
+	// Promotional offer routes (authenticated)
+	promoProtected := router.Group("/api/v1/promotions")
+	promoProtected.Use(middleware.AuthMiddleware())
+	{
+		promoProtected.GET("/my-eligibility", promotionHandler.CheckMyEligibility)
+	}
+
+	// Admin: users and jobs
+	adminRoutes := router.Group("/api/v1/admin")
+	adminRoutes.Use(middleware.AuthMiddleware())
+	{
+		adminRoutes.GET("/users", controllers.AdminUserListController)
+		adminRoutes.GET("/users/:id", controllers.AdminGetUserController)
+		adminRoutes.PUT("/users/:id", controllers.AdminUpdateUserController)
+		adminRoutes.PUT("/users/:id/password", controllers.AdminChangeUserPasswordController)
+		adminRoutes.GET("/users/:id/wallet", controllers.AdminUserWalletController)
+		adminRoutes.GET("/jobs", controllers.AdminListJobsController)
+		adminRoutes.GET("/jobs/:id", controllers.AdminGetJobDetailController)
+		adminRoutes.PUT("/jobs/:id", controllers.AdminUpdateJobController)
+		adminRoutes.GET("/payouts", payoutService.AdminListPayouts)
+	}
+
+	// Promotional offer admin routes
+	promoAdmin := router.Group("/api/v1/admin/promotions")
+	promoAdmin.Use(middleware.AuthMiddleware())
+	{
+		promoAdmin.POST("", promotionHandler.CreateOffer)
+		promoAdmin.GET("", promotionHandler.ListOffers)
+		promoAdmin.PUT("/:id", promotionHandler.UpdateOffer)
+		promoAdmin.DELETE("/:id", promotionHandler.DeleteOffer)
 	}
 
 	authRoutes := router.Group("/api/auth")

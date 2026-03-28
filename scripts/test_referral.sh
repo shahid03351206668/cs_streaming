@@ -3,7 +3,7 @@
 # Referral System Test Script
 # This script tests the referral program functionality
 
-BASE_URL="http://192.168.18.52:8080"
+BASE_URL="http://192.168.18.52:5000"
 
 echo "==================================="
 echo "Referral System Test Script"

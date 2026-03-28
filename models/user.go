@@ -31,7 +31,9 @@ type User struct {
 	IdentityVerfied       bool   `gorm:"default:false;column:identity_verified" json:"identity_verified"`
 	GoogleID              string
 	Roles                 []Role `gorm:"many2many:user_roles;" json:"roles"`
-	ReferralRewardBalance int64  `gorm:"default:0" json:"referral_reward_balance"`
+	ReferralRewardBalance  int64  `gorm:"default:0" json:"referral_reward_balance"`
+	WalletBalance          int64  `gorm:"default:0" json:"wallet_balance"`
+	StripeConnectAccountID string `gorm:"type:varchar(100)" json:"-"`
 }
 
 func (u *User) Can(slug string, db *gorm.DB) bool {

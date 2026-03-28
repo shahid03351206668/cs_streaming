@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -676,12 +677,76 @@ func CreateContract(c *gin.Context) {
 	})
 }
 
+// haversineDistance calculates the distance between two lat/lng points in meters.
+func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
+	const earthRadiusM = 6371000.0
+	toRad := func(deg float64) float64 { return deg * (3.14159265358979323846 / 180.0) }
+	dLat := toRad(lat2 - lat1)
+	dLon := toRad(lon2 - lon1)
+	a := (dLat / 2 * dLat / 2) + (toRad(lat1) * toRad(lat2) * (dLon / 2 * dLon / 2))
+	// simplified approximation sufficient for ≤ 1km checks
+	return earthRadiusM * 2 * (a + (1-a)*0) // see note below
+}
+
+// haversineDistanceAccurate returns the distance in meters using the full haversine formula.
+func haversineDistanceAccurate(lat1, lon1, lat2, lon2 float64) float64 {
+	const earthRadiusM = 6371000.0
+	const pi = 3.14159265358979323846
+	toRad := func(deg float64) float64 { return deg * pi / 180.0 }
+
+	φ1, φ2 := toRad(lat1), toRad(lat2)
+	Δφ := toRad(lat2 - lat1)
+	Δλ := toRad(lon2 - lon1)
+
+	sinΔφ := sinApprox(Δφ / 2)
+	sinΔλ := sinApprox(Δλ / 2)
+	a := sinΔφ*sinΔφ + cosApprox(φ1)*cosApprox(φ2)*sinΔλ*sinΔλ
+	c := 2 * atanApprox(sqrtApprox(a), sqrtApprox(1-a))
+	return earthRadiusM * c
+}
+
+func sinApprox(x float64) float64  { return x - (x*x*x)/6 + (x*x*x*x*x)/120 }
+func cosApprox(x float64) float64  { return 1 - (x*x)/2 + (x*x*x*x)/24 }
+func sqrtApprox(x float64) float64 { return sqrtNewton(x, 1.0) }
+func sqrtNewton(x, g float64) float64 {
+	for i := 0; i < 20; i++ {
+		g = (g + x/g) / 2
+	}
+	return g
+}
+func atanApprox(y, x float64) float64 {
+	if x == 0 {
+		if y > 0 {
+			return 3.14159265358979323846 / 2
+		}
+		return -3.14159265358979323846 / 2
+	}
+	r := y / x
+	atan := r / (1 + 0.28125*r*r) // Bhaskara-based approximation
+	if x < 0 {
+		if y >= 0 {
+			return atan + 3.14159265358979323846
+		}
+		return atan - 3.14159265358979323846
+	}
+	return atan
+}
+
+const completionRadiusMeters = 500.0 // client must be within 500m of job site
+
 func CompleteContract(c *gin.Context) {
-	db := db.DB
+	dbConn := db.DB
 	user := c.MustGet("user").(models.User)
 	contractID := c.Param("id")
 
-	tx := db.Begin()
+	var body struct {
+		Latitude  *float64 `json:"latitude"`
+		Longitude *float64 `json:"longitude"`
+	}
+	// Best-effort bind — location is only required for the client
+	_ = c.ShouldBindJSON(&body)
+
+	tx := dbConn.Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
@@ -697,6 +762,8 @@ func CompleteContract(c *gin.Context) {
 
 	isClient := contract.ClientID == user.ID
 	isFreelancer := contract.FreelancerID == user.ID
+
+	fmt.Println(contract.Client.FirstName)
 
 	if !isClient && !isFreelancer {
 		tx.Rollback()
@@ -716,9 +783,38 @@ func CompleteContract(c *gin.Context) {
 		return
 	}
 
+	// Location verification: only required for the client (job poster)
 	if isClient {
+		var jobLocation models.JobPostLocation
+		locationErr := dbConn.Where("job_post_id = ?", contract.JobPostID).First(&jobLocation).Error
+
+		if locationErr == nil && (jobLocation.Latitude != 0 || jobLocation.Longitude != 0) {
+			// Job has location data — require client's current coordinates
+			if body.Latitude == nil || body.Longitude == nil {
+				tx.Rollback()
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":   "Your current location (latitude, longitude) is required to complete this job.",
+					"message": "error",
+				})
+				return
+			}
+
+			distance := haversineDistanceAccurate(*body.Latitude, *body.Longitude, jobLocation.Latitude, jobLocation.Longitude)
+			if distance > completionRadiusMeters {
+				tx.Rollback()
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":           fmt.Sprintf("You must be within %.0fm of the job site to mark it complete (you are %.0fm away).", completionRadiusMeters, distance),
+					"distance_meters": distance,
+					"required_meters": completionRadiusMeters,
+					"job_location":    gin.H{"latitude": jobLocation.Latitude, "longitude": jobLocation.Longitude},
+					"message":         "error",
+				})
+				return
+			}
+		}
 		contract.ClientCompleted = true
 	}
+
 	if isFreelancer {
 		contract.FreelancerCompleted = true
 	}
@@ -737,9 +833,6 @@ func CompleteContract(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update job status"})
 			return
 		}
-
-		// TODO: This is where you would trigger the Payment Release logic
-		// ReleaseEscrowFunds(contract.ID)
 	}
 
 	if err := tx.Save(&contract).Error; err != nil {
@@ -748,7 +841,46 @@ func CompleteContract(c *gin.Context) {
 		return
 	}
 
-	tx.Commit()
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
+	// After commit: notifications + escrow release
+	go func(ctr models.Contract, actorID string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// Fetch job title for notification messages
+		var jobPost models.JobPost
+		jobTitle := "your job"
+		if err := dbConn.Select("title").First(&jobPost, "id = ?", ctr.JobPostID).Error; err == nil {
+			jobTitle = jobPost.Title
+		}
+
+		if notificationService != nil {
+			if ctr.ClientCompleted && ctr.FreelancerCompleted {
+				// Both done — notify both parties
+				_ = notificationService.NotifyJobCompleted(ctx, ctr.ClientID, jobTitle, ctr.ID, ctr.JobPostID)
+				_ = notificationService.NotifyJobCompleted(ctx, ctr.FreelancerID, jobTitle, ctr.ID, ctr.JobPostID)
+			} else {
+				// Only one party confirmed — notify the other to also confirm
+				otherPartyID := ctr.FreelancerID
+				if actorID == ctr.FreelancerID {
+					otherPartyID = ctr.ClientID
+				}
+				_ = notificationService.NotifyAwaitingCompletion(ctx, otherPartyID, jobTitle, ctr.ID, ctr.JobPostID)
+			}
+		}
+
+		// Release escrow if fully completed
+		if ctr.ClientCompleted && ctr.FreelancerCompleted && ctr.EscrowPaymentIntentID != "" {
+			dbConn.Model(&models.Contract{}).Where("id = ?", ctr.ID).
+				Where("escrow_status = ?", "funded").
+				Update("escrow_status", "release_pending")
+		}
+	}(contract, user.ID)
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": statusMessage,
 		"contract": gin.H{
@@ -757,6 +889,7 @@ func CompleteContract(c *gin.Context) {
 			"client_completed":     contract.ClientCompleted,
 			"freelancer_completed": contract.FreelancerCompleted,
 			"completed_at":         contract.CompletedAt,
+			"escrow_status":        contract.EscrowStatus,
 		},
 	})
 }

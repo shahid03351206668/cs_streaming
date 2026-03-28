@@ -78,7 +78,11 @@ type PayoutTransaction struct {
 	UserID          string    `gorm:"index;not null" json:"user_id"`
 	User            User      `gorm:"foreignKey:UserID;constraint:OnDelete:RESTRICT" json:"user"`
 
-	StripeID string `gorm:"not null" json:"stripe_id"`
+	StripeID       string `gorm:"type:varchar(100);not null" json:"stripe_transfer_id"`
+	StripePayoutID string `gorm:"type:varchar(100)" json:"stripe_payout_id"`
+
+	BankAccountID *string          `gorm:"index" json:"bank_account_id,omitempty"`
+	BankAccount   *UserBankAccount `gorm:"foreignKey:BankAccountID" json:"bank_account,omitempty"`
 
 	Amount       int64 `gorm:"default:0" json:"amount"`
 	NetAmount    int64 `gorm:"default:0" json:"net_amount"`
@@ -86,6 +90,25 @@ type PayoutTransaction struct {
 
 	Currency string `gorm:"type:varchar(3);default:'gbp'" json:"currency"`
 	Status   string `gorm:"index;not null;default:'pending'" json:"status"`
+}
+
+type UserBankAccount struct {
+	BaseModel
+
+	UserID                 string `gorm:"index;not null" json:"user_id"`
+	User                   User   `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
+	StripeConnectAccountID string `gorm:"type:varchar(100);not null" json:"stripe_connect_account_id"`
+	StripeBankAccountID    string `gorm:"type:varchar(100);not null" json:"stripe_bank_account_id"`
+	AccountHolderName      string `gorm:"type:varchar(255);not null" json:"account_holder_name"`
+	SortCode               string `gorm:"type:varchar(10)" json:"sort_code"`
+	AccountNumberLast4     string `gorm:"type:varchar(4)" json:"account_number_last4"`
+	BankName               string `gorm:"type:varchar(100)" json:"bank_name"`
+	Currency               string `gorm:"type:varchar(3);default:'gbp'" json:"currency"`
+	IsDefault              bool   `gorm:"default:false" json:"is_default"`
+}
+
+func (UserBankAccount) TableName() string {
+	return "user_bank_accounts"
 }
 
 type ReferralCode struct {
