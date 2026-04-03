@@ -23,6 +23,7 @@ func (s *PayoutService) AddBankAccount(c *gin.Context) {
 		AccountHolderName string `json:"account_holder_name" binding:"required"`
 		SortCode          string `json:"sort_code" binding:"required"` // e.g. "108800" or "10-88-00"
 		AccountNumber     string `json:"account_number" binding:"required"`
+		BankName          string `json:"bank_name"`
 		Currency          string `json:"currency"`
 		SetAsDefault      bool   `json:"set_as_default"`
 	}
@@ -99,6 +100,11 @@ func (s *PayoutService) AddBankAccount(c *gin.Context) {
 			UpdateColumn("is_default", false)
 	}
 
+	bankName := body.BankName
+	if bankName == "" {
+		bankName = stripeBa.BankName
+	}
+
 	ba := models.UserBankAccount{
 		UserID:                 user.ID,
 		StripeConnectAccountID: connectAccountID,
@@ -106,7 +112,7 @@ func (s *PayoutService) AddBankAccount(c *gin.Context) {
 		AccountHolderName:      body.AccountHolderName,
 		SortCode:               displaySortCode,
 		AccountNumberLast4:     stripeBa.Last4,
-		BankName:               stripeBa.BankName,
+		BankName:               bankName,
 		Currency:               body.Currency,
 		IsDefault:              isDefault,
 	}

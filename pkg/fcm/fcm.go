@@ -2,7 +2,8 @@ package fcm
 
 import (
 	"context"
-	"log"
+
+	"tasksy/pkg/logger"
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
@@ -28,7 +29,7 @@ func NewFCMClient(credentials string) (*FCMClient, error) {
 		return nil, err
 	}
 
-	log.Println("FCM client initialized")
+	logger.Log.Info("FCM client initialized")
 	return &FCMClient{client: client}, nil
 }
 

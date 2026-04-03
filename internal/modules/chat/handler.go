@@ -2,13 +2,14 @@ package chat
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 	"tasksy/models"
+	"tasksy/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 )
 
 type Handler struct {
@@ -162,8 +163,7 @@ func (h *Handler) SendMessage(c *gin.Context) {
 	content := c.PostForm("content")
 	form, _ := c.MultipartForm()
 	files := form.File["files"]
-	fmt.Println(form)
-	fmt.Println(form.File)
+	logger.Log.Info("chat message received", zap.Int("file_count", len(files)))
 
 	if content == "" && len(files) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Message cannot be empty. Provide text or a file."})

@@ -10,9 +10,11 @@ import (
 	"strings"
 	"tasksy/models"
 	aws_services "tasksy/pkg"
+	"tasksy/pkg/logger"
 	"time"
 
 	"github.com/hibiken/asynq"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -24,35 +26,21 @@ type VideoProcessor struct {
 func (processor *VideoProcessor) UploadHLSFolder(folderPath, s3FolderPrefix string) (string, error) {
 	var masterURL string
 
-	// 1. Walk through the directory recursively
 	err := filepath.Walk(folderPath, func(path string, info os.FileInfo, err error) error {
-		fmt.Println(path)
-
 		if err != nil {
 			return err
 		}
-		// Skip directories, we only upload files
 		if info.IsDir() {
 			return nil
 		}
 
-		// 2. Calculate S3 Key (Relative Path)
-		// This strips the local temp dir prefix.
-		// Example: /tmp/hls/123/v0/segment.ts -> v0/segment.ts
 		relPath, err := filepath.Rel(folderPath, path)
 		if err != nil {
 			return err
 		}
-
-		// CRITICAL: Normalize path separators.
-		// On Windows, relPath might be "v0\segment.ts", but S3 requires "v0/segment.ts".
 		relPath = filepath.ToSlash(relPath)
-
-		// Combine with the prefix (e.g., "jobs/job_123/video/456/v0/segment.ts")
 		s3Key := fmt.Sprintf("%s/%s", s3FolderPrefix, relPath)
 
-		// 3. Determine Content-Type
-		// Browsers strictly require these MIME types for HLS playback.
 		contentType := "application/octet-stream"
 		ext := strings.ToLower(filepath.Ext(path))
 		switch ext {
@@ -62,41 +50,26 @@ func (processor *VideoProcessor) UploadHLSFolder(folderPath, s3FolderPrefix stri
 			contentType = "video/MP2T"
 		}
 
-		// 4. Open File
-		fmt.Println("opening file ", path)
 		file, err := os.Open(path)
-
 		if err != nil {
 			return fmt.Errorf("failed to open file %s: %w", path, err)
 		}
 		defer file.Close()
 
-		// 5. Upload to S3
-
-		fmt.Println("Uploading file ", file.Name(), s3Key, contentType)
-		fmt.Println("Uploading file ", file.Name(), s3Key, contentType)
-
-		// FIX: Use the new function that doesn't add timestamps
 		url, err := processor.S3Client.UploadFileWithFixedKey(file, s3Key, contentType)
-		fmt.Println(url)
 		if err != nil {
 			return fmt.Errorf("failed to upload %s: %w", relPath, err)
 		}
-		fmt.Println("file uploaded")
-
-		// 6. Capture Master Playlist URL
-		// We need to return this specific URL so it can be saved in the database.
-		// Note: Ensure your FFmpeg command names the main file "master.m3u8"
 
 		if strings.HasSuffix(relPath, "master.m3u8") {
 			masterURL = url
+			logger.Log.Info("master playlist uploaded", zap.String("url", masterURL))
 		}
-		fmt.Println(masterURL)
 		return nil
 	})
 
 	if err != nil {
-		fmt.Println(err.Error())
+		logger.Log.Error("HLS folder upload failed", zap.String("folder", folderPath), zap.Error(err))
 		return "", err
 	}
 
@@ -129,15 +102,16 @@ func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.T
 		return fmt.Errorf("json unmarshal failed: %v", err)
 	}
 
-	fmt.Printf(" [x] Processing Video for Job: %s\n", p.JobID)
+	logger.Log.Info("processing video task", zap.String("job_id", p.JobID), zap.String("file", p.FileName))
+
 	tempDir := filepath.Join(os.TempDir(), "worker_hls", p.JobID)
 	os.MkdirAll(tempDir, 0755)
 	defer os.RemoveAll(tempDir)
 
 	tempFilePath := filepath.Join(tempDir, "downloaded.mp4")
 
-	err := processor.S3Client.DownloadFile(p.S3RawKey, "tasksy-raw-media", tempFilePath)
-	if err != nil {
+	if err := processor.S3Client.DownloadFile(p.S3RawKey, "tasksy-raw-media", tempFilePath); err != nil {
+		logger.Log.Error("failed to download raw video", zap.String("job_id", p.JobID), zap.String("key", p.S3RawKey), zap.Error(err))
 		return fmt.Errorf("failed to download raw file: %v", err)
 	}
 
@@ -145,7 +119,7 @@ func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.T
 	thumbPath := filepath.Join(tempDir, "thumbnail.jpg")
 	thumbnailURL := ""
 	if err := processor.generateThumbnail(tempFilePath, thumbPath); err != nil {
-		fmt.Printf("thumbnail generation warning: %v\n", err)
+		logger.Log.Warn("thumbnail generation skipped", zap.String("job_id", p.JobID), zap.Error(err))
 	} else {
 		thumbFile, err := os.Open(thumbPath)
 		if err == nil {
@@ -155,28 +129,29 @@ func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.T
 			thumbFile.Close()
 			if uploadErr == nil {
 				thumbnailURL = url
-				fmt.Printf("thumbnail uploaded: %s\n", thumbnailURL)
+				logger.Log.Info("thumbnail uploaded", zap.String("job_id", p.JobID), zap.String("url", thumbnailURL))
+			} else {
+				logger.Log.Warn("thumbnail upload failed", zap.String("job_id", p.JobID), zap.Error(uploadErr))
 			}
 		}
 	}
 
 	hlsDir := filepath.Join(tempDir, "hls")
-
 	if err := generateHLS(tempFilePath, hlsDir); err != nil {
+		logger.Log.Error("HLS generation failed", zap.String("job_id", p.JobID), zap.Error(err))
 		return err
 	}
 
 	uniqueID := fmt.Sprintf("%d", time.Now().UnixNano())
 	s3Prefix := fmt.Sprintf("jobs/%s/video/%s", p.JobID, uniqueID)
 
-	fmt.Println("uploading hls folder")
+	logger.Log.Info("uploading HLS folder", zap.String("job_id", p.JobID), zap.String("prefix", s3Prefix))
 	masterURL, err := processor.UploadHLSFolder(hlsDir, s3Prefix)
-	fmt.Println("hls folder uploaded")
-
 	if err != nil {
-		fmt.Println(err.Error())
+		logger.Log.Error("HLS folder upload failed", zap.String("job_id", p.JobID), zap.Error(err))
 		return err
 	}
+	logger.Log.Info("HLS folder uploaded", zap.String("job_id", p.JobID), zap.String("master_url", masterURL))
 
 	err = processor.DB.Transaction(func(tx *gorm.DB) error {
 		media := models.JobMedia{
@@ -193,12 +168,17 @@ func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.T
 		}
 
 		if err := tx.Model(models.JobPost{}).Where("id = ?", p.JobID).Update("status", models.JobStatusOpen).Error; err != nil {
-			fmt.Println(err.Error())
+			logger.Log.Error("failed to update job status", zap.String("job_id", p.JobID), zap.Error(err))
 			return err
 		}
 		return nil
 	})
 
+	if err != nil {
+		logger.Log.Error("video task transaction failed", zap.String("job_id", p.JobID), zap.Error(err))
+	} else {
+		logger.Log.Info("video task completed", zap.String("job_id", p.JobID))
+	}
 	return err
 }
 
@@ -207,18 +187,14 @@ func generateHLS(input string, output string) error {
 		"-y", "-i", input,
 		"-threads", "0",
 		"-filter_complex", "[0:v]split=2[v1][v2]; [v1]scale=w=1280:h=720:flags=lanczos[v1out]; [v2]scale=w=854:h=480:flags=lanczos[v2out]",
-		// 720p stream
 		"-map", "[v1out]", "-c:v:0", "libx264", "-preset", "fast", "-crf", "23",
 		"-b:v:0", "2500k", "-maxrate:v:0", "2600k", "-bufsize:v:0", "5000k",
 		"-profile:v:0", "high", "-level:v:0", "4.1",
-		// 480p stream
 		"-map", "[v2out]", "-c:v:1", "libx264", "-preset", "fast", "-crf", "24",
 		"-b:v:1", "1000k", "-maxrate:v:1", "1200k", "-bufsize:v:1", "2000k",
 		"-profile:v:1", "main", "-level:v:1", "3.1",
-		// Audio (both streams)
 		"-map", "a:0", "-c:a:0", "aac", "-b:a:0", "128k", "-ac", "2",
 		"-map", "a:0", "-c:a:1", "aac", "-b:a:1", "96k", "-ac", "2",
-		// HLS settings
 		"-f", "hls",
 		"-hls_time", "6",
 		"-hls_playlist_type", "vod",
@@ -229,11 +205,11 @@ func generateHLS(input string, output string) error {
 		filepath.Join(output, "v%v", "stream.m3u8"),
 	)
 
-	fmt.Println("generating HLS streams")
-
+	logger.Log.Info("starting HLS generation", zap.String("input", input), zap.String("output", output))
 	if out, err := cmd.CombinedOutput(); err != nil {
+		logger.Log.Error("ffmpeg failed", zap.String("output", string(out)), zap.Error(err))
 		return fmt.Errorf("ffmpeg output: %s, error: %v", string(out), err)
 	}
-	fmt.Println("HLS generation complete")
+	logger.Log.Info("HLS generation complete", zap.String("output", output))
 	return nil
 }

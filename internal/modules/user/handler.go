@@ -528,8 +528,7 @@ func (h *Handler) DeletePortfolio(c *gin.Context) {
 
 func (h *Handler) GetCertifications(c *gin.Context) {
 	userID := c.Param("id")
-	fmt.Println("Certification user id")
-	fmt.Println(userID)
+	logger.Log.Info("fetching certifications", zap.String("user_id", userID))
 
 	type UserCertification struct {
 		ID             string `json:"id"`
@@ -627,8 +626,7 @@ func (h *Handler) DeleteCertification(c *gin.Context) {
 	id := c.Param("id")
 	user := c.MustGet("user").(models.User)
 
-	debug_message := fmt.Sprintf("user id: %s \n certification id %s ", user.ID, id)
-	fmt.Println(debug_message)
+	logger.Log.Info("deleting certification", zap.String("user_id", user.ID), zap.String("certification_id", id))
 
 	result := h.service.db.Where("id = ? AND user_id = ?", id, user.ID).Delete(&models.Certification{})
 

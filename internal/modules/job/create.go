@@ -98,7 +98,7 @@ func (s *Service) InvalidateJobFeedCache() {
 }
 
 func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*multipart.FileHeader) (*models.JobPost, error) {
-	fmt.Println("test create job")
+	logger.Log.Info("creating job post", zap.String("user_id", user.ID), zap.String("title", data.Title))
 
 	var videos []*multipart.FileHeader
 	var images []*multipart.FileHeader
@@ -244,7 +244,7 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 
 		task, _ := worker.NewVideoTranscodeTask(jobPost.ID, key, f.Filename, fileType, f.Size)
 
-		fmt.Println("sending video files into queue")
+		logger.Log.Info("queuing video for transcoding", zap.String("job_id", jobPost.ID), zap.String("file", f.Filename))
 		if _, err := s.queueClient.Enqueue(task, asynq.MaxRetry(3), asynq.Timeout(10*time.Minute)); err != nil {
 			logger.Log.Error("error while adding task into queue", zap.Error(err))
 			return nil, err

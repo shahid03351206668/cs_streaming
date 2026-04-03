@@ -63,8 +63,7 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 		}
 
 		proposal_id := charge.Metadata["proposal_id"]
-		fmt.Println("meta data")
-		fmt.Println(charge.Metadata)
+		logger.Log.Info("stripe charge.succeeded received", zap.String("proposal_id", proposal_id))
 
 		var proposal *models.Proposal
 		if proposal_id != "" {
@@ -80,8 +79,7 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 		}()
 
 		if proposal != nil {
-			fmt.Println("job post title")
-			fmt.Println(proposal.JobPost.Title)
+			logger.Log.Info("processing payment for proposal", zap.String("proposal_id", proposal_id), zap.String("job_title", proposal.JobPost.Title))
 			payment, err := MakeContractPaymentFromCharge(proposal, &event, &charge)
 			if err != nil {
 				logger.Log.Error("error while create payment transaction on stripe webhook", zap.Error(err))

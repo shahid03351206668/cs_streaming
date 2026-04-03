@@ -1,13 +1,14 @@
 package job
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
 	"tasksy/models"
+	"tasksy/pkg/logger"
+	"go.uber.org/zap"
 )
 
 // search radius in Kilometers
@@ -109,7 +110,7 @@ func (h *Handler) CreateJobPost(c *gin.Context) {
 	}
 
 	form, _ := c.MultipartForm()
-	fmt.Println(form)
+	logger.Log.Info("job creation multipart form received", zap.Int("file_count", len(form.File["media"])))
 	files := form.File["media"]
 
 	var category models.Category

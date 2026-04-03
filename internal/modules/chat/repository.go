@@ -2,10 +2,11 @@ package chat
 
 import (
 	"errors"
-	"fmt"
 	"tasksy/models"
+	"tasksy/pkg/logger"
 	"time"
 
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -131,7 +132,7 @@ func (r *chatRepository) GetDeviceTokensByUserID(userID string) ([]string, error
 func (r *chatRepository) CreateConversation(participants []string, jobID string) (*models.ChatConversation, error) {
 	tx := r.db.Begin()
 
-	fmt.Println(participants)
+	logger.Log.Info("creating conversation", zap.Strings("participants", participants), zap.String("job_id", jobID))
 
 	if len(participants) == 2 {
 		var existingID string

@@ -2,7 +2,6 @@ package user
 
 import (
 	"errors"
-	"fmt"
 	"mime/multipart"
 	"strings"
 	"tasksy/config"
@@ -197,8 +196,7 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader) (*models
 func (s *Service) AddPortfolio(User *models.User, data models.Portfolio, files []*multipart.FileHeader) (*models.Portfolio, error) {
 	data.UserID = User.ID
 
-	fmt.Println("files")
-	fmt.Println(files)
+	logger.Log.Info("adding portfolio files", zap.Int("file_count", len(files)))
 	tx := s.db.Begin()
 
 	defer func() {
@@ -325,7 +323,7 @@ func (s *Service) AddCertification(userID string, cert models.Certification, fil
 		src, _ := file.Open()
 		defer src.Close()
 		url, _, err := s.s3Client.UploadFile(src, file.Filename, file.Header.Get("Content-Type"), "", "")
-		fmt.Println("certification file upload url:", url)
+		logger.Log.Info("certification file uploaded", zap.String("url", url))
 		if err != nil {
 			tx.Rollback()
 			return nil, err

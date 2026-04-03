@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-	"log"
 	"tasksy/config"
 	"tasksy/db"
 	"tasksy/internal/server"
@@ -38,15 +36,16 @@ func main() {
 			logger.Log.Error("error while initializing system settings", zap.Error(err), zap.String("operation", "server-op"))
 			return
 		}
-		fmt.Println("System Settings Initialized")
+		logger.Log.Info("system settings initialized")
 	}()
 
 	router := server.MakeRouter(db.DB, appConfig, fcmClient)
 	address := appConfig.Server.Addr
 
-	log.Printf("Server starting on address %s", address)
+	logger.Log.Info("server starting", zap.String("address", address))
+	defer logger.Sync()
 	if err := router.Run(address); err != nil {
-		logger.Log.Error("Error while starting server", zap.Error(err), zap.String("operation", "server-op"))
+		logger.Log.Error("server stopped with error", zap.Error(err), zap.String("operation", "server-op"))
 		return
 	}
 }

@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"fmt"
 	"net/http"
 	"tasksy/db"
 	"tasksy/models"
@@ -59,7 +58,6 @@ func CreateCategory(c *gin.Context) {
 		})
 		return
 	}
-	fmt.Println(exists.RowsAffected)
 
 	var category = models.Category{Name: body.Name}
 	results := DB.Create(&category)
@@ -112,8 +110,6 @@ func GetCategoryByID(c *gin.Context) {
 func UpdateCategory(c *gin.Context) {
 	id := c.Param("id")
 
-	fmt.Println("id")
-	fmt.Println(id)
 
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{

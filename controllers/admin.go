@@ -544,8 +544,8 @@ func AdminListJobsController(c *gin.Context) {
 // ─── System Settings ────────────────────────────────────────────────────────
 
 func GetSystemSettings(c *gin.Context) {
-	var settings models.SystemSettings
-	if err := db.DB.First(&settings, "id = ?", "system_settings").Error; err != nil {
+	settings := models.SystemSettings{ID: "system_settings"}
+	if err := db.DB.FirstOrCreate(&settings, "id = ?", "system_settings").Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
@@ -598,8 +598,8 @@ func UpdateSystemSettings(c *gin.Context) {
 		return
 	}
 
-	var settings models.SystemSettings
-	db.DB.First(&settings, "id = ?", "system_settings")
+	settings := models.SystemSettings{ID: "system_settings"}
+	db.DB.FirstOrCreate(&settings, "id = ?", "system_settings")
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": settings})
 }
 

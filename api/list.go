@@ -102,8 +102,6 @@ func GetResourceList(c *gin.Context) {
 		params.Fields = append(params.Fields, "id")
 	}
 
-	fmt.Println("params.Fields")
-	fmt.Println(params.Fields)
 
 	query = query.Select(params.Fields)
 

@@ -343,7 +343,6 @@ func CreateJob(c *gin.Context) {
 			fileName := fmt.Sprintf("%s_%d%s", baseFileName, time.Now().UnixNano(), ext)
 			filePath := filepath.Join(MEDIA_FILE_PATH, fileName)
 
-			fmt.Println(filePath)
 
 			if err := c.SaveUploadedFile(file, filePath); err != nil {
 				tx.Rollback()
@@ -763,7 +762,6 @@ func CompleteContract(c *gin.Context) {
 	isClient := contract.ClientID == user.ID
 	isFreelancer := contract.FreelancerID == user.ID
 
-	fmt.Println(contract.Client.FirstName)
 
 	if !isClient && !isFreelancer {
 		tx.Rollback()

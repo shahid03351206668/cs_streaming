@@ -1,7 +1,6 @@
 package server
 
 import (
-	"fmt"
 	"tasksy/config"
 	"tasksy/controllers"
 	"tasksy/internal/modules/chat"
@@ -27,7 +26,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	notifService := notifications.NewService(db, fcmClient)
 	notifHandler := notifications.NewHandler(notifService)
 	controllers.SetNotificationService(notifService)
-	fmt.Println(notifService)
 
 	redisOpt := asynq.RedisClientOpt{
 		Addr: "127.0.0.1:6379",

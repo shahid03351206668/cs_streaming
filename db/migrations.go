@@ -1,10 +1,11 @@
 package db
 
 import (
-	"log"
 	"tasksy/models"
+	applogger "tasksy/pkg/logger"
 	"time"
 
+	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -39,7 +40,7 @@ func ConnectDB(dsn string) error {
 
 	var version string
 	if err := DB.Raw("SHOW server_version;").Scan(&version).Error; err == nil {
-		log.Println("Database connected. Engine Version:", version)
+		applogger.Log.Info("database connected", zap.String("engine_version", version))
 	}
 
 	return nil
@@ -72,7 +73,7 @@ func Connect(dsn string) (*gorm.DB, error) {
 
 	var version string
 	if err := DB.Raw("SHOW server_version;").Scan(&version).Error; err == nil {
-		log.Println("Database connected. Engine Version:", version)
+		applogger.Log.Info("database connected", zap.String("engine_version", version))
 	}
 
 	return DB, nil
@@ -115,6 +116,6 @@ func ApplyMigrations() error {
 		return err
 	}
 
-	log.Println("Database migrations applied successfully")
+	applogger.Log.Info("database migrations applied successfully")
 	return nil
 }

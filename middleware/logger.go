@@ -1,8 +1,10 @@
 package middleware
 
 import (
-	"tasksy/pkg/logger"
 	"time"
+
+	"tasksy/pkg/logger"
+
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -18,10 +20,9 @@ func LoggerMiddleware() gin.HandlerFunc {
 		latency := time.Since(start)
 		status := c.Writer.Status()
 		method := c.Request.Method
-
-		errorMessage := ""
-		if len(c.Errors) > 0 {
-			errorMessage = c.Errors.String()
+		responseSize := c.Writer.Size()
+		if responseSize < 0 {
+			responseSize = 0
 		}
 
 		fields := []zap.Field{
@@ -32,13 +33,20 @@ func LoggerMiddleware() gin.HandlerFunc {
 			zap.String("ip", c.ClientIP()),
 			zap.Duration("latency", latency),
 			zap.String("user_agent", c.Request.UserAgent()),
+			zap.Int("response_size", responseSize),
 		}
 
-		if errorMessage != "" {
-			fields = append(fields, zap.String("error", errorMessage))
-			logger.Log.Error("Request Failed", fields...)
-		} else {
-			logger.Log.Info("Request Success", fields...)
+		if len(c.Errors) > 0 {
+			fields = append(fields, zap.String("error", c.Errors.String()))
+		}
+
+		switch {
+		case status >= 500:
+			logger.Log.Error("server error", fields...)
+		case status >= 400:
+			logger.Log.Warn("client error", fields...)
+		default:
+			logger.Log.Info("request completed", fields...)
 		}
 	}
 }

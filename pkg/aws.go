@@ -46,7 +46,7 @@ func NewS3Client(appConfig *config.Config) *S3Client {
 	if err == nil {
 		client = s3.NewFromConfig(cfg)
 	} else {
-		fmt.Printf("AWS Config Error: %v\n", err)
+		logger.Log.Error("failed to load AWS config", zap.Error(err))
 	}
 	return &S3Client{client: client, appConfig: appConfig}
 }

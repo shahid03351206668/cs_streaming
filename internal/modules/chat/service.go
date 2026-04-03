@@ -12,6 +12,7 @@ import (
 	"sync"
 	"tasksy/config"
 	"tasksy/models"
+	"tasksy/pkg/logger"
 	"tasksy/utils"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -67,7 +69,7 @@ func NewService(repo Repository, appConfig *config.Config, notifier Notifier, db
 	if err == nil {
 		s3Client = s3.NewFromConfig(cfg)
 	} else {
-		fmt.Printf("AWS Config Error: %v\n", err)
+		logger.Log.Error("failed to load AWS config for chat service", zap.Error(err))
 	}
 	return &chatService{
 		db:        db,

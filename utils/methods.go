@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"go.uber.org/zap"
+	"tasksy/pkg/logger"
 )
 
 var letters = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -59,7 +62,7 @@ func GetMediaDuration(filePath string) int {
 	cmd := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filePath)
 	output, err := cmd.Output()
 	if err != nil {
-		fmt.Println("Error getting duration:", err)
+		logger.Log.Error("ffprobe failed to get media duration", zap.String("file", filePath), zap.Error(err))
 		return 0
 	}
 

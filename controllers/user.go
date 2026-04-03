@@ -26,7 +26,7 @@ func RegisterUser(c *gin.Context) {
 
 	form, _ := c.MultipartForm()
 	files := form.File["files"]
-	fmt.Println(files)
+	_ = files
 
 	if err := c.ShouldBind(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
