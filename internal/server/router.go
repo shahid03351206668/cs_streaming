@@ -22,19 +22,19 @@ import (
 func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient) *gin.Engine {
 	router := gin.Default()
 	router.Static("/media", "./media")
-	
+
 	s3Client := aws_services.NewS3Client(appConfig)
 	notifService := notifications.NewService(db, fcmClient)
 	notifHandler := notifications.NewHandler(notifService)
 	controllers.SetNotificationService(notifService)
 	fmt.Println(notifService)
-	
+
 	redisOpt := asynq.RedisClientOpt{
 		Addr: "127.0.0.1:6379",
 	}
 
 	queueClient := asynq.NewClient(redisOpt)
-	
+
 	router.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
@@ -45,7 +45,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		}
 		c.Next()
 	})
-	
+
 	router.Use(middleware.LoggerMiddleware())
 	router.GET("/ping", func(c *gin.Context) {
 		c.JSON(200, gin.H{"message": "pong"})
@@ -139,6 +139,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	}
 
 	// Admin: users, jobs, settings, banks
+	router.GET("/api/v1/admin/settings", controllers.GetSystemSettings)
 	adminRoutes := router.Group("/api/v1/admin")
 	adminRoutes.Use(middleware.AuthMiddleware())
 	{
@@ -151,7 +152,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		adminRoutes.GET("/jobs/:id", controllers.AdminGetJobDetailController)
 		adminRoutes.PUT("/jobs/:id", controllers.AdminUpdateJobController)
 		adminRoutes.GET("/payouts", payoutService.AdminListPayouts)
-		adminRoutes.GET("/settings", controllers.GetSystemSettings)
+
 		adminRoutes.PUT("/settings", controllers.UpdateSystemSettings)
 		adminRoutes.GET("/banks", controllers.AdminListBanks)
 		adminRoutes.POST("/banks", controllers.AdminCreateBank)
