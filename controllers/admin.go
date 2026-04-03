@@ -540,3 +540,172 @@ func AdminListJobsController(c *gin.Context) {
 		"total": total,
 	})
 }
+
+// ─── System Settings ────────────────────────────────────────────────────────
+
+func GetSystemSettings(c *gin.Context) {
+	var settings models.SystemSettings
+	if err := db.DB.First(&settings, "id = ?", "system_settings").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": settings})
+}
+
+func UpdateSystemSettings(c *gin.Context) {
+	var body struct {
+		ClientCommissionPercentage     *float64 `json:"client_commission_percentage"`
+		FreelancerCommissionPercentage *float64 `json:"freelancer_commission_percentage"`
+		ApplicationFeeAmount           *int64   `json:"application_fee_amount"`
+		AppFeePercentage               *float64 `json:"app_fee_percentage"`
+		ReferralDiscountPercentage     *float64 `json:"referral_discount_percentage"`
+		ReferralRewardAmount           *int64   `json:"referral_reward_amount"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	updates := map[string]interface{}{}
+	if body.ClientCommissionPercentage != nil {
+		updates["client_commission_percentage"] = *body.ClientCommissionPercentage
+	}
+	if body.FreelancerCommissionPercentage != nil {
+		updates["freelancer_commission_percentage"] = *body.FreelancerCommissionPercentage
+	}
+	if body.ApplicationFeeAmount != nil {
+		updates["application_fee_amount"] = *body.ApplicationFeeAmount
+	}
+	if body.AppFeePercentage != nil {
+		updates["app_fee_percentage"] = *body.AppFeePercentage
+	}
+	if body.ReferralDiscountPercentage != nil {
+		updates["referral_discount_percentage"] = *body.ReferralDiscountPercentage
+	}
+	if body.ReferralRewardAmount != nil {
+		updates["referral_reward_amount"] = *body.ReferralRewardAmount
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "no fields to update"})
+		return
+	}
+
+	if err := db.DB.Model(&models.SystemSettings{}).
+		Where("id = ?", "system_settings").
+		Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	var settings models.SystemSettings
+	db.DB.First(&settings, "id = ?", "system_settings")
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": settings})
+}
+
+// ─── Banks ──────────────────────────────────────────────────────────────────
+
+func ListBanks(c *gin.Context) {
+	var banks []models.Bank
+	if err := db.DB.Where("is_active = ?", true).Order("name ASC").Find(&banks).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": banks})
+}
+
+func AdminListBanks(c *gin.Context) {
+	var banks []models.Bank
+	if err := db.DB.Order("name ASC").Find(&banks).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": banks})
+}
+
+func AdminCreateBank(c *gin.Context) {
+	var body struct {
+		Name     string `json:"name" binding:"required"`
+		SortCode string `json:"sort_code"`
+		LogoURL  string `json:"logo_url"`
+		IsActive *bool  `json:"is_active"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	isActive := true
+	if body.IsActive != nil {
+		isActive = *body.IsActive
+	}
+
+	bank := models.Bank{
+		Name:     body.Name,
+		SortCode: body.SortCode,
+		LogoURL:  body.LogoURL,
+		IsActive: isActive,
+	}
+	if err := db.DB.Create(&bank).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"message": "success", "data": bank})
+}
+
+func AdminUpdateBank(c *gin.Context) {
+	bankID := c.Param("id")
+
+	var bank models.Bank
+	if err := db.DB.First(&bank, "id = ?", bankID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": "bank not found"})
+		return
+	}
+
+	var body struct {
+		Name     *string `json:"name"`
+		SortCode *string `json:"sort_code"`
+		LogoURL  *string `json:"logo_url"`
+		IsActive *bool   `json:"is_active"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	updates := map[string]interface{}{}
+	if body.Name != nil {
+		updates["name"] = *body.Name
+	}
+	if body.SortCode != nil {
+		updates["sort_code"] = *body.SortCode
+	}
+	if body.LogoURL != nil {
+		updates["logo_url"] = *body.LogoURL
+	}
+	if body.IsActive != nil {
+		updates["is_active"] = *body.IsActive
+	}
+
+	if err := db.DB.Model(&bank).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": bank})
+}
+
+func AdminDeleteBank(c *gin.Context) {
+	bankID := c.Param("id")
+
+	var bank models.Bank
+	if err := db.DB.First(&bank, "id = ?", bankID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": "bank not found"})
+		return
+	}
+
+	if err := db.DB.Delete(&bank).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "success"})
+}

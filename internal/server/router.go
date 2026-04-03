@@ -138,7 +138,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		promoProtected.GET("/my-eligibility", promotionHandler.CheckMyEligibility)
 	}
 
-	// Admin: users and jobs
+	// Admin: users, jobs, settings, banks
 	adminRoutes := router.Group("/api/v1/admin")
 	adminRoutes.Use(middleware.AuthMiddleware())
 	{
@@ -151,6 +151,12 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		adminRoutes.GET("/jobs/:id", controllers.AdminGetJobDetailController)
 		adminRoutes.PUT("/jobs/:id", controllers.AdminUpdateJobController)
 		adminRoutes.GET("/payouts", payoutService.AdminListPayouts)
+		adminRoutes.GET("/settings", controllers.GetSystemSettings)
+		adminRoutes.PUT("/settings", controllers.UpdateSystemSettings)
+		adminRoutes.GET("/banks", controllers.AdminListBanks)
+		adminRoutes.POST("/banks", controllers.AdminCreateBank)
+		adminRoutes.PUT("/banks/:id", controllers.AdminUpdateBank)
+		adminRoutes.DELETE("/banks/:id", controllers.AdminDeleteBank)
 	}
 
 	// Promotional offer admin routes
@@ -218,6 +224,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		publicRoutes.PUT("/category/update/:id", controllers.UpdateCategory)
 		publicRoutes.POST("/category/create", controllers.CreateCategory)
 		publicRoutes.DELETE("/category/delete/:id", controllers.DeleteCategory)
+		publicRoutes.GET("/banks", controllers.ListBanks)
 	}
 
 	protected := router.Group("/")

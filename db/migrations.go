@@ -108,6 +108,7 @@ func ApplyMigrations() error {
 		&models.PromotionalOffer{},
 		&models.UserBankAccount{},
 		&models.PayoutTransaction{},
+		&models.Bank{},
 	}
 
 	if err := DB.AutoMigrate(modelsToMigrate...); err != nil {

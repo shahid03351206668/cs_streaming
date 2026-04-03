@@ -107,6 +107,21 @@ func (processor *VideoProcessor) UploadHLSFolder(folderPath, s3FolderPrefix stri
 	return masterURL, nil
 }
 
+func (processor *VideoProcessor) generateThumbnail(inputPath, outputPath string) error {
+	cmd := exec.Command("ffmpeg",
+		"-y", "-i", inputPath,
+		"-ss", "00:00:01",
+		"-vframes", "1",
+		"-vf", "scale=1280:-2",
+		"-q:v", "2",
+		outputPath,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("thumbnail generation failed: %s, error: %v", string(out), err)
+	}
+	return nil
+}
+
 func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.Task) error {
 	var p VideoTranscodePayload
 
@@ -114,7 +129,6 @@ func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.T
 		return fmt.Errorf("json unmarshal failed: %v", err)
 	}
 
-	// debug message
 	fmt.Printf(" [x] Processing Video for Job: %s\n", p.JobID)
 	tempDir := filepath.Join(os.TempDir(), "worker_hls", p.JobID)
 	os.MkdirAll(tempDir, 0755)
@@ -122,12 +136,28 @@ func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.T
 
 	tempFilePath := filepath.Join(tempDir, "downloaded.mp4")
 
-	fmt.Println("tempFilePath")
-	fmt.Println(tempFilePath)
-
 	err := processor.S3Client.DownloadFile(p.S3RawKey, "tasksy-raw-media", tempFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to download raw file: %v", err)
+	}
+
+	// Generate thumbnail
+	thumbPath := filepath.Join(tempDir, "thumbnail.jpg")
+	thumbnailURL := ""
+	if err := processor.generateThumbnail(tempFilePath, thumbPath); err != nil {
+		fmt.Printf("thumbnail generation warning: %v\n", err)
+	} else {
+		thumbFile, err := os.Open(thumbPath)
+		if err == nil {
+			uniqueID := fmt.Sprintf("%d", time.Now().UnixNano())
+			thumbKey := fmt.Sprintf("jobs/%s/thumbnails/%s.jpg", p.JobID, uniqueID)
+			url, uploadErr := processor.S3Client.UploadFileWithFixedKey(thumbFile, thumbKey, "image/jpeg")
+			thumbFile.Close()
+			if uploadErr == nil {
+				thumbnailURL = url
+				fmt.Printf("thumbnail uploaded: %s\n", thumbnailURL)
+			}
+		}
 	}
 
 	hlsDir := filepath.Join(tempDir, "hls")
@@ -141,8 +171,6 @@ func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.T
 
 	fmt.Println("uploading hls folder")
 	masterURL, err := processor.UploadHLSFolder(hlsDir, s3Prefix)
-
-	fmt.Println(p.JobID)
 	fmt.Println("hls folder uploaded")
 
 	if err != nil {
@@ -157,6 +185,7 @@ func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.T
 			MediaType: "application/x-mpegURL",
 			FileName:  p.FileName,
 			FileSize:  p.FileSize,
+			Thumbnail: thumbnailURL,
 		}
 
 		if err := tx.Create(&media).Error; err != nil {
@@ -176,24 +205,35 @@ func (processor *VideoProcessor) HandleVideoTask(ctx context.Context, t *asynq.T
 func generateHLS(input string, output string) error {
 	cmd := exec.Command("ffmpeg",
 		"-y", "-i", input,
-		"-filter_complex", "[0:v]split=2[v1][v2]; [v1]scale=w=1280:h=720[v1out]; [v2]scale=w=854:h=480[v2out]",
-		"-map", "[v1out]", "-c:v:0", "libx264", "-b:v:0", "2500k", "-maxrate:v:0", "2600k", "-bufsize:v:0", "5000k",
-		"-map", "[v2out]", "-c:v:1", "libx264", "-b:v:1", "1000k", "-maxrate:v:1", "1200k", "-bufsize:v:1", "2000k",
-		"-map", "a:0", "-c:a", "aac", "-b:a", "128k", "-ac", "2",
-		"-map", "a:0",
+		"-threads", "0",
+		"-filter_complex", "[0:v]split=2[v1][v2]; [v1]scale=w=1280:h=720:flags=lanczos[v1out]; [v2]scale=w=854:h=480:flags=lanczos[v2out]",
+		// 720p stream
+		"-map", "[v1out]", "-c:v:0", "libx264", "-preset", "fast", "-crf", "23",
+		"-b:v:0", "2500k", "-maxrate:v:0", "2600k", "-bufsize:v:0", "5000k",
+		"-profile:v:0", "high", "-level:v:0", "4.1",
+		// 480p stream
+		"-map", "[v2out]", "-c:v:1", "libx264", "-preset", "fast", "-crf", "24",
+		"-b:v:1", "1000k", "-maxrate:v:1", "1200k", "-bufsize:v:1", "2000k",
+		"-profile:v:1", "main", "-level:v:1", "3.1",
+		// Audio (both streams)
+		"-map", "a:0", "-c:a:0", "aac", "-b:a:0", "128k", "-ac", "2",
+		"-map", "a:0", "-c:a:1", "aac", "-b:a:1", "96k", "-ac", "2",
+		// HLS settings
 		"-f", "hls",
 		"-hls_time", "6",
 		"-hls_playlist_type", "vod",
 		"-hls_flags", "independent_segments",
+		"-hls_segment_type", "mpegts",
 		"-master_pl_name", "master.m3u8",
 		"-var_stream_map", "v:0,a:0 v:1,a:1",
 		filepath.Join(output, "v%v", "stream.m3u8"),
 	)
 
-	fmt.Println("video generated")
+	fmt.Println("generating HLS streams")
 
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("ffmpeg output: %s, error: %v", string(out), err)
 	}
+	fmt.Println("HLS generation complete")
 	return nil
 }

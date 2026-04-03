@@ -160,3 +160,52 @@ export const getEscrowStatus = (contractId: string) =>
 
 export const refundEscrow = (contractId: string) =>
   api.post(`/api/v1/escrow/contracts/${contractId}/refund`);
+
+// System Settings
+export interface SystemSettings {
+  id: string;
+  client_commission_percentage: number;
+  freelancer_commission_percentage: number;
+  application_fee_amount: number;
+  app_fee_percentage: number;
+  referral_discount_percentage: number;
+  referral_reward_amount: number;
+}
+
+export const getSystemSettings = () =>
+  api.get<{ data: SystemSettings }>("/api/v1/admin/settings");
+
+export const updateSystemSettings = (data: Partial<SystemSettings>) =>
+  api.put<{ data: SystemSettings }>("/api/v1/admin/settings", data);
+
+// Banks
+export interface Bank {
+  id: string;
+  name: string;
+  sort_code: string;
+  logo_url: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface BankParams {
+  name: string;
+  sort_code?: string;
+  logo_url?: string;
+  is_active?: boolean;
+}
+
+export const listBanks = () =>
+  api.get<{ data: Bank[] }>("/api/v1/banks");
+
+export const adminListBanks = () =>
+  api.get<{ data: Bank[] }>("/api/v1/admin/banks");
+
+export const adminCreateBank = (data: BankParams) =>
+  api.post<{ data: Bank }>("/api/v1/admin/banks", data);
+
+export const adminUpdateBank = (id: string, data: Partial<BankParams>) =>
+  api.put<{ data: Bank }>(`/api/v1/admin/banks/${id}`, data);
+
+export const adminDeleteBank = (id: string) =>
+  api.delete(`/api/v1/admin/banks/${id}`);

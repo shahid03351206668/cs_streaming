@@ -118,7 +118,7 @@ func (s *PayoutService) RequestPayout(c *gin.Context) {
 	payoutParams := &stripe.PayoutParams{
 		Amount:   stripe.Int64(req.Amount),
 		Currency: stripe.String(req.Currency),
-	}
+	}	
 	payoutParams.SetStripeAccount(bankAccount.StripeConnectAccountID)
 	po, poErr := stripepayout.New(payoutParams)
 

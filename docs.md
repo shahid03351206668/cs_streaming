@@ -1,6 +1,6 @@
 # API Documentation
 
-**Base URL:** `http://192.168.100.56:5000`
+**Base URL:** `http://13.60.208.3:8000`
 
 **Auth:** `Authorization: Bearer <token>` for protected routes
 
@@ -82,8 +82,23 @@
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/v1/wallet/balance` | Required | Returns wallet_balance, referral_reward_balance, total_available, currency |
-| POST | `/api/v1/wallet/withdraw` | Required | Request withdrawal. Body: {"amount": <cents>, "currency": "gbp"} |
+| POST | `/api/v1/wallet/withdraw` | Required | Request withdrawal. Body: `{"amount": <cents>, "currency": "gbp"}` |
 | GET | `/api/v1/wallet/withdrawals` | Required | Own withdrawal history |
+| GET | `/api/v1/wallet/bank-accounts` | Required | List saved bank accounts |
+| POST | `/api/v1/wallet/bank-accounts` | Required | Add bank account (see body below) |
+| PUT | `/api/v1/wallet/bank-accounts/:id/default` | Required | Set account as default |
+| DELETE | `/api/v1/wallet/bank-accounts/:id` | Required | Delete bank account |
+
+**Add bank account body:**
+```json
+{
+  "account_holder_name": "John Doe",
+  "sort_code": "10-88-00",
+  "account_number": "00012345",
+  "currency": "gbp",
+  "set_as_default": true
+}
+```
 
 ## Referrals
 
@@ -140,16 +155,34 @@
 |--------|------|------|-------------|
 | GET | `/api/v1/admin/users` | Required | List all users. Query: page, limit |
 | GET | `/api/v1/admin/users/:id` | Required | Get user details |
+| PUT | `/api/v1/admin/users/:id` | Required | Update user (first_name, last_name, email, phone_number, disabled, email_verified, phone_verified, identity_verified) |
+| PUT | `/api/v1/admin/users/:id/password` | Required | Change user password. Body: `{"new_password": ""}` |
 | GET | `/api/v1/admin/users/:id/wallet` | Required | User wallet + transaction summary |
 | GET | `/api/v1/admin/jobs` | Required | List all jobs. Query: page, limit |
 | GET | `/api/v1/admin/jobs/:id` | Required | Full job detail (location, proposals, contract, payments) |
+| PUT | `/api/v1/admin/jobs/:id` | Required | Update job (title, description, budget, open_budget, address, status, category_id) |
 | GET | `/api/v1/admin/payouts` | Required | All withdrawals. Query: page, limit, status, user_id |
 | GET | `/api/v1/admin/referrals/codes` | Required | All referral codes |
 | GET | `/api/v1/admin/referrals/usages` | Required | All referral usages |
 | POST | `/api/v1/admin/promotions` | Required | Create promotional offer |
-| GET | `/api/v1/admin/promotions` | Required | List all offers |
+| GET | `/api/v1/admin/promotions` | Required | List all offers (including inactive) |
 | PUT | `/api/v1/admin/promotions/:id` | Required | Update offer |
 | DELETE | `/api/v1/admin/promotions/:id` | Required | Delete offer |
+
+**Create/Update promotion body:**
+```json
+{
+  "name": "Welcome Offer",
+  "description": "10% off for new users",
+  "min_jobs_completed": 0,
+  "min_jobs_posted": 0,
+  "discount_percentage": 10.0,
+  "discount_amount": 0,
+  "max_discount_amount": 500,
+  "is_active": true,
+  "expires_at": "2026-12-31T00:00:00Z"
+}
+```
 
 ## Utility
 

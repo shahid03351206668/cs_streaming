@@ -174,18 +174,24 @@ func (c *S3Client) UploadFileWithFixedKey(file io.Reader, key, contentType strin
 		region = "eu-north-1"
 	}
 
+	// Long cache for immutable HLS segments and thumbnails; short cache for playlists
+	cacheControl := "public, max-age=31536000, immutable"
+	if strings.HasSuffix(key, ".m3u8") {
+		cacheControl = "public, max-age=3600"
+	}
+
 	_, err := c.client.PutObject(context.TODO(), &s3.PutObjectInput{
-		Bucket:      aws.String(targetBucket),
-		Key:         aws.String(key), // Use the exact key provided
-		Body:        file,
-		ContentType: aws.String(contentType),
-		ACL:         types.ObjectCannedACLPublicRead, // Ensure public access
+		Bucket:        aws.String(targetBucket),
+		Key:           aws.String(key),
+		Body:          file,
+		ContentType:   aws.String(contentType),
+		CacheControl:  aws.String(cacheControl),
+		ACL:           types.ObjectCannedACLPublicRead,
 	})
 
 	if err != nil {
 		return "", err
 	}
 
-	// Return the fixed URL
 	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", targetBucket, region, key), nil
 }

@@ -13,6 +13,7 @@ import {
   Briefcase,
   GitBranch,
   FolderOpen,
+  Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,7 @@ const navItems = [
   { title: "Promotions",   href: "/dashboard/promotions",   icon: Tag },
   { title: "Referrals",    href: "/dashboard/referrals",    icon: GitBranch },
   { title: "Transactions", href: "/dashboard/transactions", icon: CreditCard },
+  { title: "Banks",        href: "/dashboard/banks",        icon: Building2 },
   { title: "Settings",     href: "/dashboard/settings",     icon: Settings },
 ];
 

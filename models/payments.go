@@ -157,6 +157,18 @@ func (ReferralUsage) TableName() string {
 	return "referral_usages"
 }
 
+type Bank struct {
+	BaseModel
+	Name     string `gorm:"type:varchar(100);not null" json:"name"`
+	SortCode string `gorm:"type:varchar(10)" json:"sort_code"`
+	LogoURL  string `gorm:"type:varchar(500)" json:"logo_url"`
+	IsActive bool   `gorm:"default:true" json:"is_active"`
+}
+
+func (Bank) TableName() string {
+	return "banks"
+}
+
 type GLEntry struct {
 	BaseModel
 
