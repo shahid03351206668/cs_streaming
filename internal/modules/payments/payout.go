@@ -5,12 +5,14 @@ import (
 	"net/http"
 	"tasksy/config"
 	"tasksy/models"
+	"tasksy/pkg/logger"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stripe/stripe-go/v84"
 	stripepayout "github.com/stripe/stripe-go/v84/payout"
 	stripetransfer "github.com/stripe/stripe-go/v84/transfer"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -97,6 +99,11 @@ func (s *PayoutService) RequestPayout(c *gin.Context) {
 		return
 	}
 
+	if bankAccount.StripeConnectAccountID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "bank account is not linked to a payout account. Please re-add your bank account."})
+		return
+	}
+
 	// Atomically deduct balance
 	result := s.db.Model(&models.User{}).
 		Where("id = ? AND wallet_balance >= ?", user.ID, req.Amount).
@@ -131,7 +138,16 @@ func (s *PayoutService) RequestPayout(c *gin.Context) {
 
 	stripePayoutID := ""
 	payoutStatus := models.PaymentStatusPending
-	if poErr == nil {
+	var payoutWarning string
+	if poErr != nil {
+		logger.Log.Error("stripe payout creation failed after transfer",
+			zap.String("user_id", user.ID),
+			zap.String("transfer_id", tr.ID),
+			zap.String("connect_account", bankAccount.StripeConnectAccountID),
+			zap.Error(poErr),
+		)
+		payoutWarning = "Transfer succeeded but payout to bank is pending. Contact support if funds are not received within 2 business days."
+	} else {
 		stripePayoutID = po.ID
 		if po.Status == stripe.PayoutStatusPaid {
 			payoutStatus = models.PaymentStatusSuccess
@@ -159,29 +175,56 @@ func (s *PayoutService) RequestPayout(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "success",
-		"data": gin.H{
-			"payout_id":          payoutTx.ID,
-			"amount":             payoutTx.Amount,
-			"currency":           payoutTx.Currency,
-			"status":             payoutTx.Status,
-			"stripe_transfer_id": tr.ID,
-			"stripe_payout_id":   stripePayoutID,
-			"bank_account": gin.H{
-				"account_holder_name":  bankAccount.AccountHolderName,
-				"sort_code":            bankAccount.SortCode,
-				"account_number_last4": bankAccount.AccountNumberLast4,
-				"bank_name":            bankAccount.BankName,
-			},
-			"remaining_balance": fresh.WalletBalance - req.Amount,
+	resp := gin.H{
+		"payout_id":          payoutTx.ID,
+		"amount":             payoutTx.Amount,
+		"currency":           payoutTx.Currency,
+		"status":             payoutTx.Status,
+		"stripe_transfer_id": tr.ID,
+		"stripe_payout_id":   stripePayoutID,
+		"bank_account": gin.H{
+			"account_holder_name":  bankAccount.AccountHolderName,
+			"sort_code":            bankAccount.SortCode,
+			"account_number":       bankAccount.AccountNumber,
+			"account_number_last4": bankAccount.AccountNumberLast4,
+			"bank_name":            bankAccount.BankName,
 		},
-	})
+		"remaining_balance": fresh.WalletBalance - req.Amount,
+	}
+	if payoutWarning != "" {
+		resp["warning"] = payoutWarning
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": resp})
 }
 
 // GetPayoutHistory handles GET /api/v1/wallet/withdrawals
 func (s *PayoutService) GetPayoutHistory(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
+
+	type BankAccountSummary struct {
+		AccountHolderName  string `json:"account_holder_name"`
+		BankName           string `json:"bank_name"`
+		SortCode           string `json:"sort_code"`
+		AccountNumber      string `json:"account_number"`
+		AccountNumberLast4 string `json:"account_number_last4"`
+		BankLogoURL        string `json:"bank_logo_url"`
+	}
+	type PayoutRow struct {
+		ID              string              `json:"id"`
+		TransactionDate time.Time           `json:"transaction_date"`
+		Amount          int64               `json:"amount"`
+		NetAmount       int64               `json:"net_amount"`
+		Currency        string              `json:"currency"`
+		Status          string              `json:"status"`
+		StripeID        string              `json:"stripe_transfer_id"`
+		StripePayoutID  string              `json:"stripe_payout_id"`
+		BankAccount     *BankAccountSummary `json:"bank_account,omitempty"`
+	}
+
+	type rawPayout struct {
+		models.PayoutTransaction
+		BankAccount *models.UserBankAccount `gorm:"foreignKey:BankAccountID"`
+	}
 
 	var payouts []models.PayoutTransaction
 	if err := s.db.Where("user_id = ?", user.ID).
@@ -192,7 +235,32 @@ func (s *PayoutService) GetPayoutHistory(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": payouts})
+	rows := make([]PayoutRow, 0, len(payouts))
+	for _, p := range payouts {
+		row := PayoutRow{
+			ID:              p.ID,
+			TransactionDate: p.TransactionDate,
+			Amount:          p.Amount,
+			NetAmount:       p.NetAmount,
+			Currency:        p.Currency,
+			Status:          p.Status,
+			StripeID:        p.StripeID,
+			StripePayoutID:  p.StripePayoutID,
+		}
+		if p.BankAccount != nil {
+			row.BankAccount = &BankAccountSummary{
+				AccountHolderName:  p.BankAccount.AccountHolderName,
+				BankName:           p.BankAccount.BankName,
+				SortCode:           p.BankAccount.SortCode,
+				AccountNumber:      p.BankAccount.AccountNumber,
+				AccountNumberLast4: p.BankAccount.AccountNumberLast4,
+				BankLogoURL:        p.BankAccount.BankLogoURL,
+			}
+		}
+		rows = append(rows, row)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": rows})
 }
 
 // AdminListPayouts handles GET /api/v1/admin/payouts
