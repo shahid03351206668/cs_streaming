@@ -205,7 +205,7 @@ func createConnectAccount(email, clientIP string) (*stripe.Account, error) {
 			},
 		},
 		TOSAcceptance: &stripe.AccountTOSAcceptanceParams{
-			ServiceAgreement: stripe.String("recipient"),
+			ServiceAgreement: stripe.String("full"),
 			Date:             stripe.Int64(time.Now().Unix()),
 			IP:               stripe.String(clientIP),
 		},
