@@ -52,8 +52,9 @@ func (s *PayoutService) RequestPayout(c *gin.Context) {
 	stripe.Key = s.config.SecretKey
 
 	var req struct {
-		Amount   int64  `json:"amount" binding:"required,min=1"`
-		Currency string `json:"currency"`
+		Amount        int64  `json:"amount" binding:"required,min=1"`
+		Currency      string `json:"currency"`
+		BankAccountID string `json:"bank_account_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
@@ -79,14 +80,20 @@ func (s *PayoutService) RequestPayout(c *gin.Context) {
 		return
 	}
 
-	// Find default bank account
+	// Find bank account — use provided ID or fall back to default
 	var bankAccount models.UserBankAccount
-	if err := s.db.Where("user_id = ? AND is_default = ?", user.ID, true).
-		First(&bankAccount).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "error",
-			"error":   "no default bank account found. Please add a bank account first.",
-		})
+	query := s.db.Where("user_id = ?", user.ID)
+	if req.BankAccountID != "" {
+		query = query.Where("id = ?", req.BankAccountID)
+	} else {
+		query = query.Where("is_default = ?", true)
+	}
+	if err := query.First(&bankAccount).Error; err != nil {
+		msg := "no default bank account found. Please add a bank account first."
+		if req.BankAccountID != "" {
+			msg = "bank account not found"
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": msg})
 		return
 	}
 
@@ -118,7 +125,7 @@ func (s *PayoutService) RequestPayout(c *gin.Context) {
 	payoutParams := &stripe.PayoutParams{
 		Amount:   stripe.Int64(req.Amount),
 		Currency: stripe.String(req.Currency),
-	}	
+	}
 	payoutParams.SetStripeAccount(bankAccount.StripeConnectAccountID)
 	po, poErr := stripepayout.New(payoutParams)
 

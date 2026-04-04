@@ -105,6 +105,13 @@ func (s *PayoutService) AddBankAccount(c *gin.Context) {
 		bankName = stripeBa.BankName
 	}
 
+	// Look up logo from banks table by sort code (strip dashes for comparison)
+	var bank models.Bank
+	var bankLogoURL string
+	if err := s.db.Where("REPLACE(sort_code, '-', '') = ?", sortCode).First(&bank).Error; err == nil {
+		bankLogoURL = bank.LogoURL
+	}
+
 	ba := models.UserBankAccount{
 		UserID:                 user.ID,
 		StripeConnectAccountID: connectAccountID,
@@ -114,6 +121,7 @@ func (s *PayoutService) AddBankAccount(c *gin.Context) {
 		AccountNumber:          body.AccountNumber,
 		AccountNumberLast4:     stripeBa.Last4,
 		BankName:               bankName,
+		BankLogoURL:            bankLogoURL,
 		Currency:               body.Currency,
 		IsDefault:              isDefault,
 	}

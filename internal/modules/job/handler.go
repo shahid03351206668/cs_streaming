@@ -6,9 +6,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"go.uber.org/zap"
 	"tasksy/models"
 	"tasksy/pkg/logger"
-	"go.uber.org/zap"
 )
 
 // search radius in Kilometers

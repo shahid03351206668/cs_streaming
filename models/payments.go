@@ -104,6 +104,7 @@ type UserBankAccount struct {
 	AccountNumber          string `gorm:"type:varchar(20)" json:"account_number"`
 	AccountNumberLast4     string `gorm:"type:varchar(4)" json:"account_number_last4"`
 	BankName               string `gorm:"type:varchar(100)" json:"bank_name"`
+	BankLogoURL            string `gorm:"type:varchar(500)" json:"bank_logo_url"`
 	Currency               string `gorm:"type:varchar(3);default:'gbp'" json:"currency"`
 	IsDefault              bool   `gorm:"default:false" json:"is_default"`
 }

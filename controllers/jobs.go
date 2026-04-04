@@ -46,6 +46,7 @@ type JobMediaResponse struct {
 	MediaType string `json:"media_type"`
 	FileName  string `json:"file_name"`
 	FileSize  int64  `json:"file_size"`
+	Thumbnail string `json:"thumbnail,omitempty"`
 }
 
 type UserResponse struct {
@@ -86,6 +87,7 @@ func serializeJobPost(job models.JobPost) JobPostResponse {
 			MediaType: m.MediaType,
 			FileName:  m.FileName,
 			FileSize:  m.FileSize,
+			Thumbnail: m.Thumbnail,
 		})
 	}
 
