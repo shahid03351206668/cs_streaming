@@ -101,6 +101,7 @@ type UserBankAccount struct {
 	StripeBankAccountID    string `gorm:"type:varchar(100);not null" json:"stripe_bank_account_id"`
 	AccountHolderName      string `gorm:"type:varchar(255);not null" json:"account_holder_name"`
 	SortCode               string `gorm:"type:varchar(10)" json:"sort_code"`
+	AccountNumber          string `gorm:"type:varchar(20)" json:"account_number"`
 	AccountNumberLast4     string `gorm:"type:varchar(4)" json:"account_number_last4"`
 	BankName               string `gorm:"type:varchar(100)" json:"bank_name"`
 	Currency               string `gorm:"type:varchar(3);default:'gbp'" json:"currency"`

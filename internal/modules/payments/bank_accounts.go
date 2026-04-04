@@ -111,6 +111,7 @@ func (s *PayoutService) AddBankAccount(c *gin.Context) {
 		StripeBankAccountID:    stripeBa.ID,
 		AccountHolderName:      body.AccountHolderName,
 		SortCode:               displaySortCode,
+		AccountNumber:          body.AccountNumber,
 		AccountNumberLast4:     stripeBa.Last4,
 		BankName:               bankName,
 		Currency:               body.Currency,
