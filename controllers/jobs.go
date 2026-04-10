@@ -77,6 +77,17 @@ type JobPostResponse struct {
 	Media       []JobMediaResponse `json:"media"`
 	CreatedAt   time.Time          `json:"created_at"`
 	UpdatedAt   time.Time          `json:"updated_at"`
+	Location    JobLocation        `json:"location"`
+}
+
+type JobLocation struct {
+	Latitude   float64 `json:"latitude"`
+	Longitude  float64 `json:"longitude"`
+	PostalCode string  `json:"pincode"`
+	Street     string  `json:"street"`
+	City       string  `json:"city"`
+	State      string  `json:"state"`
+	Country    string  `json:"country"`
 }
 
 func serializeJobPost(job models.JobPost) JobPostResponse {
@@ -100,6 +111,16 @@ func serializeJobPost(job models.JobPost) JobPostResponse {
 		ProfilePhoto: job.CreatedBy.ProfilePhoto,
 	}
 
+	location := JobLocation{
+		Latitude:   job.JobPostLocation.Latitude,
+		Longitude:  job.JobPostLocation.Longitude,
+		PostalCode: job.JobPostLocation.PostalCode,
+		Street:     job.JobPostLocation.Street,
+		City:       job.JobPostLocation.City,
+		State:      job.JobPostLocation.State,
+		Country:    job.JobPostLocation.Country,
+	}
+
 	// Serialize category
 	category := CategoryResponse{
 		ID:   fmt.Sprintf("%v", job.Category.ID),
@@ -109,6 +130,7 @@ func serializeJobPost(job models.JobPost) JobPostResponse {
 	return JobPostResponse{
 		ID:          fmt.Sprintf("%v", job.ID),
 		Title:       job.Title,
+		Location:    location,
 		Description: job.Description,
 		Budget:      job.Budget,
 		OpenBudget:  job.OpenBudget,
@@ -139,6 +161,7 @@ func GetJobDetail(c *gin.Context) {
 		Preload("CreatedBy").
 		Preload("Category").
 		Preload("JobMedia").
+		Preload("JobPostLocation").
 		Where("id = ?", id).First(&job)
 
 	if result.Error != nil {
@@ -799,9 +822,9 @@ func CompleteContract(c *gin.Context) {
 	if openDisputeCount > 0 {
 		tx.Rollback()
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":          "Cannot complete a contract with open disputes",
-			"open_disputes":  openDisputeCount,
-			"message":        "error",
+			"error":         "Cannot complete a contract with open disputes",
+			"open_disputes": openDisputeCount,
+			"message":       "error",
 		})
 		return
 	}
