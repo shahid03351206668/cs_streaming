@@ -1,0 +1,25 @@
+# Git
+.git
+.gitignore
+
+# Env files (never bake secrets into image)
+.env
+.env.*
+
+# Local dev
+tmp/
+media/
+logs/
+
+# Admin panel (Next.js)
+admin/
+admin/.next/
+admin/node_modules/
+
+# Docs
+docs/
+*.md
+
+# IDE
+.vscode/
+.idea/

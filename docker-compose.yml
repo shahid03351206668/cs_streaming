@@ -1,0 +1,96 @@
+version: '3.9'
+
+services:
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: tasksy
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tasksy"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── App services ─────────────────────────────────────────────────────────────
+
+  migrations:
+    build:
+      context: .
+      dockerfile: cmd/migrations/Dockerfile
+    env_file: .env
+    environment:
+      DB_URI: host=postgres user=postgres password=${POSTGRES_PASSWORD:-postgres} dbname=tasksy port=5432 sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: cmd/api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    env_file: .env
+    environment:
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8080"
+      DB_URI: host=postgres user=postgres password=${POSTGRES_PASSWORD:-postgres} dbname=tasksy port=5432 sslmode=disable
+      REDIS_ADDR: redis:6379
+    volumes:
+      - media_data:/app/media
+      - log_data:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: .
+      dockerfile: cmd/worker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_URI: host=postgres user=postgres password=${POSTGRES_PASSWORD:-postgres} dbname=tasksy port=5432 sslmode=disable
+      REDIS_ADDR: redis:6379
+    volumes:
+      - media_data:/app/media
+      - log_data:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_data:
+  log_data:

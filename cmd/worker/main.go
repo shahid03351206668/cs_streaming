@@ -23,7 +23,7 @@ func main() {
 	s3 := aws_services.NewS3Client(cfg)
 
 	srv := asynq.NewServer(
-		asynq.RedisClientOpt{Addr: "localhost:6379"},
+		asynq.RedisClientOpt{Addr: cfg.Redis.Addr},
 		asynq.Config{
 			Concurrency: 50,
 		},

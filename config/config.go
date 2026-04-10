@@ -1,12 +1,10 @@
 package config
 
 import (
-	// "fmt"
 	"log"
 	"os"
 
 	// "tasksy/models"
-
 	// "github.com/golang/vscode-go/survey"
 	"github.com/joho/godotenv"
 )
@@ -15,9 +13,14 @@ type FirebaseConfig struct {
 	CredentialsFile string `mapstructure:"credentials_file"`
 }
 
+type RedisConfig struct {
+	Addr string
+}
+
 type Config struct {
 	Server         ServerConfig
 	Database       DatabaseConfig
+	Redis          RedisConfig
 	AWS            AWSConfig
 	Stripe         StripeConfig
 	SystemSettings SystemSettings
@@ -82,6 +85,9 @@ func LoadConfig() *Config {
 		},
 		Database: DatabaseConfig{
 			URI: dbURI,
+		},
+		Redis: RedisConfig{
+			Addr: getEnv("REDIS_ADDR", "127.0.0.1:6379"),
 		},
 		Stripe: StripeConfig{
 			WebhookSecret: getEnv("STRIPE_WEBHOOK_SIGNING_SECRET", ""),

@@ -19,7 +19,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient) *gin.Engine {
+func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient) *gin.Engine { //nolint:funlen
 	router := gin.Default()
 	router.Static("/media", "./media")
 
@@ -29,7 +29,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	controllers.SetNotificationService(notifService)
 
 	redisOpt := asynq.RedisClientOpt{
-		Addr: "127.0.0.1:6379",
+		Addr: appConfig.Redis.Addr,
 	}
 
 	queueClient := asynq.NewClient(redisOpt)
