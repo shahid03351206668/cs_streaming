@@ -345,7 +345,6 @@ func CreateJob(c *gin.Context) {
 			fileName := fmt.Sprintf("%s_%d%s", baseFileName, time.Now().UnixNano(), ext)
 			filePath := filepath.Join(MEDIA_FILE_PATH, fileName)
 
-
 			if err := c.SaveUploadedFile(file, filePath); err != nil {
 				tx.Rollback()
 				c.JSON(http.StatusInternalServerError, gin.H{
@@ -764,7 +763,6 @@ func CompleteContract(c *gin.Context) {
 	isClient := contract.ClientID == user.ID
 	isFreelancer := contract.FreelancerID == user.ID
 
-
 	if !isClient && !isFreelancer {
 		tx.Rollback()
 		c.JSON(http.StatusForbidden, gin.H{"error": "You are not a party to this contract"})
@@ -955,11 +953,12 @@ func GetContracts(c *gin.Context) {
 	err := query.
 		Limit(queryParams.Limit).
 		Offset(offset).
-		Order("created_at desc"). // Newest contracts first
-		Preload("JobPost").       // Load Job details
-		Preload("Client").        // Load Client profile
-		Preload("Freelancer").    // Load Freelancer profile
-		Preload("Reviews").       // Load Reviews
+		Order("created_at desc").           // Newest contracts first
+		Preload("JobPost").                 // Load Job details
+		Preload("JobPost.JobPostLocation"). // Load Location
+		Preload("Client").                  // Load Client profile
+		Preload("Freelancer").              // Load Freelancer profile
+		Preload("Reviews").                 // Load Reviews
 		Find(&contracts).Error
 
 	if err != nil {
