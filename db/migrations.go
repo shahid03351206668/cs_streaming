@@ -110,6 +110,7 @@ func ApplyMigrations() error {
 		&models.UserBankAccount{},
 		&models.PayoutTransaction{},
 		&models.Bank{},
+		&models.Dispute{},
 	}
 
 	if err := DB.AutoMigrate(modelsToMigrate...); err != nil {

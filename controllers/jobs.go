@@ -781,8 +781,33 @@ func CompleteContract(c *gin.Context) {
 		return
 	}
 
+	if contract.Status == models.ContractStatusDisputed {
+		tx.Rollback()
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot complete a contract with open disputes. Please resolve all disputes first."})
+		return
+	}
+
+	// Double-check: block if any open disputes exist even if contract status was manually changed
+	var openDisputeCount int64
+	if err := tx.Model(&models.Dispute{}).
+		Where("contract_id = ? AND status = ?", contractID, models.DisputeStatusOpen).
+		Count(&openDisputeCount).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check disputes"})
+		return
+	}
+	if openDisputeCount > 0 {
+		tx.Rollback()
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":          "Cannot complete a contract with open disputes",
+			"open_disputes":  openDisputeCount,
+			"message":        "error",
+		})
+		return
+	}
+
 	// Location verification: only required for the client (job poster)
-	if isClient {
+	if isFreelancer {
 		var jobLocation models.JobPostLocation
 		locationErr := dbConn.Where("job_post_id = ?", contract.JobPostID).First(&jobLocation).Error
 
@@ -813,7 +838,7 @@ func CompleteContract(c *gin.Context) {
 		contract.ClientCompleted = true
 	}
 
-	if isFreelancer {
+	if isClient {
 		contract.FreelancerCompleted = true
 	}
 
@@ -915,12 +940,8 @@ func GetContracts(c *gin.Context) {
 	var contracts []models.Contract
 	var total int64
 
-	// Start with the base model
-	query := dbConn.Model(&models.Contract{}).Preload("Freelancer").Preload("Proposal")
-
-	// 3. Security Scope: Only show contracts related to this user
-	// Logic: (client_id = user AND role != freelancer) OR (freelancer_id = user AND role != client)
-	// This allows filtering by "As Client" or "As Freelancer" if the user does both.
+	// Build base scoped query (security: only contracts this user is party to)
+	query := dbConn.Model(&models.Contract{})
 
 	switch queryParams.Role {
 	case "client":
@@ -931,34 +952,34 @@ func GetContracts(c *gin.Context) {
 		query = query.Where("client_id = ? OR freelancer_id = ?", user.ID, user.ID)
 	}
 
-	// 4. Apply Status Filter (Optional)
 	if queryParams.Status != "" {
 		query = query.Where("status = ?", queryParams.Status)
 	}
-
 	if queryParams.ProposalID != "" {
 		query = query.Where("proposal_id = ?", queryParams.ProposalID)
 	}
-
 	if queryParams.ContractID != "" {
 		query = query.Where("id = ?", queryParams.ContractID)
 	}
 
-	// 5. Count Total (before pagination)
-	query.Count(&total)
+	// Count before pagination
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "Failed to count contracts", "error": err.Error()})
+		return
+	}
 
-	// 6. Pagination & Preloading
 	offset := (queryParams.Page - 1) * queryParams.Limit
 
 	err := query.
 		Limit(queryParams.Limit).
 		Offset(offset).
-		Order("created_at desc").           // Newest contracts first
-		Preload("JobPost").                 // Load Job details
-		Preload("JobPost.JobPostLocation"). // Load Location
-		Preload("Client").                  // Load Client profile
-		Preload("Freelancer").              // Load Freelancer profile
-		Preload("Reviews").                 // Load Reviews
+		Order("contracts.created_at DESC").
+		Preload("JobPost").
+		Preload("JobPost.JobPostLocation").
+		Preload("Client").
+		Preload("Freelancer").
+		Preload("Proposal").
+		Preload("Reviews").
 		Find(&contracts).Error
 
 	if err != nil {

@@ -96,7 +96,8 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 	fetchQuery := jobQuery.
 		Preload("CreatedBy").
 		Preload("Category").
-		Preload("JobMedia")
+		Preload("JobMedia").
+		Preload("JobPostLocation")
 
 	if useLocation {
 		distCol := fmt.Sprintf(haversineSelect+" AS distance_km", *params.Latitude, *params.Longitude, *params.Latitude)
@@ -144,6 +145,18 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 			ID:   post.Category.ID,
 			Name: post.Category.Name,
 		}
+		var location JobPostLocation
+		if post.JobPostLocation != nil {
+			location = JobPostLocation{
+				Latitude:   post.JobPostLocation.Latitude,
+				Longitude:  post.JobPostLocation.Longitude,
+				PostalCode: post.JobPostLocation.PostalCode,
+				Street:     post.JobPostLocation.Street,
+				City:       post.JobPostLocation.City,
+				State:      post.JobPostLocation.State,
+				Country:    post.JobPostLocation.Country,
+			}
+		}
 		job := JobPostValue{
 			ID:          post.ID,
 			Title:       post.Title,
@@ -155,10 +168,12 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 			CreatedBy:   creator,
 			Category:    cat,
 			Media:       mediaList,
+			Location:    location,
 			CreatedAt:   post.CreatedAt,
 			UpdatedAt:   post.UpdatedAt,
 			DistanceKM:  row.DistanceKM,
 		}
+
 
 		jobsArray = append(jobsArray, job)
 	}

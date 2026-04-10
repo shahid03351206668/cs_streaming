@@ -4,6 +4,7 @@ import (
 	"tasksy/config"
 	"tasksy/controllers"
 	"tasksy/internal/modules/chat"
+	"tasksy/internal/modules/dispute"
 	"tasksy/internal/modules/job"
 	"tasksy/internal/modules/notifications"
 	"tasksy/internal/modules/payments"
@@ -60,6 +61,9 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 
 	promotionService := promotions.NewService(db)
 	promotionHandler := promotions.NewHandler(promotionService)
+
+	disputeService := dispute.NewService(db, notifService)
+	disputeHandler := dispute.NewHandler(disputeService)
 
 	router.POST("/api/v1/webhooks/stripe/payment", paymentHandler.HandlePaymentIntents)
 
@@ -156,6 +160,23 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		adminRoutes.POST("/banks", controllers.AdminCreateBank)
 		adminRoutes.PUT("/banks/:id", controllers.AdminUpdateBank)
 		adminRoutes.DELETE("/banks/:id", controllers.AdminDeleteBank)
+	}
+
+	// Dispute routes (authenticated users)
+	disputeRoutes := router.Group("/api/v1/disputes")
+	disputeRoutes.Use(middleware.AuthMiddleware())
+	{
+		disputeRoutes.POST("", disputeHandler.CreateDispute)
+		disputeRoutes.GET("", disputeHandler.ListMyDisputes)
+		disputeRoutes.GET("/:id", disputeHandler.GetDispute)
+	}
+
+	// Dispute admin routes
+	disputeAdmin := router.Group("/api/v1/admin/disputes")
+	disputeAdmin.Use(middleware.AuthMiddleware())
+	{
+		disputeAdmin.GET("", disputeHandler.AdminListDisputes)
+		disputeAdmin.PUT("/:id/resolve", disputeHandler.AdminResolveDispute)
 	}
 
 	// Promotional offer admin routes

@@ -3,6 +3,12 @@ package models
 import "time"
 
 const (
+	DisputeStatusOpen     = "open"
+	DisputeStatusResolved = "resolved"
+	DisputeStatusClosed   = "closed"
+)
+
+const (
 	JobStatusDraft      = "draft"
 	JobStatusProcessing = "processing"
 	JobStatusOpen       = "open"
@@ -39,9 +45,10 @@ type JobPost struct {
 	OpenBudget  bool     `gorm:"default:false" json:"open_budget"`
 	Address     string   `gorm:"type:varchar(500)" json:"address"`
 
-	Status    string     `gorm:"type:varchar(50);default:'open';index" json:"status"`
-	JobMedia  []JobMedia `gorm:"foreignKey:JobID;constraint:OnDelete:CASCADE" json:"job_media,omitempty"`
-	Proposals []Proposal `gorm:"foreignKey:JobPostID;constraint:OnDelete:CASCADE" json:"-"`
+	Status          string           `gorm:"type:varchar(50);default:'open';index" json:"status"`
+	JobMedia        []JobMedia       `gorm:"foreignKey:JobID;constraint:OnDelete:CASCADE" json:"job_media,omitempty"`
+	Proposals       []Proposal       `gorm:"foreignKey:JobPostID;constraint:OnDelete:CASCADE" json:"-"`
+	JobPostLocation *JobPostLocation `gorm:"foreignKey:JobPostID" json:"location,omitempty"`
 }
 
 type JobMedia struct {
@@ -158,7 +165,8 @@ type Contract struct {
 	EscrowAmount          int64  `gorm:"default:0" json:"escrow_amount"`
 
 	// Payments []Payment `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"payments,omitempty"`
-	Reviews []Review `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"reviews,omitempty"`
+	Reviews  []Review  `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"reviews,omitempty"`
+	Disputes []Dispute `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"disputes,omitempty"`
 }
 
 func (Contract) TableName() string {
@@ -181,4 +189,24 @@ type Review struct {
 
 func (Review) TableName() string {
 	return "reviews"
+}
+
+type Dispute struct {
+	BaseModel
+	ContractID  string    `gorm:"not null;index" json:"contract_id"`
+	Contract    Contract  `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"contract,omitempty"`
+	FiledByID   string    `gorm:"not null;index" json:"filed_by_id"`
+	FiledBy     User      `gorm:"foreignKey:FiledByID;constraint:OnDelete:CASCADE" json:"filed_by"`
+	Reason      string    `gorm:"type:varchar(255);not null" json:"reason"`
+	Description string    `gorm:"type:text;not null" json:"description"`
+	Status      string    `gorm:"type:varchar(50);default:'open';index" json:"status"`
+	// Resolution fields (populated by admin)
+	ResolvedByID *string    `gorm:"type:string;index" json:"resolved_by_id,omitempty"`
+	ResolvedBy   *User      `gorm:"foreignKey:ResolvedByID" json:"resolved_by,omitempty"`
+	Resolution   string     `gorm:"type:text" json:"resolution,omitempty"`
+	ResolvedAt   *time.Time `json:"resolved_at,omitempty"`
+}
+
+func (Dispute) TableName() string {
+	return "disputes"
 }

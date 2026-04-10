@@ -301,6 +301,32 @@ func (s *Service) NotifyNewMessage(ctx context.Context, deviceToken, senderName,
 	return err
 }
 
+// NotifyDisputeCreated notifies the other party that a dispute has been filed.
+func (s *Service) NotifyDisputeCreated(ctx context.Context, recipientUserID, contractTitle, disputeID, contractID string) error {
+	return s.notifyUser(
+		ctx,
+		recipientUserID,
+		"Dispute Filed",
+		"A dispute has been filed on contract: "+contractTitle,
+		"dispute_created",
+		"/dispute",
+		map[string]string{"dispute_id": disputeID, "contract_id": contractID},
+	)
+}
+
+// NotifyDisputeResolved notifies a party that a dispute has been resolved.
+func (s *Service) NotifyDisputeResolved(ctx context.Context, recipientUserID, contractTitle, disputeID, contractID string) error {
+	return s.notifyUser(
+		ctx,
+		recipientUserID,
+		"Dispute Resolved",
+		"A dispute on contract '"+contractTitle+"' has been resolved",
+		"dispute_resolved",
+		"/dispute",
+		map[string]string{"dispute_id": disputeID, "contract_id": contractID},
+	)
+}
+
 func haversineKM(lat1, lon1, lat2, lon2 float64) float64 {
 	const earthRadiusKM = 6371.0
 	dLat := (lat2 - lat1) * math.Pi / 180.0

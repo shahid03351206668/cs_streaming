@@ -39,20 +39,30 @@ type TypeUser struct {
 	ProfilePhoto string `json:"profile_photo,omitempty"`
 }
 
+type JobPostLocation struct {
+	Latitude   float64 `json:"latitude"`
+	Longitude  float64 `json:"longitude"`
+	PostalCode string  `json:"pincode"`
+	Street     string  `json:"street"`
+	City       string  `json:"city"`
+	State      string  `json:"state"`
+	Country    string  `json:"country"`
+}
 type JobPostValue struct {
-	ID          string       `json:"id"`
-	Title       string       `json:"title"`
-	Description string       `json:"description"`
-	Budget      float64      `json:"budget"`
-	OpenBudget  bool         `json:"open_budget"`
-	Address     string       `json:"address"`
-	Status      string       `json:"status"`
-	CreatedBy   TypeUser     `json:"created_by"`
-	Category    TypeCategory `json:"category"`
-	Media       []TypeMedia  `json:"media"`
-	DistanceKM  *float64     `json:"distance_km,omitempty"`
-	CreatedAt   time.Time    `json:"created_at"`
-	UpdatedAt   time.Time    `json:"updated_at"`
+	ID          string          `json:"id"`
+	Title       string          `json:"title"`
+	Description string          `json:"description"`
+	Budget      float64         `json:"budget"`
+	OpenBudget  bool            `json:"open_budget"`
+	Address     string          `json:"address"`
+	Status      string          `json:"status"`
+	CreatedBy   TypeUser        `json:"created_by"`
+	Category    TypeCategory    `json:"category"`
+	Media       []TypeMedia     `json:"media"`
+	DistanceKM  *float64        `json:"distance_km,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+	Location    JobPostLocation `json:"location"`
 }
 
 type JobPostData struct {
