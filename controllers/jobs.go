@@ -183,7 +183,7 @@ func GetMyJobs(c *gin.Context) {
 
 	user := c.MustGet("user").(models.User)
 	var jobs []models.JobPost
-	query := DB.Preload("CreatedBy").Preload("Category").Preload("JobMedia").Preload("Proposals")
+	query := DB.Preload("JobPostLocation").Preload("CreatedBy").Preload("Category").Preload("JobMedia").Preload("Proposals")
 
 	if err := query.Model(&models.JobPost{}).Where("created_by_id = ?", user.ID).Order("created_at DESC").Find(&jobs).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
