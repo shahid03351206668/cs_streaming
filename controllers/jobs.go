@@ -77,7 +77,7 @@ type JobPostResponse struct {
 	Media       []JobMediaResponse `json:"media"`
 	CreatedAt   time.Time          `json:"created_at"`
 	UpdatedAt   time.Time          `json:"updated_at"`
-	Location    JobLocation        `json:"location"`
+	Location    *JobLocation       `json:"location"`
 }
 
 type JobLocation struct {
@@ -111,14 +111,17 @@ func serializeJobPost(job models.JobPost) JobPostResponse {
 		ProfilePhoto: job.CreatedBy.ProfilePhoto,
 	}
 
-	location := JobLocation{
-		Latitude:   job.JobPostLocation.Latitude,
-		Longitude:  job.JobPostLocation.Longitude,
-		PostalCode: job.JobPostLocation.PostalCode,
-		Street:     job.JobPostLocation.Street,
-		City:       job.JobPostLocation.City,
-		State:      job.JobPostLocation.State,
-		Country:    job.JobPostLocation.Country,
+	var location *JobLocation
+	if job.JobPostLocation != nil {
+		location = &JobLocation{
+			Latitude:   job.JobPostLocation.Latitude,
+			Longitude:  job.JobPostLocation.Longitude,
+			PostalCode: job.JobPostLocation.PostalCode,
+			Street:     job.JobPostLocation.Street,
+			City:       job.JobPostLocation.City,
+			State:      job.JobPostLocation.State,
+			Country:    job.JobPostLocation.Country,
+		}
 	}
 
 	// Serialize category
@@ -858,11 +861,12 @@ func CompleteContract(c *gin.Context) {
 				return
 			}
 		}
-		contract.ClientCompleted = true
+		contract.FreelancerCompleted = true
+
 	}
 
 	if isClient {
-		contract.FreelancerCompleted = true
+		contract.ClientCompleted = true
 	}
 
 	statusMessage := "Marked as completed. Waiting for the other party."
