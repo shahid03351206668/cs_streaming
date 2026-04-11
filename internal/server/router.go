@@ -176,6 +176,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	disputeAdmin.Use(middleware.AuthMiddleware())
 	{
 		disputeAdmin.GET("", disputeHandler.AdminListDisputes)
+		disputeAdmin.GET("/:id", disputeHandler.AdminGetDispute)
 		disputeAdmin.PUT("/:id/resolve", disputeHandler.AdminResolveDispute)
 	}
 

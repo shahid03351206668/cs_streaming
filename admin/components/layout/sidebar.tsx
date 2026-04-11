@@ -14,6 +14,7 @@ import {
   GitBranch,
   FolderOpen,
   Building2,
+  ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ const navItems = [
   { title: "Promotions",   href: "/dashboard/promotions",   icon: Tag },
   { title: "Referrals",    href: "/dashboard/referrals",    icon: GitBranch },
   { title: "Transactions", href: "/dashboard/transactions", icon: CreditCard },
+  { title: "Disputes",     href: "/dashboard/disputes",     icon: ShieldAlert },
   { title: "Banks",        href: "/dashboard/banks",        icon: Building2 },
   { title: "Settings",     href: "/dashboard/settings",     icon: Settings },
 ];

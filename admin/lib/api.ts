@@ -2,7 +2,7 @@ import axios from "axios";
 
 // Server-side (SSR/RSC): call backend directly via env var.
 // Client-side (browser): use relative URLs — Next.js rewrites proxy /api/* to the backend.
-const API_BASE_URL = "http://13.60.208.3:8000"
+const API_BASE_URL = "http://127.0.0.1:8080"
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -209,3 +209,68 @@ export const adminUpdateBank = (id: string, data: Partial<BankParams>) =>
 
 export const adminDeleteBank = (id: string) =>
   api.delete(`/api/v1/admin/banks/${id}`);
+
+// Disputes
+export type DisputeStatus = "open" | "resolved" | "closed";
+
+export interface DisputeUser {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  profile_photo?: string;
+}
+
+export interface DisputeContract {
+  id: string;
+  title: string;
+  status: string;
+  client_id: string;
+  freelancer_id: string;
+}
+
+export interface Dispute {
+  id: string;
+  contract_id: string;
+  contract: DisputeContract;
+  filed_by_id: string;
+  filed_by: DisputeUser;
+  reason: string;
+  description: string;
+  status: DisputeStatus;
+  resolved_by_id?: string;
+  resolved_by?: DisputeUser;
+  resolution?: string;
+  resolved_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DisputeListMeta {
+  page: number;
+  limit: number;
+  total: number;
+  total_pages: number;
+}
+
+export const adminListDisputes = (params: {
+  page?: number;
+  limit?: number;
+  status?: string;
+  contract_id?: string;
+}) => {
+  const query = new URLSearchParams();
+  if (params.page) query.set("page", String(params.page));
+  if (params.limit) query.set("limit", String(params.limit));
+  if (params.status) query.set("status", params.status);
+  if (params.contract_id) query.set("contract_id", params.contract_id);
+  return api.get<{ message: string; data: Dispute[]; meta: DisputeListMeta }>(
+    `/api/v1/admin/disputes?${query.toString()}`
+  );
+};
+
+export const adminGetDispute = (id: string) =>
+  api.get<{ message: string; data: Dispute }>(`/api/v1/admin/disputes/${id}`);
+
+export const adminResolveDispute = (id: string, resolution: string) =>
+  api.put<{ message: string; data: Dispute }>(`/api/v1/admin/disputes/${id}/resolve`, { resolution });

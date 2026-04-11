@@ -160,6 +160,23 @@ func (s *Service) GetDispute(id, userID string) (*models.Dispute, error) {
 	return &dispute, nil
 }
 
+// AdminGetDispute returns a single dispute by ID without access restriction.
+func (s *Service) AdminGetDispute(id string) (*models.Dispute, error) {
+	var dispute models.Dispute
+	err := s.db.
+		Preload("FiledBy").
+		Preload("Contract").
+		Preload("ResolvedBy").
+		First(&dispute, "id = ?", id).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("dispute not found")
+		}
+		return nil, err
+	}
+	return &dispute, nil
+}
+
 // AdminListDisputes returns all disputes with optional status filter.
 func (s *Service) AdminListDisputes(page, limit int, status, contractID string) ([]models.Dispute, int64, error) {
 	if page < 1 {

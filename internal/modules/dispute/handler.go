@@ -90,6 +90,23 @@ func (h *Handler) GetDispute(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": dispute})
 }
 
+// GET /api/v1/admin/disputes/:id
+func (h *Handler) AdminGetDispute(c *gin.Context) {
+	id := c.Param("id")
+
+	dispute, err := h.service.AdminGetDispute(id)
+	if err != nil {
+		if err.Error() == "dispute not found" {
+			c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": dispute})
+}
+
 // GET /api/v1/admin/disputes
 func (h *Handler) AdminListDisputes(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))

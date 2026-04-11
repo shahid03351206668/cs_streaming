@@ -1,6 +1,7 @@
 package db
 
 import (
+	"fmt"
 	"tasksy/models"
 	applogger "tasksy/pkg/logger"
 	"time"
@@ -81,13 +82,17 @@ func Connect(dsn string) (*gorm.DB, error) {
 func ApplyMigrations() error {
 	modelsToMigrate := []interface{}{
 		&models.SystemSettings{},
-		&models.JobPostLocation{},
 		&models.User{},
+		&models.Portfolio{},
+		&models.Permission{},
+		&models.JobPost{},
+		&models.JobPostLocation{},
+
 		&models.DeviceToken{},
 		&models.Role{},
-		&models.Permission{},
+
 		&models.Category{},
-		&models.JobPost{},
+
 		&models.JobPostVideo{},
 		&models.JobMedia{},
 		&models.Proposal{},
@@ -100,7 +105,7 @@ func ApplyMigrations() error {
 		&models.ChatAttachment{},
 		&models.ChatParticipant{},
 		&models.File{},
-		&models.Portfolio{},
+
 		&models.Certification{},
 		&models.ReferralCode{},
 		&models.ReferralUsage{},
@@ -114,6 +119,7 @@ func ApplyMigrations() error {
 	}
 
 	if err := DB.AutoMigrate(modelsToMigrate...); err != nil {
+		fmt.Println(err.Error())
 		return err
 	}
 
