@@ -93,10 +93,12 @@ func (h *Handler) GetDispute(c *gin.Context) {
 		return
 	}
 
+	
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": dispute})
 }
 
 // GET /api/v1/admin/disputes/:id
+
 func (h *Handler) AdminGetDispute(c *gin.Context) {
 	id := c.Param("id")
 

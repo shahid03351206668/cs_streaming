@@ -22,6 +22,7 @@ import (
 const ALLOWED_JOB_POST_MEDIA int = 6
 const MEDIA_FILE_PATH string = "media/"
 
+
 func getMediaType(file *multipart.FileHeader) string {
 	ext := strings.ToLower(filepath.Ext(file.Filename))
 
@@ -663,6 +664,7 @@ func CreateContract(c *gin.Context) {
 			"message": "error"})
 	}
 
+	fmt.Println(time.Now())
 	var existingContract models.Contract
 
 	if DB.First(&existingContract, "proposal_id = ?", proposal.ID).RowsAffected > 0 {

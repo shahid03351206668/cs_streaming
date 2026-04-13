@@ -2,6 +2,7 @@ package models
 
 import "time"
 
+
 const (
 	DisputeStatusOpen     = "open"
 	DisputeStatusResolved = "resolved"
@@ -44,7 +45,6 @@ type JobPost struct {
 	Budget      float64  `gorm:"type:decimal(10,2)" json:"budget"`
 	OpenBudget  bool     `gorm:"default:false" json:"open_budget"`
 	Address     string   `gorm:"type:varchar(500)" json:"address"`
-
 	Status          string           `gorm:"type:varchar(50);default:'open';index" json:"status"`
 	JobMedia        []JobMedia       `gorm:"foreignKey:JobID;constraint:OnDelete:CASCADE" json:"job_media,omitempty"`
 	Proposals       []Proposal       `gorm:"foreignKey:JobPostID;constraint:OnDelete:CASCADE" json:"-"`
