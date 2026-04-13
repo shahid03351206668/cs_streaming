@@ -47,7 +47,7 @@ func (s *Service) CreateDispute(
 		return nil, errors.New("you are not a party to this contract")
 	}
 
-	if contract.Status != models.ContractStatusActive {
+	if contract.Status != models.ContractStatusPending {
 		return nil, errors.New("disputes can only be filed on contracts that are in progress")
 	}
 
