@@ -29,8 +29,8 @@ func NewService(db *gorm.DB, notif *notifications.Service, s3Client *aws_service
 	return &Service{db: db, notif: notif, s3Client: s3Client}
 }
 
-// CreateDispute files a new dispute against a contract. The contract must be
-// in "active" status and the caller must be a party to it.
+// CreateDispute files a new dispute against a contract.
+// The caller must be a party to the contract (client or freelancer).
 func (s *Service) CreateDispute(
 	contractID, filedByID, reason, description string,
 	files []*multipart.FileHeader,
@@ -47,11 +47,6 @@ func (s *Service) CreateDispute(
 		return nil, errors.New("you are not a party to this contract")
 	}
 
-	if contract.Status != models.ContractStatusPending {
-		return nil, errors.New("disputes can only be filed on contracts that are in progress")
-	}
-
-	// Determine whether the filer is the client or the freelancer
 	filedByRole := "client"
 	if filedByID == contract.FreelancerID {
 		filedByRole = "freelancer"
@@ -109,6 +104,7 @@ func (s *Service) CreateDispute(
 
 			url, objectKey, err := s.s3Client.UploadFile(f, fh.Filename, contentType, "", "")
 			f.Close()
+
 			if err != nil {
 				logger.Log.Warn("dispute attachment upload failed", zap.String("file", fh.Filename), zap.Error(err))
 				continue
@@ -159,7 +155,6 @@ func (s *Service) CreateDispute(
 	return &dispute, nil
 }
 
-// ListMyDisputes returns disputes related to the calling user (filed by or party to contract).
 func (s *Service) ListMyDisputes(userID string, page, limit int, status string) ([]models.Dispute, int64, error) {
 	if page < 1 {
 		page = 1
@@ -186,6 +181,7 @@ func (s *Service) ListMyDisputes(userID string, page, limit int, status string) 
 	err := query.
 		Preload("FiledBy").
 		Preload("Contract").
+		Preload("Contract.JobPost").
 		Preload("Attachments", "entity_type = ?", entityType).
 		Order("disputes.created_at DESC").
 		Limit(limit).
@@ -201,6 +197,7 @@ func (s *Service) GetDispute(id, userID string) (*models.Dispute, error) {
 	err := s.db.
 		Preload("FiledBy").
 		Preload("Contract").
+		Preload("Contract.JobPost").
 		Preload("ResolvedBy").
 		Preload("Attachments", "entity_type = ?", entityType).
 		First(&dispute, "id = ?", id).Error
@@ -215,11 +212,9 @@ func (s *Service) GetDispute(id, userID string) (*models.Dispute, error) {
 	if c.ClientID != userID && c.FreelancerID != userID && dispute.FiledByID != userID {
 		return nil, errors.New("access denied")
 	}
-
 	return &dispute, nil
 }
 
-// AdminGetDispute returns a single dispute by ID without access restriction.
 func (s *Service) AdminGetDispute(id string) (*models.Dispute, error) {
 	var dispute models.Dispute
 	err := s.db.

@@ -207,8 +207,9 @@ type Dispute struct {
 	ResolvedBy   *User      `gorm:"foreignKey:ResolvedByID" json:"resolved_by,omitempty"`
 	Resolution   string     `gorm:"type:text" json:"resolution,omitempty"`
 	ResolvedAt   *time.Time `json:"resolved_at,omitempty"`
-	// Attachments are stored in the files table via EntityID=dispute.ID, EntityType="disputes"
-	Attachments []File `gorm:"foreignKey:EntityID;references:ID;constraint:OnDelete:CASCADE" json:"attachments,omitempty"`
+	// Attachments are stored in the files table via EntityID=dispute.ID, EntityType="disputes".
+	// No FK constraint is created because the files table is shared across multiple entity types.
+	Attachments []File `gorm:"foreignKey:EntityID;references:ID" json:"attachments,omitempty"`
 }
 
 func (Dispute) TableName() string {

@@ -18,7 +18,8 @@ func ConnectDB(dsn string) error {
 	var err error
 
 	dbConfig := &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
+		Logger:                                   logger.Default.LogMode(logger.Silent),
+		DisableForeignKeyConstraintWhenMigrating: true,
 	}
 
 	DB, err = gorm.Open(postgres.Open(dsn), dbConfig)
@@ -51,7 +52,8 @@ func Connect(dsn string) (*gorm.DB, error) {
 	var err error
 
 	dbConfig := &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
+		Logger:                                   logger.Default.LogMode(logger.Silent),
+		DisableForeignKeyConstraintWhenMigrating: true,
 	}
 
 	DB, err = gorm.Open(postgres.Open(dsn), dbConfig)
@@ -80,6 +82,13 @@ func Connect(dsn string) (*gorm.DB, error) {
 	return DB, nil
 }
 func ApplyMigrations() error {
+	// Drop polymorphic FK constraints that conflict with the shared `files` table.
+	// The files table is used by multiple entity types (portfolio media, dispute attachments, etc.)
+	// so a per-entity foreign key referencing a single entity table would fail on rows
+	// that belong to other entity types.
+	DB.Exec(`ALTER TABLE files DROP CONSTRAINT IF EXISTS fk_disputes_attachments`)
+	DB.Exec(`ALTER TABLE files DROP CONSTRAINT IF EXISTS fk_portfolios_media`)
+
 	modelsToMigrate := []interface{}{
 		&models.SystemSettings{},
 		&models.User{},

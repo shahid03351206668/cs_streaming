@@ -54,7 +54,8 @@ type Portfolio struct {
 	Title       string `json:"title" binding:"required"`
 	Description string `json:"description"`
 	ProjectURL  string `json:"project_url"`
-	Media       []File `gorm:"foreignKey:EntityID;references:ID;constraint:OnDelete:CASCADE" json:"media"`
+	// No FK constraint — files table is shared across multiple entity types.
+	Media []File `gorm:"foreignKey:EntityID;references:ID" json:"media"`
 }
 
 func (Portfolio) TableName() string {

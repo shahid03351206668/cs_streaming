@@ -2,6 +2,7 @@ package dispute
 
 import (
 	"math"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 
@@ -18,10 +19,6 @@ func NewHandler(s *Service) *Handler {
 	return &Handler{service: s}
 }
 
-// POST /api/v1/disputes
-// Content-Type: multipart/form-data
-// Fields: contract_id, reason, description
-// Files:  attachments[] (optional, up to 5)
 func (h *Handler) CreateDispute(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
@@ -35,9 +32,10 @@ func (h *Handler) CreateDispute(c *gin.Context) {
 		return
 	}
 
-	// Parse optional attachments (max 5 files)
-	form, _ := c.MultipartForm()
-	var files = form.File["file"]
+	var files []*multipart.FileHeader
+	if form, err := c.MultipartForm(); err == nil && form != nil {
+		files = form.File["file"]
+	}
 	if len(files) > 5 {
 		files = files[:5]
 	}
