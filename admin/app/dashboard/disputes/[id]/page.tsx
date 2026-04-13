@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft, CheckCircle, Clock, User, FileText, Loader2,
+  Paperclip, Download, Image, File as FileIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,7 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import {
   adminGetDispute, adminResolveDispute,
-  type Dispute, type DisputeStatus,
+  type Dispute, type DisputeStatus, type DisputeAttachment,
 } from "@/lib/api";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -36,12 +37,74 @@ const CONTRACT_STATUS_BADGE: Record<string, "default" | "secondary" | "destructi
   cancelled: "secondary",
 };
 
+const ROLE_BADGE: Record<string, string> = {
+  client: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
+  freelancer: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
+};
+
+function fmtBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+}
+
+function isImage(mediaType: string, fileName: string): boolean {
+  return (
+    mediaType?.startsWith("image/") ||
+    /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(fileName)
+  );
+}
+
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
       <p className="text-xs text-muted-foreground mb-0.5">{label}</p>
       <div className="text-sm font-medium">{value}</div>
     </div>
+  );
+}
+
+// ─── Attachment card ──────────────────────────────────────────────────────────
+
+function AttachmentItem({ file }: { file: DisputeAttachment }) {
+  const img = isImage(file.media_type, file.file_name);
+
+  return (
+    <a
+      href={file.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="group flex items-center gap-3 rounded-lg border bg-muted/40 p-3 hover:bg-muted transition-colors"
+    >
+      {img ? (
+        <div className="h-10 w-10 rounded overflow-hidden border shrink-0 bg-white">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={file.url}
+            alt={file.file_name}
+            className="h-full w-full object-cover"
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = "none";
+            }}
+          />
+        </div>
+      ) : (
+        <div className="h-10 w-10 rounded border bg-white flex items-center justify-center shrink-0">
+          <FileIcon className="h-5 w-5 text-muted-foreground" />
+        </div>
+      )}
+
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate">{file.file_name}</p>
+        <p className="text-xs text-muted-foreground">
+          {file.media_type || "unknown type"} · {fmtBytes(file.file_size)}
+        </p>
+      </div>
+
+      <Download className="h-4 w-4 text-muted-foreground group-hover:text-foreground shrink-0 transition-colors" />
+    </a>
   );
 }
 
@@ -88,6 +151,8 @@ export default function DisputeDetailPage() {
       setResolving(false);
     }
   };
+
+  const attachments = dispute?.attachments ?? [];
 
   return (
     <div className="space-y-6">
@@ -166,9 +231,9 @@ export default function DisputeDetailPage() {
             </div>
           </div>
 
-          {/* Dispute info */}
+          {/* Main grid */}
           <div className="grid gap-4 lg:grid-cols-2">
-            {/* Left: dispute details */}
+            {/* ── Left: dispute details ──────────────────────────────────── */}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
@@ -219,7 +284,7 @@ export default function DisputeDetailPage() {
               </CardContent>
             </Card>
 
-            {/* Right: contract + parties */}
+            {/* ── Right: contract + parties ──────────────────────────────── */}
             <div className="space-y-4">
               {/* Contract */}
               <Card>
@@ -227,10 +292,7 @@ export default function DisputeDetailPage() {
                   <CardTitle className="text-base">Contract</CardTitle>
                 </CardHeader>
                 <CardContent className="grid grid-cols-2 gap-4">
-                  <InfoRow
-                    label="Title"
-                    value={dispute.contract?.title ?? "—"}
-                  />
+                  <InfoRow label="Title" value={dispute.contract?.title ?? "—"} />
                   <InfoRow
                     label="Status"
                     value={
@@ -242,16 +304,16 @@ export default function DisputeDetailPage() {
                       </Badge>
                     }
                   />
-                  <InfoRow
-                    label="Contract ID"
-                    value={
-                      <span className="font-mono text-xs break-all">{dispute.contract_id}</span>
-                    }
-                  />
+                  <div className="col-span-2">
+                    <InfoRow
+                      label="Contract ID"
+                      value={<span className="font-mono text-xs break-all">{dispute.contract_id}</span>}
+                    />
+                  </div>
                 </CardContent>
               </Card>
 
-              {/* Filed By */}
+              {/* Filed By — with role badge */}
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base flex items-center gap-2">
@@ -260,6 +322,7 @@ export default function DisputeDetailPage() {
                 </CardHeader>
                 <CardContent className="flex items-center gap-3">
                   {dispute.filed_by?.profile_photo ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={dispute.filed_by.profile_photo}
                       alt=""
@@ -271,12 +334,23 @@ export default function DisputeDetailPage() {
                       {dispute.filed_by?.last_name?.[0]}
                     </div>
                   )}
-                  <div>
-                    <p className="font-semibold text-sm">
-                      {dispute.filed_by
-                        ? `${dispute.filed_by.first_name} ${dispute.filed_by.last_name}`
-                        : "—"}
-                    </p>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-sm">
+                        {dispute.filed_by
+                          ? `${dispute.filed_by.first_name} ${dispute.filed_by.last_name}`
+                          : "—"}
+                      </p>
+                      {dispute.filed_by_role && (
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize ${
+                            ROLE_BADGE[dispute.filed_by_role] ?? "bg-muted text-muted-foreground"
+                          }`}
+                        >
+                          {dispute.filed_by_role}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-muted-foreground">{dispute.filed_by?.email}</p>
                   </div>
                 </CardContent>
@@ -292,6 +366,7 @@ export default function DisputeDetailPage() {
                   </CardHeader>
                   <CardContent className="flex items-center gap-3">
                     {dispute.resolved_by.profile_photo ? (
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={dispute.resolved_by.profile_photo}
                         alt=""
@@ -321,11 +396,42 @@ export default function DisputeDetailPage() {
               )}
             </div>
           </div>
+
+          {/* ── Attachments ─────────────────────────────────────────────── */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Paperclip className="h-4 w-4" />
+                Attachments
+                {attachments.length > 0 && (
+                  <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
+                    {attachments.length}
+                  </span>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {attachments.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">
+                  No attachments were submitted with this dispute.
+                </p>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {attachments.map((file) => (
+                    <AttachmentItem key={file.id} file={file} />
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </>
       )}
 
       {/* ─── Resolve Dialog ───────────────────────────────────────────────── */}
-      <Dialog open={resolveOpen} onOpenChange={(open) => { if (!open) { setResolveOpen(false); setResolution(""); } }}>
+      <Dialog
+        open={resolveOpen}
+        onOpenChange={(open) => { if (!open) { setResolveOpen(false); setResolution(""); } }}
+      >
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Resolve Dispute</DialogTitle>
@@ -347,9 +453,7 @@ export default function DisputeDetailPage() {
                 minLength={5}
                 className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
               />
-              <p className="text-xs text-muted-foreground">
-                {resolution.length} characters
-              </p>
+              <p className="text-xs text-muted-foreground">{resolution.length} characters</p>
             </div>
 
             <DialogFooter className="gap-2">

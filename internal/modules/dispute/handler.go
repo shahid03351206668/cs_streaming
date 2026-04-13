@@ -19,23 +19,32 @@ func NewHandler(s *Service) *Handler {
 }
 
 // POST /api/v1/disputes
+// Content-Type: multipart/form-data
+// Fields: contract_id, reason, description
+// Files:  attachments[] (optional, up to 5)
 func (h *Handler) CreateDispute(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
 	var body struct {
-		ContractID  string `json:"contract_id" binding:"required"`
-		Reason      string `json:"reason" binding:"required,max=255"`
-		Description string `json:"description" binding:"required,min=10"`
+		ContractID  string `form:"contract_id" binding:"required"`
+		Reason      string `form:"reason"      binding:"required,max=255"`
+		Description string `form:"description" binding:"required,min=10"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
+	if err := c.ShouldBind(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
 
-	dispute, err := h.service.CreateDispute(body.ContractID, user.ID, body.Reason, body.Description)
+	// Parse optional attachments (max 5 files)
+	form, _ := c.MultipartForm()
+	var files = form.File["file"]
+	if len(files) > 5 {
+		files = files[:5]
+	}
+
+	dispute, err := h.service.CreateDispute(body.ContractID, user.ID, body.Reason, body.Description, files)
 	if err != nil {
-		status := http.StatusBadRequest
-		c.JSON(status, gin.H{"message": "error", "error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
 
@@ -75,15 +84,14 @@ func (h *Handler) GetDispute(c *gin.Context) {
 
 	dispute, err := h.service.GetDispute(id, user.ID)
 	if err != nil {
-		if err.Error() == "dispute not found" {
+		switch err.Error() {
+		case "dispute not found":
 			c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": err.Error()})
-			return
-		}
-		if err.Error() == "access denied" {
+		case "access denied":
 			c.JSON(http.StatusForbidden, gin.H{"message": "error", "error": err.Error()})
-			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
 

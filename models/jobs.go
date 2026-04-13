@@ -193,18 +193,22 @@ func (Review) TableName() string {
 
 type Dispute struct {
 	BaseModel
-	ContractID  string    `gorm:"not null;index" json:"contract_id"`
-	Contract    Contract  `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"contract,omitempty"`
-	FiledByID   string    `gorm:"not null;index" json:"filed_by_id"`
-	FiledBy     User      `gorm:"foreignKey:FiledByID;constraint:OnDelete:CASCADE" json:"filed_by"`
-	Reason      string    `gorm:"type:varchar(255);not null" json:"reason"`
-	Description string    `gorm:"type:text;not null" json:"description"`
-	Status      string    `gorm:"type:varchar(50);default:'open';index" json:"status"`
+	ContractID  string   `gorm:"not null;index" json:"contract_id"`
+	Contract    Contract `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"contract,omitempty"`
+	FiledByID   string   `gorm:"not null;index" json:"filed_by_id"`
+	FiledBy     User     `gorm:"foreignKey:FiledByID;constraint:OnDelete:CASCADE" json:"filed_by"`
+	// FiledByRole stores whether the filer is "client" or "freelancer" on the contract
+	FiledByRole string `gorm:"type:varchar(20);not null;default:'client'" json:"filed_by_role"`
+	Reason      string `gorm:"type:varchar(255);not null" json:"reason"`
+	Description string `gorm:"type:text;not null" json:"description"`
+	Status      string `gorm:"type:varchar(50);default:'open';index" json:"status"`
 	// Resolution fields (populated by admin)
 	ResolvedByID *string    `gorm:"type:string;index" json:"resolved_by_id,omitempty"`
 	ResolvedBy   *User      `gorm:"foreignKey:ResolvedByID" json:"resolved_by,omitempty"`
 	Resolution   string     `gorm:"type:text" json:"resolution,omitempty"`
 	ResolvedAt   *time.Time `json:"resolved_at,omitempty"`
+	// Attachments are stored in the files table via EntityID=dispute.ID, EntityType="disputes"
+	Attachments []File `gorm:"foreignKey:EntityID;references:ID;constraint:OnDelete:CASCADE" json:"attachments,omitempty"`
 }
 
 func (Dispute) TableName() string {

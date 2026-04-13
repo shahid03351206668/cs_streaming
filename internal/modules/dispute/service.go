@@ -3,28 +3,38 @@ package dispute
 import (
 	"context"
 	"errors"
+	"mime/multipart"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"tasksy/internal/modules/notifications"
 	"tasksy/models"
+	aws_services "tasksy/pkg"
 	"tasksy/pkg/logger"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
+const entityType = "disputes"
+
 type Service struct {
-	db    *gorm.DB
-	notif *notifications.Service
+	db       *gorm.DB
+	notif    *notifications.Service
+	s3Client *aws_services.S3Client
 }
 
-func NewService(db *gorm.DB, notif *notifications.Service) *Service {
-	return &Service{db: db, notif: notif}
+func NewService(db *gorm.DB, notif *notifications.Service, s3Client *aws_services.S3Client) *Service {
+	return &Service{db: db, notif: notif, s3Client: s3Client}
 }
 
 // CreateDispute files a new dispute against a contract. The contract must be
-// in "active" or "in_progress" status and the caller must be a party to it.
-func (s *Service) CreateDispute(contractID, filedByID, reason, description string) (*models.Dispute, error) {
+// in "active" status and the caller must be a party to it.
+func (s *Service) CreateDispute(
+	contractID, filedByID, reason, description string,
+	files []*multipart.FileHeader,
+) (*models.Dispute, error) {
 	var contract models.Contract
 	if err := s.db.First(&contract, "id = ?", contractID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -41,6 +51,12 @@ func (s *Service) CreateDispute(contractID, filedByID, reason, description strin
 		return nil, errors.New("disputes can only be filed on contracts that are in progress")
 	}
 
+	// Determine whether the filer is the client or the freelancer
+	filedByRole := "client"
+	if filedByID == contract.FreelancerID {
+		filedByRole = "freelancer"
+	}
+
 	// Prevent duplicate open disputes from the same user
 	var existing int64
 	s.db.Model(&models.Dispute{}).
@@ -53,12 +69,14 @@ func (s *Service) CreateDispute(contractID, filedByID, reason, description strin
 	dispute := models.Dispute{
 		ContractID:  contractID,
 		FiledByID:   filedByID,
+		FiledByRole: filedByRole,
 		Reason:      reason,
 		Description: description,
 		Status:      models.DisputeStatusOpen,
 	}
 
 	tx := s.db.Begin()
+
 	if err := tx.Create(&dispute).Error; err != nil {
 		tx.Rollback()
 		return nil, err
@@ -75,8 +93,47 @@ func (s *Service) CreateDispute(contractID, filedByID, reason, description strin
 		return nil, err
 	}
 
-	// Reload with relations
-	s.db.Preload("FiledBy").First(&dispute, "id = ?", dispute.ID)
+	// Upload attachments (outside transaction — partial upload failure is non-fatal)
+	if len(files) > 0 && s.s3Client != nil {
+		for _, fh := range files {
+			f, err := fh.Open()
+			if err != nil {
+				logger.Log.Warn("dispute attachment open failed", zap.String("file", fh.Filename), zap.Error(err))
+				continue
+			}
+
+			contentType := fh.Header.Get("Content-Type")
+			if contentType == "" {
+				contentType = mimeFromName(fh.Filename)
+			}
+
+			url, objectKey, err := s.s3Client.UploadFile(f, fh.Filename, contentType, "", "")
+			f.Close()
+			if err != nil {
+				logger.Log.Warn("dispute attachment upload failed", zap.String("file", fh.Filename), zap.Error(err))
+				continue
+			}
+
+			attachment := models.File{
+				URL:        url,
+				FileName:   fh.Filename,
+				FileSize:   fh.Size,
+				FileType:   contentType,
+				ObjectKey:  objectKey,
+				EntityID:   dispute.ID,
+				EntityType: entityType,
+			}
+			if err := s.db.Create(&attachment).Error; err != nil {
+				logger.Log.Warn("dispute attachment db save failed", zap.String("file", fh.Filename), zap.Error(err))
+			}
+		}
+	}
+
+	// Reload with all relations
+	s.db.
+		Preload("FiledBy").
+		Preload("Attachments", "entity_type = ?", entityType).
+		First(&dispute, "id = ?", dispute.ID)
 
 	// Notify the other party asynchronously
 	go func() {
@@ -129,6 +186,7 @@ func (s *Service) ListMyDisputes(userID string, page, limit int, status string) 
 	err := query.
 		Preload("FiledBy").
 		Preload("Contract").
+		Preload("Attachments", "entity_type = ?", entityType).
 		Order("disputes.created_at DESC").
 		Limit(limit).
 		Offset(offset).
@@ -144,6 +202,7 @@ func (s *Service) GetDispute(id, userID string) (*models.Dispute, error) {
 		Preload("FiledBy").
 		Preload("Contract").
 		Preload("ResolvedBy").
+		Preload("Attachments", "entity_type = ?", entityType).
 		First(&dispute, "id = ?", id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -167,6 +226,7 @@ func (s *Service) AdminGetDispute(id string) (*models.Dispute, error) {
 		Preload("FiledBy").
 		Preload("Contract").
 		Preload("ResolvedBy").
+		Preload("Attachments", "entity_type = ?", entityType).
 		First(&dispute, "id = ?", id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -177,7 +237,7 @@ func (s *Service) AdminGetDispute(id string) (*models.Dispute, error) {
 	return &dispute, nil
 }
 
-// AdminListDisputes returns all disputes with optional status filter.
+// AdminListDisputes returns all disputes with optional status/contract filter.
 func (s *Service) AdminListDisputes(page, limit int, status, contractID string) ([]models.Dispute, int64, error) {
 	if page < 1 {
 		page = 1
@@ -206,6 +266,7 @@ func (s *Service) AdminListDisputes(page, limit int, status, contractID string) 
 		Preload("FiledBy").
 		Preload("Contract").
 		Preload("ResolvedBy").
+		Preload("Attachments", "entity_type = ?", entityType).
 		Order("created_at DESC").
 		Limit(limit).
 		Offset(offset).
@@ -242,7 +303,7 @@ func (s *Service) AdminResolveDispute(id, resolvedByID, resolution string) (*mod
 		return nil, err
 	}
 
-	// If no other open disputes on the contract, revert contract back to active
+	// If no other open disputes on the contract, revert contract to active
 	var openCount int64
 	tx.Model(&models.Dispute{}).
 		Where("contract_id = ? AND status = ? AND id != ?", dispute.ContractID, models.DisputeStatusOpen, id).
@@ -260,7 +321,12 @@ func (s *Service) AdminResolveDispute(id, resolvedByID, resolution string) (*mod
 		return nil, err
 	}
 
-	s.db.Preload("FiledBy").Preload("Contract").Preload("ResolvedBy").First(&dispute, "id = ?", id)
+	s.db.
+		Preload("FiledBy").
+		Preload("Contract").
+		Preload("ResolvedBy").
+		Preload("Attachments", "entity_type = ?", entityType).
+		First(&dispute, "id = ?", id)
 
 	// Notify both parties
 	go func() {
@@ -276,4 +342,31 @@ func (s *Service) AdminResolveDispute(id, resolvedByID, resolution string) (*mod
 	}()
 
 	return &dispute, nil
+}
+
+// mimeFromName returns a basic MIME type from a file extension.
+func mimeFromName(name string) string {
+	ext := strings.ToLower(filepath.Ext(name))
+	switch ext {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".pdf":
+		return "application/pdf"
+	case ".doc":
+		return "application/msword"
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".zip":
+		return "application/zip"
+	case ".mp4":
+		return "video/mp4"
+	default:
+		return "application/octet-stream"
+	}
 }

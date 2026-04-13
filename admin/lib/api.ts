@@ -2,7 +2,7 @@ import axios from "axios";
 
 // Server-side (SSR/RSC): call backend directly via env var.
 // Client-side (browser): use relative URLs — Next.js rewrites proxy /api/* to the backend.
-const API_BASE_URL = "http://127.0.0.1:8080"
+const API_BASE_URL = "http://13.60.208.3:8000"
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -229,12 +229,26 @@ export interface DisputeContract {
   freelancer_id: string;
 }
 
+export interface DisputeAttachment {
+  id: string;
+  url: string;
+  file_name: string;
+  file_size: number;
+  media_type: string;
+  object_key: string;
+  entity_id: string;
+  entity_type: string;
+  created_at: string;
+}
+
 export interface Dispute {
   id: string;
   contract_id: string;
   contract: DisputeContract;
   filed_by_id: string;
   filed_by: DisputeUser;
+  /** "client" or "freelancer" — role of the filer on the contract */
+  filed_by_role: "client" | "freelancer";
   reason: string;
   description: string;
   status: DisputeStatus;
@@ -242,6 +256,7 @@ export interface Dispute {
   resolved_by?: DisputeUser;
   resolution?: string;
   resolved_at?: string;
+  attachments?: DisputeAttachment[];
   created_at: string;
   updated_at: string;
 }

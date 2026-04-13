@@ -62,7 +62,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	promotionService := promotions.NewService(db)
 	promotionHandler := promotions.NewHandler(promotionService)
 
-	disputeService := dispute.NewService(db, notifService)
+	disputeService := dispute.NewService(db, notifService, s3Client)
 	disputeHandler := dispute.NewHandler(disputeService)
 
 	router.POST("/api/v1/webhooks/stripe/payment", paymentHandler.HandlePaymentIntents)
