@@ -42,6 +42,40 @@ func generateUserReferralCode(length int) (string, error) {
 	}
 	return string(result), nil
 }
+
+func (h *Handler) GetSystemSettings(c *gin.Context) {
+	type Response struct {
+		ClientCommissionPercentage     float64 `json:"client_commission_percentage"`
+		FreelancerCommissionPercentage float64 `json:"freelancer_commission_percentage"`
+		ApplicationFeeAmount           int64   `json:"application_fee_amount"`
+		AppFeePercentage               float64 `json:"app_fee_percentage"`
+		ReferralDiscountPercentage     float64 `json:"referral_discount_percentage"`
+		ReferralRewardAmount           int64   `json:"referral_reward_amount"`
+	}
+
+	var settings models.SystemSettings
+
+	if err := h.service.db.First(&settings).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to fetch system settings",
+		})
+		return
+	}
+
+	response := Response{
+		ClientCommissionPercentage:     settings.ClientCommissionPercentage,
+		FreelancerCommissionPercentage: settings.FreelancerCommissionPercentage,
+		ApplicationFeeAmount:           settings.ApplicationFeeAmount,
+		AppFeePercentage:               settings.AppFeePercentage,
+		ReferralDiscountPercentage:     settings.ReferralDiscountPercentage,
+		ReferralRewardAmount:           settings.ReferralRewardAmount,
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data":    response,
+	})
+}
 func (h *Handler) GetUserProfile(c *gin.Context) {
 	userID := c.Param("id")
 
