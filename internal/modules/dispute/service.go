@@ -38,16 +38,14 @@ type JobPostObject struct {
 }
 
 type ContractObject struct {
-	ID      string        `json:"id"`
-	Title   string        `json:"title"`
-	Status  string        `json:"status"`
-	JobPost JobPostObject `json:"job_post"`
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
 }
 
-// DisputeVal is the shaped response returned by the public dispute endpoints.
-// Admin endpoints return the raw models.Dispute instead.
 type DisputeVal struct {
 	ID          string             `json:"id"`
+	JobPost     JobPostObject      `json:"job_post"`
 	ContractID  string             `json:"contract_id"`
 	FiledByRole string             `json:"filed_by_role"`
 	Reason      string             `json:"reason"`
@@ -63,7 +61,6 @@ type DisputeVal struct {
 	Attachments []models.File      `json:"attachments"`
 }
 
-// toDisputeVal maps a fully preloaded models.Dispute into a DisputeVal.
 func toDisputeVal(d models.Dispute) DisputeVal {
 	filer := UserProfileObject{
 		ID:          d.FiledBy.ID,
@@ -79,8 +76,10 @@ func toDisputeVal(d models.Dispute) DisputeVal {
 		Title:  d.Contract.Title,
 		Status: d.Contract.Status,
 	}
+	var jobPost JobPostObject
+
 	if d.Contract.JobPost.ID != "" {
-		contract.JobPost = JobPostObject{
+		jobPost = JobPostObject{
 			ID:          d.Contract.JobPost.ID,
 			Category:    d.Contract.JobPost.Category,
 			Title:       d.Contract.JobPost.Title,
@@ -103,6 +102,7 @@ func toDisputeVal(d models.Dispute) DisputeVal {
 		FiledByRole: d.FiledByRole,
 		Reason:      d.Reason,
 		Description: d.Description,
+		JobPost:     jobPost,
 		Status:      d.Status,
 		Resolution:  d.Resolution,
 		ResolvedAt:  d.ResolvedAt,
@@ -128,8 +128,6 @@ func toDisputeVal(d models.Dispute) DisputeVal {
 	return val
 }
 
-// ─── Service ──────────────────────────────────────────────────────────────────
-
 const entityType = "disputes"
 
 type Service struct {
@@ -142,8 +140,6 @@ func NewService(db *gorm.DB, notif *notifications.Service, s3Client *aws_service
 	return &Service{db: db, notif: notif, s3Client: s3Client}
 }
 
-// CreateDispute files a new dispute against a contract.
-// The caller must be a party to the contract (client or freelancer).
 func (s *Service) CreateDispute(
 	contractID, filedByID, reason, description string,
 	files []*multipart.FileHeader,
@@ -158,10 +154,6 @@ func (s *Service) CreateDispute(
 
 	if contract.ClientID != filedByID && contract.FreelancerID != filedByID {
 		return nil, errors.New("you are not a party to this contract")
-	}
-
-	if contract.Status != models.ContractStatusActive {
-		return nil, errors.New("disputes can only be filed on contracts that are in progress")
 	}
 
 	filedByRole := "client"
@@ -200,7 +192,6 @@ func (s *Service) CreateDispute(
 		return nil, err
 	}
 
-	// Upload attachments (outside transaction — partial failures are non-fatal)
 	if len(files) > 0 && s.s3Client != nil {
 		for _, fh := range files {
 			f, err := fh.Open()
@@ -233,7 +224,6 @@ func (s *Service) CreateDispute(
 		}
 	}
 
-	// Reload with all relations needed by toDisputeVal
 	s.db.
 		Preload("FiledBy").
 		Preload("Contract").
@@ -242,7 +232,6 @@ func (s *Service) CreateDispute(
 		Preload("Attachments", "entity_type = ?", entityType).
 		First(&dispute, "id = ?", dispute.ID)
 
-	// Notify the other party asynchronously
 	go func() {
 		if s.notif == nil {
 			return
@@ -263,7 +252,6 @@ func (s *Service) CreateDispute(
 	return &val, nil
 }
 
-// ListMyDisputes returns disputes the calling user is involved in.
 func (s *Service) ListMyDisputes(userID string, page, limit int, status string) ([]DisputeVal, int64, error) {
 	if page < 1 {
 		page = 1

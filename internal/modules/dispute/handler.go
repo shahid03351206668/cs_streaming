@@ -93,7 +93,6 @@ func (h *Handler) GetDispute(c *gin.Context) {
 		return
 	}
 
-	
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": dispute})
 }
 
