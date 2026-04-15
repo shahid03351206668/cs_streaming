@@ -30,6 +30,7 @@ func NewHandler(service *PaymentService) *PaymentHandler {
 func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, int64(65536))
 	payload, err := io.ReadAll(c.Request.Body)
+
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "error",
@@ -60,8 +61,6 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 			return
 		}
 
-		// charge.updated fires for many reasons (e.g. receipt URL update).
-		// Only process it when the charge has actually succeeded.
 		if charge.Status != "succeeded" {
 			c.JSON(http.StatusOK, gin.H{"message": "received", "error": "charge status not equals to succeeded"})
 			return
@@ -74,11 +73,11 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 			zap.String("proposal_id", proposal_id),
 		)
 
-		// Idempotency: skip if we already recorded a transaction for this charge
 		var existing int64
 		s.service.db.Model(&models.PaymentTransaction{}).
 			Where("charge_id = ?", charge.ID).
 			Count(&existing)
+
 		if existing > 0 {
 			logger.Log.Info("transaction already exists for charge, skipping", zap.String("charge_id", charge.ID))
 			c.JSON(http.StatusOK, gin.H{"message": "received"})
@@ -93,7 +92,6 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 
 		var proposal models.Proposal
 		if err := s.service.db.Where("id = ?", proposal_id).Preload("JobPost").First(&proposal).Error; err != nil {
-			// Return 400 so Stripe retries — the proposal may not exist yet due to race
 			logger.Log.Error("proposal not found for charge", zap.String("proposal_id", proposal_id), zap.Error(err))
 			c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "proposal not found"})
 			return
@@ -111,7 +109,6 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 			return
 		}
 
-		// Client is the payer (job creator); freelancer is the recipient
 		payerID := proposal.JobPost.CreatedByID
 		if err := s.service.ApplyReferralDiscountToPayment(payment, payerID); err != nil {
 			logger.Log.Warn("failed to apply referral discount", zap.Error(err))
@@ -225,7 +222,6 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 			logger.Log.Error("failed to create payment transaction for escrow capture", zap.Error(err))
 		}
 
-		// Process referral reward
 		if err := s.service.ProcessReferralAfterPayment(payment.ID, contract.ClientID, payment.DiscountAmount); err != nil {
 			logger.Log.Warn("failed to process referral after escrow capture", zap.Error(err))
 		}
@@ -233,15 +229,9 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "received"})
 		return
 
-	case "payment_intent.created":
-		logger.Log.Info("received stripe event", zap.String("type", string(event.Type)))
-		c.JSON(http.StatusOK, gin.H{"message": "received"})
-		return
-
 	default:
-		// Handle unknown event types gracefully
 		logger.Log.Info("unhandled stripe event type", zap.String("type", string(event.Type)))
-		c.JSON(http.StatusOK, gin.H{"message": "received"})
+		c.JSON(http.StatusOK, gin.H{"message": "received", "error": fmt.Sprintf("unhandled stripe event type %s", event.Type)})
 		return
 	}
 }
@@ -308,30 +298,26 @@ func MakeContractPayment(contract *models.Contract, event *stripe.Event, intent 
 	}
 	return &payment, nil
 }
-
 func MakeContractPaymentFromCharge(proposal *models.Proposal, event *stripe.Event, charge *stripe.Charge) (*models.PaymentTransaction, error) {
 	settings, _ := GetSystemSettings()
-	totalAmount := proposal.BidAmount
+	totalAmount := charge.Amount
 	freelancerCommissionPct := settings.FreelancerCommissionPercentage
 	clientCommissionPct := settings.ClientCommissionPercentage
 	appFeePct := settings.AppFeePercentage
-	referralDiscountPct := settings.ReferralDiscountPercentage
 
 	freelancerCommission := int64(float64(totalAmount) * freelancerCommissionPct / 100)
 	clientCommission := int64(float64(totalAmount) * clientCommissionPct / 100)
 	appFee := int64(float64(totalAmount) * appFeePct / 100)
-	referralDiscount := int64(float64(freelancerCommission+clientCommission) * referralDiscountPct / 100)
-	netAmount := int64(totalAmount) - freelancerCommission - clientCommission - appFee + referralDiscount
+
+	netAmount := totalAmount - freelancerCommission - clientCommission - appFee
 
 	metadata, _ := json.Marshal(charge.Metadata)
 	var paymentIntentID string
 	if charge.PaymentIntent != nil {
 		paymentIntentID = charge.PaymentIntent.ID
 	}
-	amount := int64(proposal.BidAmount)
 
 	payment := models.PaymentTransaction{
-		// Client (job creator) pays; freelancer receives
 		FromUserID:                     proposal.JobPost.CreatedByID,
 		ToUserID:                       proposal.FreelancerID,
 		MetaData:                       metadata,
@@ -340,8 +326,8 @@ func MakeContractPaymentFromCharge(proposal *models.Proposal, event *stripe.Even
 		TransactionDate:                time.Unix(charge.Created, 0),
 		Status:                         models.PaymentStatusSuccess,
 		StripeEventID:                  event.ID,
-		Amount:                         amount,
-		Currency:                       "gbp",
+		Amount:                         totalAmount,
+		Currency:                       string(charge.Currency),
 		PaymentMethod:                  "card",
 		GatewayRefID:                   charge.ID,
 		FreelancerCommissionPercentage: freelancerCommissionPct,
@@ -350,8 +336,6 @@ func MakeContractPaymentFromCharge(proposal *models.Proposal, event *stripe.Even
 		ClientCommissionAmount:         clientCommission,
 		AppFeePercentage:               appFeePct,
 		AppFeeAmount:                   appFee,
-		ReferralDiscountPercentage:     referralDiscountPct,
-		ReferralDiscountAmount:         referralDiscount,
 		NetAmount:                      netAmount,
 		PaymentIntentID:                paymentIntentID,
 		ChargeID:                       charge.ID,
@@ -389,9 +373,7 @@ func (s *PaymentService) ApplyReferralDiscountToPayment(payment *models.PaymentT
 func (s *PaymentService) ProcessReferralAfterPayment(paymentID string, userID string, discountApplied int64) error {
 	var usage models.ReferralUsage
 	if err := s.db.Where("referee_id = ? AND is_qualified = ?", userID, false).First(&usage).Error; err != nil {
-		// No pending referral
 		return nil
 	}
-
 	return s.MarkReferralAsQualified(&usage, paymentID, discountApplied)
 }

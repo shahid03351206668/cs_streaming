@@ -47,8 +47,6 @@ func (s *PayoutService) GetWalletBalance(c *gin.Context) {
 	})
 }
 
-// RequestPayout handles POST /api/v1/wallet/withdraw
-// Deducts from wallet_balance, initiates a Stripe Transfer + Payout to the user's default bank account.
 func (s *PayoutService) RequestPayout(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 	stripe.Key = s.config.SecretKey
@@ -66,7 +64,6 @@ func (s *PayoutService) RequestPayout(c *gin.Context) {
 		req.Currency = "gbp"
 	}
 
-	// Re-fetch wallet balance
 	var fresh models.User
 	if err := s.db.Select("id, wallet_balance").First(&fresh, "id = ?", user.ID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to fetch balance"})
