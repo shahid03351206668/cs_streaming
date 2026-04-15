@@ -121,8 +121,8 @@ export const getReferralUsages = () =>
 // Transactions
 export interface PaymentTransaction {
   id: string;
-  from_user_id: string;
-  to_user_id: string;
+  from_user: Record<string, string>;
+  to_user: Record<string, string>;
   amount: number;
   currency: string;
   status: string;

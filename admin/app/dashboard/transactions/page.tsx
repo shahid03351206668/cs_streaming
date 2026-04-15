@@ -25,7 +25,7 @@ function statusVariant(status: string): "default" | "secondary" | "destructive" 
   }
 }
 
-export default function TransactionsPage() {
+export default function Page() {
   const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -51,7 +51,7 @@ export default function TransactionsPage() {
   const filtered = transactions.filter((t) => {
     const matchStatus = statusFilter === "all" || t.status?.toLowerCase() === statusFilter;
     const q = search.toLowerCase();
-    const matchSearch = !search || [t.id, t.from_user_id, t.to_user_id, t.reference_type, t.payment_method]
+    const matchSearch = !search || [t.id, t.to_user.id, t.from_user.id, t.reference_type, t.payment_method]
       .some((v) => v?.toLowerCase().includes(q));
     return matchStatus && matchSearch;
   });
@@ -165,8 +165,8 @@ export default function TransactionsPage() {
                     paginated.map((tx) => (
                       <TableRow key={tx.id}>
                         <TableCell className="font-mono text-xs">{tx.id?.slice(0, 8)}…</TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">{tx.from_user_id?.slice(0, 8)}…</TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">{tx.to_user_id?.slice(0, 8)}…</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">{tx.from_user.first_name?.slice(0, 8)}…</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">{tx.to_user.first_name.slice(0, 8)}…</TableCell>
                         <TableCell className="text-right font-semibold">{fmt(tx.amount, tx.currency)}</TableCell>
                         <TableCell>
                           <Badge variant={statusVariant(tx.status)}>

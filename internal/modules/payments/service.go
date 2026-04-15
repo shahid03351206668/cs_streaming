@@ -101,7 +101,6 @@ func (s *PaymentService) GetPaymentTransactions(params TransactionListParams) ([
 
 	offset := (params.Page - 1) * params.Limit
 
-	// Fetch transactions with preloaded users
 	if err := query.
 		Preload("FromUser").
 		Preload("ToUser").
