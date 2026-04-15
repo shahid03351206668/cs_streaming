@@ -219,6 +219,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		jobRoutes.POST("/update/:id", controllers.UpdateJob)
 	}
 
+	
 	router.GET("/api/v1/get/system-settings", userHandler.GetSystemSettings)
 	publicRoutes := router.Group("/api/v1")
 	{

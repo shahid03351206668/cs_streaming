@@ -486,10 +486,10 @@ func AdminGetJobDetailController(c *gin.Context) {
 	}
 
 	resp := gin.H{
-		"job":      job,
-		"location": location,
+		"job":       job,
+		"location":  location,
 		"proposals": proposals,
-		"payments": paymentRows,
+		"payments":  paymentRows,
 	}
 	if contractFound {
 		resp["contract"] = contract
@@ -549,6 +549,10 @@ func GetSystemSettings(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
+
+	settings.ApplicationFeeAmount = settings.ApplicationFeeAmount / 100
+	settings.ReferralRewardAmount = settings.ReferralRewardAmount / 100
+
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": settings})
 }
 

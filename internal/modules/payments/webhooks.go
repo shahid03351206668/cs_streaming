@@ -63,7 +63,7 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 		// charge.updated fires for many reasons (e.g. receipt URL update).
 		// Only process it when the charge has actually succeeded.
 		if charge.Status != "succeeded" {
-			c.JSON(http.StatusOK, gin.H{"message": "received"})
+			c.JSON(http.StatusOK, gin.H{"message": "received", "error": "charge status not equals to succeeded"})
 			return
 		}
 
