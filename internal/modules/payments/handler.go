@@ -1,6 +1,7 @@
 package payments
 
 import (
+	"fmt"
 	"net/http"
 	"tasksy/models"
 
@@ -193,6 +194,64 @@ func (s *PaymentHandler) GetProposalPaymentDetails(c *gin.Context) {
 		"message": "success",
 		"data":    response,
 	})
+}
+
+// GetPaymentAuditLogs handles GET /api/v1/admin/payments/audit-logs
+func (s *PaymentHandler) GetPaymentAuditLogs(c *gin.Context) {
+	var logs []models.PaymentAuditLog
+	var total int64
+
+	query := s.service.db.Model(&models.PaymentAuditLog{})
+
+	if action := c.Query("action"); action != "" {
+		query = query.Where("action = ?", action)
+	}
+	if entityType := c.Query("entity_type"); entityType != "" {
+		query = query.Where("entity_type = ?", entityType)
+	}
+	if entityID := c.Query("entity_id"); entityID != "" {
+		query = query.Where("entity_id = ?", entityID)
+	}
+	if userID := c.Query("user_id"); userID != "" {
+		query = query.Where("user_id = ?", userID)
+	}
+
+	query.Count(&total)
+
+	page := 1
+	limit := 50
+	if p := c.Query("page"); p != "" {
+		if v, err := parseIntParam(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if l := c.Query("limit"); l != "" {
+		if v, err := parseIntParam(l); err == nil && v > 0 && v <= 100 {
+			limit = v
+		}
+	}
+
+	offset := (page - 1) * limit
+	if err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&logs).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data":    logs,
+		"meta": gin.H{
+			"total": total,
+			"page":  page,
+			"limit": limit,
+		},
+	})
+}
+
+func parseIntParam(s string) (int, error) {
+	v := 0
+	_, err := fmt.Sscanf(s, "%d", &v)
+	return v, err
 }
 
 func (s *PaymentHandler) GetJobPostPaymentDetails(c *gin.Context) {

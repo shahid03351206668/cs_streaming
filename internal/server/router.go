@@ -154,6 +154,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		adminRoutes.GET("/jobs/:id", controllers.AdminGetJobDetailController)
 		adminRoutes.PUT("/jobs/:id", controllers.AdminUpdateJobController)
 		adminRoutes.GET("/payouts", payoutService.AdminListPayouts)
+		adminRoutes.GET("/payments/audit-logs", paymentHandler.GetPaymentAuditLogs)
 
 		adminRoutes.PUT("/settings", controllers.UpdateSystemSettings)
 		adminRoutes.GET("/banks", controllers.AdminListBanks)
@@ -219,7 +220,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		jobRoutes.POST("/update/:id", controllers.UpdateJob)
 	}
 
-	
 	router.GET("/api/v1/get/system-settings", userHandler.GetSystemSettings)
 	publicRoutes := router.Group("/api/v1")
 	{

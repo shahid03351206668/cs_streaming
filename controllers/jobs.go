@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"tasksy/config"
 	"tasksy/db"
+	"tasksy/internal/modules/payments"
 	"tasksy/models"
 	"time"
 
@@ -925,11 +927,17 @@ func CompleteContract(c *gin.Context) {
 			}
 		}
 
-		// Release escrow if fully completed
-		if ctr.ClientCompleted && ctr.FreelancerCompleted && ctr.EscrowPaymentIntentID != "" {
-			dbConn.Model(&models.Contract{}).Where("id = ?", ctr.ID).
-				Where("escrow_status = ?", "funded").
-				Update("escrow_status", "release_pending")
+		// Release funds to freelancer wallet when both parties have confirmed
+		if ctr.ClientCompleted && ctr.FreelancerCompleted {
+			stripeCfg := &config.StripeConfig{
+				SecretKey:     os.Getenv("STRIPE_SECRET_KEY"),
+				WebhookSecret: os.Getenv("STRIPE_WEBHOOK_SIGNING_SECRET"),
+				APIKey:        os.Getenv("STRIPE_API_KEY"),
+			}
+			paymentService := payments.NewService(stripeCfg, dbConn)
+			if err := paymentService.ReleaseContractFunds(ctr.ID); err != nil {
+				fmt.Printf("failed to release funds for contract %s: %v\n", ctr.ID, err)
+			}
 		}
 	}(contract, user.ID)
 

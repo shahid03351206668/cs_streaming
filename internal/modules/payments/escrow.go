@@ -4,11 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"tasksy/models"
-	"time"
 
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/paymentintent"
-	"gorm.io/gorm"
 )
 
 const (
@@ -99,6 +97,8 @@ func (s *PaymentService) MarkEscrowFunded(paymentIntentID string) error {
 }
 
 // CaptureEscrow captures the held funds and releases them to the freelancer.
+// The actual payment transaction and wallet credit happen in the payment_intent.succeeded webhook,
+// which is the single source of truth for payment records.
 func (s *PaymentService) CaptureEscrow(contractID string) error {
 	stripe.Key = s.config.SecretKey
 
@@ -111,35 +111,26 @@ func (s *PaymentService) CaptureEscrow(contractID string) error {
 		return errors.New("no escrow payment intent for this contract")
 	}
 
-	if contract.EscrowStatus != EscrowStatusFunded {
-		return fmt.Errorf("escrow is not in funded state (current: %s)", contract.EscrowStatus)
+	if contract.EscrowStatus != EscrowStatusFunded && contract.EscrowStatus != "release_pending" {
+		return fmt.Errorf("escrow is not in funded/release_pending state (current: %s)", contract.EscrowStatus)
 	}
 
 	_, err := paymentintent.Capture(contract.EscrowPaymentIntentID, nil)
 	if err != nil {
+		s.WriteAuditLog(AuditLogEntry{
+			Action:     "escrow_capture_failed",
+			EntityType: "contract",
+			EntityID:   contractID,
+			UserID:     contract.FreelancerID,
+			Amount:     contract.EscrowAmount,
+			Status:     "failed",
+			Details:    map[string]interface{}{"error": err.Error()},
+		})
 		return fmt.Errorf("failed to capture payment: %w", err)
 	}
 
-	now := time.Now()
-	settings, _ := GetSystemSettings()
-
-	// Record the payout transaction
-	payout := models.PayoutTransaction{
-		TransactionDate: now,
-		UserID:          contract.FreelancerID,
-		Amount:          contract.EscrowAmount,
-		NetAmount:       contract.EscrowAmount - int64(float64(contract.EscrowAmount)*settings.FreelancerCommissionPercentage/100),
-		AppFeeAmount:    int64(float64(contract.EscrowAmount) * settings.FreelancerCommissionPercentage / 100),
-		Currency:        "gbp",
-		Status:          models.PaymentStatusPending,
-		StripeID:        contract.EscrowPaymentIntentID,
-	}
-	s.db.Create(&payout)
-
-	// Credit the freelancer's wallet with net earnings
-	s.db.Model(&models.User{}).Where("id = ?", contract.FreelancerID).
-		UpdateColumn("wallet_balance", gorm.Expr("wallet_balance + ?", payout.NetAmount))
-
+	// Mark escrow as released — the payment_intent.succeeded webhook
+	// will handle creating the payment transaction and crediting the freelancer wallet.
 	return s.db.Model(&models.Contract{}).Where("id = ?", contractID).
 		Update("escrow_status", EscrowStatusReleased).Error
 }

@@ -186,6 +186,26 @@ type GLEntry struct {
 	IsCancelled bool   `gorm:"default:false"`
 }
 
+// PaymentAuditLog tracks all payment-related events for auditing
+type PaymentAuditLog struct {
+	BaseModel
+
+	EventType     string         `gorm:"type:varchar(50);index;not null" json:"event_type"`
+	StripeEventID string         `gorm:"type:varchar(100);index" json:"stripe_event_id"`
+	Action        string         `gorm:"type:varchar(100);not null" json:"action"`
+	EntityType    string         `gorm:"type:varchar(50);index" json:"entity_type"` // payment_transaction, payout_transaction, contract
+	EntityID      string         `gorm:"type:varchar(100);index" json:"entity_id"`
+	UserID        string         `gorm:"index" json:"user_id,omitempty"`
+	Amount        int64          `gorm:"default:0" json:"amount"`
+	Currency      string         `gorm:"type:varchar(3);default:'gbp'" json:"currency"`
+	Details       datatypes.JSON `gorm:"type:jsonb" json:"details,omitempty"`
+	Status        string         `gorm:"type:varchar(50)" json:"status"`
+}
+
+func (PaymentAuditLog) TableName() string {
+	return "payment_audit_logs"
+}
+
 type TestPaymentTransactions struct {
 	Amount          int64 `gorm:"not null" json:"amount"`
 	TransactionDate *time.Time
