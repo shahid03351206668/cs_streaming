@@ -80,13 +80,13 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 
 		if existing > 0 {
 			logger.Log.Info("transaction already exists for charge, skipping", zap.String("charge_id", charge.ID))
-			c.JSON(http.StatusOK, gin.H{"message": "received"})
+			c.JSON(http.StatusConflict, gin.H{"message": "received", "info": "transaction already exists for charge, skipping"})
 			return
 		}
 
 		if proposal_id == "" {
 			logger.Log.Warn("charge has no proposal_id in metadata, skipping", zap.String("charge_id", charge.ID))
-			c.JSON(http.StatusOK, gin.H{"message": "received"})
+			c.JSON(http.StatusBadRequest, gin.H{"message": "received", "info": "charge has no proposal_id in metadata, skipping"})
 			return
 		}
 
