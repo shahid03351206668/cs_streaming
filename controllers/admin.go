@@ -2,12 +2,12 @@ package controllers
 
 import (
 	"net/http"
+	"strconv"
 	"tasksy/db"
+	"tasksy/internal/modules/payments"
 	"tasksy/lib"
 	"tasksy/models"
 	"time"
-
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -550,22 +550,28 @@ func GetSystemSettings(c *gin.Context) {
 		return
 	}
 
-	settings.ApplicationFeeAmount = settings.ApplicationFeeAmount / 100
-	settings.ReferralRewardAmount = settings.ReferralRewardAmount / 100
-
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": settings})
+	// Return amount fields as pounds (float64) so the frontend can display them directly.
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": gin.H{
+		"id":                               settings.ID,
+		"client_commission_percentage":     settings.ClientCommissionPercentage,
+		"freelancer_commission_percentage": settings.FreelancerCommissionPercentage,
+		"application_fee_amount":           float64(settings.ApplicationFeeAmount) / 100.0,
+		"app_fee_percentage":               settings.AppFeePercentage,
+		"referral_discount_percentage":     settings.ReferralDiscountPercentage,
+		"referral_reward_amount":           float64(settings.ReferralRewardAmount) / 100.0,
+	}})
 }
 
 func UpdateSystemSettings(c *gin.Context) {
 	var body struct {
 		ClientCommissionPercentage     *float64 `json:"client_commission_percentage"`
 		FreelancerCommissionPercentage *float64 `json:"freelancer_commission_percentage"`
-		ApplicationFeeAmount           *int64   `json:"application_fee_amount"`
+		ApplicationFeeAmount           *float64 `json:"application_fee_amount"`
 		AppFeePercentage               *float64 `json:"app_fee_percentage"`
 		ReferralDiscountPercentage     *float64 `json:"referral_discount_percentage"`
-		ReferralRewardAmount           *int64   `json:"referral_reward_amount"`
+		ReferralRewardAmount           *float64 `json:"referral_reward_amount"`
 	}
-	
+
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
 		return
@@ -579,7 +585,7 @@ func UpdateSystemSettings(c *gin.Context) {
 		updates["freelancer_commission_percentage"] = *body.FreelancerCommissionPercentage
 	}
 	if body.ApplicationFeeAmount != nil {
-		updates["application_fee_amount"] = *body.ApplicationFeeAmount
+		updates["application_fee_amount"] = body.ApplicationFeeAmount
 	}
 	if body.AppFeePercentage != nil {
 		updates["app_fee_percentage"] = *body.AppFeePercentage
@@ -587,8 +593,9 @@ func UpdateSystemSettings(c *gin.Context) {
 	if body.ReferralDiscountPercentage != nil {
 		updates["referral_discount_percentage"] = *body.ReferralDiscountPercentage
 	}
+
 	if body.ReferralRewardAmount != nil {
-		updates["referral_reward_amount"] = *body.ReferralRewardAmount
+		updates["referral_reward_amount"] = body.ReferralRewardAmount
 	}
 
 	if len(updates) == 0 {
@@ -603,9 +610,20 @@ func UpdateSystemSettings(c *gin.Context) {
 		return
 	}
 
-	settings := models.SystemSettings{ID: "system_settings"}
-	db.DB.FirstOrCreate(&settings, "id = ?", "system_settings")
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": settings})
+	// Clear the in-process settings cache so payment calculations use the new rates immediately.
+	payments.InvalidateSettingsCache()
+
+	var updated models.SystemSettings
+	db.DB.FirstOrCreate(&updated, "id = ?", "system_settings")
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": gin.H{
+		"id":                               updated.ID,
+		"client_commission_percentage":     updated.ClientCommissionPercentage,
+		"freelancer_commission_percentage": updated.FreelancerCommissionPercentage,
+		"application_fee_amount":           float64(updated.ApplicationFeeAmount) / 100.0,
+		"app_fee_percentage":               updated.AppFeePercentage,
+		"referral_discount_percentage":     updated.ReferralDiscountPercentage,
+		"referral_reward_amount":           float64(updated.ReferralRewardAmount) / 100.0,
+	}})
 }
 
 // ─── Banks ──────────────────────────────────────────────────────────────────

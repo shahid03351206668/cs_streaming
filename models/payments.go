@@ -205,7 +205,6 @@ type TestPaymentTransactions struct {
 	ReferenceNo   string `json:"reference_no"`
 }
 
-// Legacy TransactionType constants kept for PaymentAuditLog compatibility.
 type TransactionType string
 
 const (
@@ -219,5 +218,3 @@ const (
 	TransactionTypeReferralReward       TransactionType = "referral_reward"
 	TransactionTypeReferralDiscount     TransactionType = "referral_discount"
 )
-
-// GLEntry and LedgerTransaction are now defined in models/ledger.go

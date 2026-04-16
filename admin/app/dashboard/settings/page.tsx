@@ -57,27 +57,43 @@ export default function SettingsPage() {
     }
   };
 
+  const POUND_FIELDS: Array<keyof typeof defaultSettings> = [
+    "application_fee_amount",
+    "referral_reward_amount",
+  ];
+
   const numField = (
     label: string,
     key: keyof typeof defaultSettings,
     hint?: string
-  ) => (
-    <div className="space-y-2">
-      <Label htmlFor={key}>{label}</Label>
-      <Input
-        id={key}
-        type="number"
-        min={0}
-        step={key.includes("percentage") ? "0.01" : "1"}
-        value={settings[key]}
-        onChange={(e) =>
-          setSettings((s) => ({ ...s, [key]: Number(e.target.value) }))
-        }
-        placeholder="0"
-      />
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-    </div>
-  );
+  ) => {
+    const isPound = POUND_FIELDS.includes(key);
+    return (
+      <div className="space-y-2">
+        <Label htmlFor={key}>{label}</Label>
+        <div className="relative">
+          {isPound && (
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+              £
+            </span>
+          )}
+          <Input
+            id={key}
+            type="number"
+            min={0}
+            step={isPound ? "0.01" : "0.01"}
+            value={settings[key]}
+            onChange={(e) =>
+              setSettings((s) => ({ ...s, [key]: Number(e.target.value) }))
+            }
+            placeholder={isPound ? "0.00" : "0"}
+            className={isPound ? "pl-7" : undefined}
+          />
+        </div>
+        {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -124,9 +140,9 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
               {numField(
-                "App Fee Amount (pence)",
+                "App Fee Amount (£)",
                 "application_fee_amount",
-                "Fixed fee in pence (100 = £1.00)."
+                "Fixed fee in pounds (e.g. 1.50 = £1.50)."
               )}
               {numField(
                 "App Fee Percentage (%)",
@@ -150,9 +166,9 @@ export default function SettingsPage() {
                 "Discount given to the referee on their first transaction."
               )}
               {numField(
-                "Referral Reward Amount (pence)",
+                "Referral Reward Amount (£)",
                 "referral_reward_amount",
-                "Reward credited to the referrer's wallet (100 = £1.00)."
+                "Reward credited to the referrer's wallet in pounds (e.g. 5.00 = £5.00)."
               )}
             </CardContent>
           </Card>

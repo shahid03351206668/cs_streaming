@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Filter,
   Search,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,14 @@ const TX_TYPE_LABELS: Record<string, string> = {
   payout: "Payout",
 };
 
+const ACCOUNT_TYPE_LABELS: Record<string, string> = {
+  user_wallet: "User Wallet",
+  escrow: "Escrow",
+  revenue: "Revenue",
+  marketing: "Marketing",
+  external: "External (Stripe/Bank)",
+};
+
 function typeLabel(t: string) {
   return TX_TYPE_LABELS[t] || t.replace(/_/g, " ");
 }
@@ -65,6 +74,8 @@ export default function LedgerPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [typeFilter, setTypeFilter] = useState("all");
+  const [accountTypeFilter, setAccountTypeFilter] = useState("all");
+  const [search, setSearch] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -78,6 +89,7 @@ export default function LedgerPage() {
       type: typeFilter === "all" ? undefined : typeFilter,
       from_date: fromDate || undefined,
       to_date: toDate || undefined,
+      search: search || undefined,
     })
       .then((res) => {
         setReport(res.data.data);
@@ -90,7 +102,7 @@ export default function LedgerPage() {
         })
       )
       .finally(() => setLoading(false));
-  }, [page, pageSize, typeFilter, fromDate, toDate]);
+  }, [page, pageSize, typeFilter, fromDate, toDate, search]);
 
   useEffect(() => {
     fetchReport();
@@ -98,7 +110,7 @@ export default function LedgerPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [typeFilter, fromDate, toDate]);
+  }, [typeFilter, fromDate, toDate, search, accountTypeFilter]);
 
   const toggleRow = (id: string) => {
     setExpandedRows((prev) => {
@@ -109,7 +121,29 @@ export default function LedgerPage() {
     });
   };
 
-  const transactions = report?.transactions ?? [];
+  const clearFilters = () => {
+    setSearch("");
+    setTypeFilter("all");
+    setAccountTypeFilter("all");
+    setFromDate("");
+    setToDate("");
+  };
+
+  const hasFilters =
+    search ||
+    typeFilter !== "all" ||
+    accountTypeFilter !== "all" ||
+    fromDate ||
+    toDate;
+
+  // Client-side account type filter (applied after fetch, since backend doesn't support it directly)
+  let transactions = report?.transactions ?? [];
+  if (accountTypeFilter !== "all") {
+    transactions = transactions.filter((txn) =>
+      txn.entries.some((e) => e.account?.type === accountTypeFilter)
+    );
+  }
+
   const meta = report?.meta ?? { total: 0, page: 1, limit: 20, total_pages: 0 };
 
   return (
@@ -178,7 +212,9 @@ export default function LedgerPage() {
               {loading ? (
                 <Skeleton className="h-8 w-24" />
               ) : (
-                <p className={`text-3xl font-bold ${color}`}>{fmt(value)}</p>
+                <p className={`text-3xl font-bold font-mono ${color}`}>
+                  {fmt(value)}
+                </p>
               )}
             </CardContent>
           </Card>
@@ -186,50 +222,86 @@ export default function LedgerPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col gap-3 sm:flex-row">
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-[200px]">
-            <Filter className="mr-2 h-4 w-4 text-muted-foreground" />
-            <SelectValue placeholder="Transaction type" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Types</SelectItem>
-            {Object.entries(TX_TYPE_LABELS).map(([val, label]) => (
-              <SelectItem key={val} value={val}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <Card>
+        <CardContent className="pt-4 pb-4">
+          <div className="flex flex-wrap gap-3">
+            {/* Search */}
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search reference ID or description..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9"
+              />
+            </div>
 
-        <Input
-          type="date"
-          value={fromDate}
-          onChange={(e) => setFromDate(e.target.value)}
-          className="w-[160px]"
-          placeholder="From date"
-        />
-        <Input
-          type="date"
-          value={toDate}
-          onChange={(e) => setToDate(e.target.value)}
-          className="w-[160px]"
-          placeholder="To date"
-        />
+            {/* Transaction type */}
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger className="w-[190px]">
+                <Filter className="mr-2 h-4 w-4 text-muted-foreground" />
+                <SelectValue placeholder="Transaction type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                {Object.entries(TX_TYPE_LABELS).map(([val, label]) => (
+                  <SelectItem key={val} value={val}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
-        {(typeFilter !== "all" || fromDate || toDate) && (
-          <Button
-            variant="outline"
-            onClick={() => {
-              setTypeFilter("all");
-              setFromDate("");
-              setToDate("");
-            }}
-          >
-            Clear
-          </Button>
-        )}
-      </div>
+            {/* Account type (client-side) */}
+            <Select
+              value={accountTypeFilter}
+              onValueChange={setAccountTypeFilter}
+            >
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="Account type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Accounts</SelectItem>
+                {Object.entries(ACCOUNT_TYPE_LABELS).map(([val, label]) => (
+                  <SelectItem key={val} value={val}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Date range */}
+            <div className="flex items-center gap-2">
+              <Input
+                type="date"
+                value={fromDate}
+                onChange={(e) => setFromDate(e.target.value)}
+                className="w-[150px]"
+                placeholder="From date"
+              />
+              <span className="text-muted-foreground text-sm">–</span>
+              <Input
+                type="date"
+                value={toDate}
+                onChange={(e) => setToDate(e.target.value)}
+                className="w-[150px]"
+                placeholder="To date"
+              />
+            </div>
+
+            {hasFilters && (
+              <Button
+                variant="outline"
+                onClick={clearFilters}
+                className="gap-1"
+              >
+                <X className="h-4 w-4" />
+                Clear
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Transaction table */}
       <Card>
@@ -238,13 +310,19 @@ export default function LedgerPage() {
           <CardDescription>
             {loading
               ? "Loading..."
-              : `Showing ${transactions.length} of ${meta.total} transactions`}
+              : `${meta.total} total — showing page ${page} of ${
+                  meta.total_pages || 1
+                }${
+                  accountTypeFilter !== "all"
+                    ? ` · ${transactions.length} match account filter`
+                    : ""
+                }`}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
             <div className="space-y-3 p-6">
-              {Array.from({ length: 6 }).map((_, i) => (
+              {Array.from({ length: 8 }).map((_, i) => (
                 <Skeleton key={i} className="h-12 w-full" />
               ))}
             </div>
@@ -258,6 +336,7 @@ export default function LedgerPage() {
                     <TableHead>Type</TableHead>
                     <TableHead>Reference</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Entries</TableHead>
                     <TableHead>Description</TableHead>
                     <TableHead>Date</TableHead>
                   </TableRow>
@@ -266,15 +345,15 @@ export default function LedgerPage() {
                   {transactions.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={7}
-                        className="py-10 text-center text-muted-foreground"
+                        colSpan={8}
+                        className="py-12 text-center text-muted-foreground"
                       >
                         No ledger transactions found.
                       </TableCell>
                     </TableRow>
                   ) : (
                     transactions.map((txn) => (
-                      <TransactionRow
+                      <LedgerRow
                         key={txn.id}
                         txn={txn}
                         expanded={expandedRows.has(txn.id)}
@@ -299,7 +378,7 @@ export default function LedgerPage() {
   );
 }
 
-function TransactionRow({
+function LedgerRow({
   txn,
   expanded,
   onToggle,
@@ -308,6 +387,10 @@ function TransactionRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const totalCredit = txn.entries
+    .filter((e) => e.amount > 0)
+    .reduce((s, e) => s + e.amount, 0);
+
   return (
     <>
       <TableRow
@@ -316,26 +399,33 @@ function TransactionRow({
       >
         <TableCell>
           {expanded ? (
-            <ChevronDown className="h-4 w-4" />
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
           ) : (
-            <ChevronRight className="h-4 w-4" />
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
           )}
         </TableCell>
-        <TableCell className="font-mono text-xs">
+        <TableCell className="font-mono text-xs text-muted-foreground">
           {txn.id.slice(0, 8)}&hellip;
         </TableCell>
         <TableCell>
           <Badge variant="outline">{typeLabel(txn.type)}</Badge>
         </TableCell>
         <TableCell className="font-mono text-xs text-muted-foreground">
-          {txn.reference_id ? `${txn.reference_id.slice(0, 8)}\u2026` : "\u2014"}
+          {txn.reference_id
+            ? `${txn.reference_id.slice(0, 8)}\u2026`
+            : "\u2014"}
         </TableCell>
         <TableCell>
-          <Badge
-            variant={txn.status === "posted" ? "default" : "secondary"}
-          >
+          <Badge variant={txn.status === "posted" ? "default" : "secondary"}>
             {txn.status}
           </Badge>
+        </TableCell>
+        <TableCell className="text-right text-sm font-mono font-semibold">
+          {txn.entries.length > 0 ? (
+            <span className="text-green-600">{fmt(totalCredit)}</span>
+          ) : (
+            "—"
+          )}
         </TableCell>
         <TableCell className="max-w-[250px] truncate text-sm text-muted-foreground">
           {txn.description || "\u2014"}
@@ -350,44 +440,95 @@ function TransactionRow({
       </TableRow>
 
       {expanded && (
-        <TableRow className="bg-muted/30">
-          <TableCell colSpan={7} className="p-0">
-            <div className="px-8 py-4">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                GL Entries
-              </p>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Account</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead className="text-right">Debit</TableHead>
-                    <TableHead className="text-right">Credit</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {txn.entries.map((entry) => (
-                    <TableRow key={entry.id}>
-                      <TableCell className="text-sm font-medium">
-                        {entry.account?.name || entry.account_id.slice(0, 8)}
+        <TableRow className="bg-muted/20 hover:bg-muted/20">
+          <TableCell colSpan={8} className="p-0">
+            <div className="px-8 py-4 space-y-3">
+              {/* Full IDs */}
+              <div className="grid grid-cols-2 gap-4 text-xs sm:grid-cols-3">
+                <div>
+                  <p className="text-muted-foreground">Ledger Transaction ID</p>
+                  <p className="font-mono font-medium break-all">{txn.id}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Reference ID</p>
+                  <p className="font-mono font-medium break-all">
+                    {txn.reference_id || "—"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Posting Date</p>
+                  <p className="font-medium">
+                    {new Date(txn.posting_date).toLocaleString("en-GB", {
+                      day: "2-digit",
+                      month: "short",
+                      year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </p>
+                </div>
+              </div>
+
+              {/* GL Entries sub-table */}
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  GL Entries ({txn.entries.length})
+                </p>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account</TableHead>
+                      <TableHead>Account Type</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead className="text-right">Debit</TableHead>
+                      <TableHead className="text-right">Credit</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {txn.entries.map((entry) => (
+                      <TableRow key={entry.id}>
+                        <TableCell className="text-sm font-medium">
+                          {entry.account?.name ||
+                            entry.account_id.slice(0, 8) + "…"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs capitalize">
+                            {entry.account?.type?.replace(/_/g, " ") || "—"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs capitalize text-muted-foreground">
+                          {entry.category?.replace(/_/g, " ") || "—"}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm font-semibold text-red-600">
+                          {entry.amount < 0 ? fmt(Math.abs(entry.amount)) : ""}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm font-semibold text-green-600">
+                          {entry.amount > 0 ? fmt(entry.amount) : ""}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {/* Running total row */}
+                    <TableRow className="border-t-2 bg-muted/40">
+                      <TableCell
+                        colSpan={3}
+                        className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                      >
+                        Net (should be £0.00)
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground capitalize">
-                        {entry.account?.type?.replace(/_/g, " ") || "\u2014"}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground capitalize">
-                        {entry.category?.replace(/_/g, " ") || "\u2014"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm text-red-600">
-                        {entry.amount < 0 ? fmt(Math.abs(entry.amount)) : ""}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm text-green-600">
-                        {entry.amount > 0 ? fmt(entry.amount) : ""}
+                      <TableCell
+                        colSpan={2}
+                        className={`text-right font-mono text-sm font-bold ${
+                          txn.entries.reduce((s, e) => s + e.amount, 0) === 0
+                            ? "text-green-600"
+                            : "text-red-600"
+                        }`}
+                      >
+                        {fmt(txn.entries.reduce((s, e) => s + e.amount, 0))}
                       </TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           </TableCell>
         </TableRow>

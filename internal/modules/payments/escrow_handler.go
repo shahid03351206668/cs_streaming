@@ -148,18 +148,20 @@ func (s *PaymentHandler) GetPaymentSummaryWithPromotion(c *gin.Context) {
 
 	toDollars := func(cents int64) float64 { return float64(cents) / 100.0 }
 
+	// Note: the app_fee is deducted from the freelancer's net payout, not charged
+	// to the client on top of the job price. The Stripe charge is exactly finalAmount.
+	// We expose app_fee in the summary for transparency only.
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"data": gin.H{
-			"contract_id":         contractID,
-			"contract_amount":     toDollars(amountInCents),
+			"contract_amount":      toDollars(amountInCents),
 			"promotional_discount": toDollars(promoDiscount),
-			"referral_discount":   toDollars(refDiscount),
-			"app_fee":             toDollars(appFee),
-			"total_due":           toDollars(finalAmount + appFee),
-			"escrow_amount":       toDollars(finalAmount),
-			"currency":            "gbp",
-			"escrow_status":       contract.EscrowStatus,
+			"referral_discount":    toDollars(refDiscount),
+			"app_fee":              toDollars(appFee),
+			"total_due":            toDollars(finalAmount), // what Stripe will charge the client
+			"escrow_amount":        toDollars(finalAmount),
+			"currency":             "gbp",
+			"escrow_status":        contract.EscrowStatus,
 		},
 	})
 }

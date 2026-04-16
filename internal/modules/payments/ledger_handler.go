@@ -89,6 +89,7 @@ func (h *LedgerHandler) GetAdminLedgerReport(c *gin.Context) {
 	txType := c.Query("type")
 	fromDate := c.Query("from_date")
 	toDate := c.Query("to_date")
+	search := c.Query("search")
 
 	// 1. System integrity check
 	systemBalance, _ := h.ledger.SystemIntegrityCheck()
@@ -113,6 +114,10 @@ func (h *LedgerHandler) GetAdminLedgerReport(c *gin.Context) {
 		if t, err := time.Parse("2006-01-02", toDate); err == nil {
 			query = query.Where("posting_date <= ?", t.Add(24*time.Hour))
 		}
+	}
+	if search != "" {
+		searchPattern := "%" + search + "%"
+		query = query.Where("reference_id ILIKE ? OR description ILIKE ?", searchPattern, searchPattern)
 	}
 
 	var total int64

@@ -2,7 +2,8 @@ import axios from "axios";
 
 // Server-side (SSR/RSC): call backend directly via env var.
 // Client-side (browser): use relative URLs — Next.js rewrites proxy /api/* to the backend.
-const API_BASE_URL = "http://13.60.208.3:8000"
+// const API_BASE_URL = "http://13.60.208.3:8000"
+const API_BASE_URL = "http://localhost:5679";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -119,24 +120,67 @@ export const getReferralUsages = () =>
   api.get("/api/v1/admin/referrals/usages");
 
 // Transactions
+export interface TransactionUser {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  profile_photo?: string;
+}
+
 export interface PaymentTransaction {
   id: string;
-  from_user: Record<string, string>;
-  to_user: Record<string, string>;
+  transaction_date: string;
+  from_user: TransactionUser;
+  to_user: TransactionUser;
   amount: number;
+  app_fee_amount: number;
+  discount_amount: number;
+  net_amount: number;
   currency: string;
   status: string;
-  payment_method: string;
+  payment_method?: string;
   reference_type: string;
   reference_id: string;
-  app_fee_amount: number;
-  net_amount: number;
-  discount_amount: number;
+  referral_code_id?: string;
   created_at: string;
 }
 
-export const getTransactions = () =>
-  api.get<PaymentTransaction[]>("/api/v1/payments/transactions");
+export interface TransactionFilters {
+  page?: number;
+  limit?: number;
+  status?: string;
+  user_id?: string;
+  from_date?: string;
+  to_date?: string;
+  search?: string;
+  reference_type?: string;
+}
+
+export interface PaginatedMeta {
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+}
+
+export const getTransactions = (filters: TransactionFilters = {}) => {
+  const params = new URLSearchParams();
+  if (filters.page)           params.set("page",           String(filters.page));
+  if (filters.limit)          params.set("limit",          String(filters.limit));
+  if (filters.status)         params.set("status",         filters.status);
+  if (filters.user_id)        params.set("user_id",        filters.user_id);
+  if (filters.from_date)      params.set("from_date",      filters.from_date);
+  if (filters.to_date)        params.set("to_date",        filters.to_date);
+  if (filters.search)         params.set("search",         filters.search);
+  if (filters.reference_type) params.set("reference_type", filters.reference_type);
+  return api.get<{ message: string; data: PaymentTransaction[]; meta: PaginatedMeta }>(
+    `/api/v1/payments/transactions?${params.toString()}`
+  );
+};
+
+export const getTransactionById = (id: string) =>
+  api.get<{ message: string; data: PaymentTransaction }>(`/api/v1/payments/transactions/${id}`);
 
 // Categories
 export const getCategories = () =>
@@ -258,13 +302,15 @@ export const getLedgerReport = (params?: {
   type?: string;
   from_date?: string;
   to_date?: string;
+  search?: string;
 }) => {
   const query = new URLSearchParams();
-  if (params?.page) query.set("page", String(params.page));
-  if (params?.limit) query.set("limit", String(params.limit));
-  if (params?.type) query.set("type", params.type);
+  if (params?.page)      query.set("page",      String(params.page));
+  if (params?.limit)     query.set("limit",     String(params.limit));
+  if (params?.type)      query.set("type",      params.type);
   if (params?.from_date) query.set("from_date", params.from_date);
-  if (params?.to_date) query.set("to_date", params.to_date);
+  if (params?.to_date)   query.set("to_date",   params.to_date);
+  if (params?.search)    query.set("search",    params.search);
   return api.get<{ message: string; data: LedgerReportResponse }>(
     `/api/v1/admin/ledger?${query.toString()}`
   );

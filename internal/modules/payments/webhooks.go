@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"tasksy/db"
@@ -19,6 +20,13 @@ import (
 )
 
 var CACHED_SYSTEM_SETTINGS *models.SystemSettings
+
+// InvalidateSettingsCache clears the in-process system-settings cache.
+// Must be called whenever an admin updates system settings so that subsequent
+// payment calculations pick up the new rates without requiring a server restart.
+func InvalidateSettingsCache() {
+	CACHED_SYSTEM_SETTINGS = nil
+}
 
 type PaymentHandler struct {
 	service *PaymentService
@@ -83,8 +91,6 @@ func (s *PaymentHandler) isEventProcessed(eventID string) bool {
 	return count > 0
 }
 
-// handleChargeSucceeded processes charge-based payments.
-// Creates a payment transaction, links it to the contract, and activates the contract.
 func (s *PaymentHandler) handleChargeSucceeded(c *gin.Context, event *stripe.Event) {
 	var StripeCharge stripe.Charge
 	if err := json.Unmarshal(event.Data.Raw, &StripeCharge); err != nil {
@@ -390,69 +396,25 @@ func (s *PaymentService) WriteAuditLog(entry AuditLogEntry) {
 	}
 }
 
-// func MakeContractPayment(contract *models.Contract, event *stripe.Event, intent *stripe.PaymentIntent) (*models.PaymentTransaction, error) {
-// 	settings, _ := GetSystemSettings()
-// 	totalAmount := contract.TotalAmount
-// 	freelancerCommissionPct := settings.FreelancerCommissionPercentage
-// 	clientCommissionPct := settings.ClientCommissionPercentage
-// 	appFeePct := settings.AppFeePercentage
-// 	referralDiscountPct := settings.ReferralDiscountPercentage
-
-// 	freelancerCommission := int64(float64(totalAmount) * freelancerCommissionPct / 100)
-// 	clientCommission := int64(float64(totalAmount) * clientCommissionPct / 100)
-// 	appFee := int64(float64(totalAmount) * appFeePct / 100)
-// 	referralDiscount := int64(float64(freelancerCommission+clientCommission) * referralDiscountPct / 100)
-
-// 	netAmount := int64(totalAmount) - freelancerCommission - clientCommission - appFee + referralDiscount
-
-// 	metadata, _ := json.Marshal(intent.Metadata)
-// 	var chargeID string
-// 	if intent.LatestCharge != nil {
-// 		chargeID = intent.LatestCharge.ID
-// 	}
-
-// 	payment := models.PaymentTransaction{
-// 		FromUserID:                     contract.ClientID,
-// 		ToUserID:                       contract.FreelancerID,
-// 		MetaData:                       metadata,
-// 		ReferenceType:                  "contract",
-// 		ReferenceID:                    contract.ID,
-// 		Status:                         models.PaymentStatusSuccess,
-// 		StripeEventID:                  event.ID,
-// 		Amount:                         int64(contract.TotalAmount),
-// 		Currency:                       "gbp",
-// 		PaymentMethod:                  "gateway",
-// 		GatewayRefID:                   chargeID,
-// 		FreelancerCommissionPercentage: freelancerCommissionPct,
-// 		FreelancerCommissionAmount:     freelancerCommission,
-// 		ClientCommissionPercentage:     clientCommissionPct,
-// 		ClientCommissionAmount:         clientCommission,
-// 		AppFeePercentage:               appFeePct,
-// 		AppFeeAmount:                   appFee,
-// 		ReferralDiscountPercentage:     referralDiscountPct,
-// 		ReferralDiscountAmount:         referralDiscount,
-// 		NetAmount:                      netAmount,
-// 		PaymentIntentID:                intent.ID,
-// 		ChargeID:                       chargeID,
-// 	}
-// 	return &payment, nil
-// }
-
-// MakeContractPaymentFromCharge builds a PaymentTransaction from a Stripe charge.
 func MakeContractPaymentFromCharge(proposal *models.Proposal, event *stripe.Event, charge *stripe.Charge) (*models.PaymentTransaction, error) {
 	settings, _ := GetSystemSettings()
-
 	totalAmount := charge.Amount
-
 	freelancerCommissionPct := settings.FreelancerCommissionPercentage
 	clientCommissionPct := settings.ClientCommissionPercentage
-
 	appFee := settings.ApplicationFeeAmount
-
 	freelancerCommission := int64(float64(totalAmount) * freelancerCommissionPct / 100)
 	clientCommission := int64(float64(totalAmount) * clientCommissionPct / 100)
-
 	netAmount := totalAmount - freelancerCommission - clientCommission - appFee
+
+	// Extract the referral discount that was already applied before the Stripe charge.
+	// This is stored in the PaymentIntent metadata by InitiateEscrow so that the webhook
+	// can record the true discount without re-running CalculateReferralDiscount.
+	var storedRefDiscount int64
+	if refDiscountStr, ok := charge.Metadata["ref_discount"]; ok {
+		if v, err := strconv.ParseInt(refDiscountStr, 10, 64); err == nil {
+			storedRefDiscount = v
+		}
+	}
 
 	metadata, _ := json.Marshal(charge.Metadata)
 	var paymentIntentID string
@@ -479,6 +441,7 @@ func MakeContractPaymentFromCharge(proposal *models.Proposal, event *stripe.Even
 		ClientCommissionAmount:         clientCommission,
 		AppFeePercentage:               settings.AppFeePercentage,
 		AppFeeAmount:                   appFee,
+		DiscountAmount:                 storedRefDiscount, // from InitiateEscrow metadata
 		NetAmount:                      netAmount,
 		PaymentIntentID:                paymentIntentID,
 		ChargeID:                       charge.ID,
@@ -486,30 +449,23 @@ func MakeContractPaymentFromCharge(proposal *models.Proposal, event *stripe.Even
 	return &payment, nil
 }
 
-// ApplyReferralDiscountToPayment applies a referral discount to a payment before saving.
+// ApplyReferralDiscountToPayment links the referral code to the payment.
+// The actual DiscountAmount is already extracted from the charge metadata in
+// MakeContractPaymentFromCharge (from the "ref_discount" field set by InitiateEscrow),
+// so we only need to find the matching ReferralUsage and attach its IDs.
 func (s *PaymentService) ApplyReferralDiscountToPayment(payment *models.PaymentTransaction, userID string) error {
+	// Only proceed if a discount was recorded from the charge metadata.
+	if payment.DiscountAmount == 0 {
+		return nil
+	}
+
 	var usage models.ReferralUsage
 	if err := s.db.Preload("ReferralCode").Where("referee_id = ? AND is_qualified = ?", userID, false).First(&usage).Error; err != nil {
 		return nil
 	}
 
-	referralCode := usage.ReferralCode
-	var discount int64
-
-	if referralCode.DiscountAmount > 0 {
-		discount = referralCode.DiscountAmount
-	} else if referralCode.DiscountPercentage > 0 {
-		discount = (payment.Amount * referralCode.DiscountPercentage) / 100
-	}
-
-	if discount > payment.AppFeeAmount {
-		discount = payment.AppFeeAmount
-	}
-
-	payment.DiscountAmount = discount
-	payment.AppFeeAmount = payment.AppFeeAmount - discount
-	payment.NetAmount = payment.Amount - payment.FreelancerCommissionAmount - payment.ClientCommissionAmount - payment.AppFeeAmount
-	payment.ReferralCodeID = &referralCode.ID
+	// Attach referral identifiers; discount amount and netAmount are already correct.
+	payment.ReferralCodeID = &usage.ReferralCode.ID
 	payment.ReferrerID = &usage.ReferrerID
 
 	return nil
@@ -550,9 +506,10 @@ func (s *PaymentService) ReleaseContractFunds(contractID string) error {
 		return nil // Already processed
 	}
 
-	// Calculate freelancer payout: gross amount minus freelancer commission and app fee.
-	// fullEscrowAmount is what was credited to escrow (including any referral discount subsidy).
-	freelancerPayout := payment.Amount - payment.FreelancerCommissionAmount - payment.AppFeeAmount
+	// Calculate freelancer payout: gross amount minus BOTH commissions and the fixed app fee.
+	// fullEscrowAmount is what was credited to escrow (including any referral discount subsidy from marketing).
+	// Platform revenue = client_commission + freelancer_commission + app_fee + discount_subsidy.
+	freelancerPayout := payment.Amount - payment.FreelancerCommissionAmount - payment.ClientCommissionAmount - payment.AppFeeAmount
 	if freelancerPayout < 0 {
 		freelancerPayout = 0
 	}
@@ -641,3 +598,51 @@ func (s *PaymentService) ReleaseContractFunds(contractID string) error {
 
 	return nil
 }
+
+// func MakeContractPayment(contract *models.Contract, event *stripe.Event, intent *stripe.PaymentIntent) (*models.PaymentTransaction, error) {
+// 	settings, _ := GetSystemSettings()
+// 	totalAmount := contract.TotalAmount
+// 	freelancerCommissionPct := settings.FreelancerCommissionPercentage
+// 	clientCommissionPct := settings.ClientCommissionPercentage
+// 	appFeePct := settings.AppFeePercentage
+// 	referralDiscountPct := settings.ReferralDiscountPercentage
+
+// 	freelancerCommission := int64(float64(totalAmount) * freelancerCommissionPct / 100)
+// 	clientCommission := int64(float64(totalAmount) * clientCommissionPct / 100)
+// 	appFee := int64(float64(totalAmount) * appFeePct / 100)
+// 	referralDiscount := int64(float64(freelancerCommission+clientCommission) * referralDiscountPct / 100)
+
+// 	netAmount := int64(totalAmount) - freelancerCommission - clientCommission - appFee + referralDiscount
+
+// 	metadata, _ := json.Marshal(intent.Metadata)
+// 	var chargeID string
+// 	if intent.LatestCharge != nil {
+// 		chargeID = intent.LatestCharge.ID
+// 	}
+
+// 	payment := models.PaymentTransaction{
+// 		FromUserID:                     contract.ClientID,
+// 		ToUserID:                       contract.FreelancerID,
+// 		MetaData:                       metadata,
+// 		ReferenceType:                  "contract",
+// 		ReferenceID:                    contract.ID,
+// 		Status:                         models.PaymentStatusSuccess,
+// 		StripeEventID:                  event.ID,
+// 		Amount:                         int64(contract.TotalAmount),
+// 		Currency:                       "gbp",
+// 		PaymentMethod:                  "gateway",
+// 		GatewayRefID:                   chargeID,
+// 		FreelancerCommissionPercentage: freelancerCommissionPct,
+// 		FreelancerCommissionAmount:     freelancerCommission,
+// 		ClientCommissionPercentage:     clientCommissionPct,
+// 		ClientCommissionAmount:         clientCommission,
+// 		AppFeePercentage:               appFeePct,
+// 		AppFeeAmount:                   appFee,
+// 		ReferralDiscountPercentage:     referralDiscountPct,
+// 		ReferralDiscountAmount:         referralDiscount,
+// 		NetAmount:                      netAmount,
+// 		PaymentIntentID:                intent.ID,
+// 		ChargeID:                       chargeID,
+// 	}
+// 	return &payment, nil
+// }

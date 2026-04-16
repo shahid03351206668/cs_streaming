@@ -463,8 +463,10 @@ func GetMyProposals(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 	status := c.Query("status")
 	DB := db.DB
+
 	query := DB.Preload("JobPost").
 		Preload("JobPost.Category").
+		Preload("JobPost.CreatedBy").
 		Preload("Freelancer").
 		Preload("ProposalAttachments").
 		Where("freelancer_id = ?", user.ID)

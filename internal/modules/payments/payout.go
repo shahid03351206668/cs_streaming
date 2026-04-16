@@ -195,9 +195,9 @@ func (s *PayoutService) RequestPayout(c *gin.Context) {
 
 	// Update payout record with Stripe IDs and final status.
 	s.db.Model(&payoutTx).Updates(map[string]interface{}{
-		"stripe_id":       tr.ID,
+		"stripe_id":        tr.ID,
 		"stripe_payout_id": stripePayoutID,
-		"status":          payoutStatus,
+		"status":           payoutStatus,
 	})
 
 	remainingBalance := currentBalance - req.Amount

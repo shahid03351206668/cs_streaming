@@ -47,7 +47,8 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 
 	router.Use(middleware.LoggerMiddleware())
 	router.GET("/ping", func(c *gin.Context) {
-		c.JSON(200, gin.H{"message": "pong"})
+		settings, _ := payments.GetSystemSettings()
+		c.JSON(200, gin.H{"message": "pong", "settings": settings})
 	})
 
 	userService := user.NewService(db, appConfig, s3Client)
@@ -68,7 +69,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 
 	disputeService := dispute.NewService(db, notifService, s3Client)
 	disputeHandler := dispute.NewHandler(disputeService)
-
+	// http://localhost:5679/api/v1/webhooks/stripe/payment
 	router.POST("/api/v1/webhooks/stripe/payment", paymentHandler.HandlePaymentIntents)
 
 	paymentRoutes := router.Group("/api/v1/payments")

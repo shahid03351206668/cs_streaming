@@ -47,13 +47,14 @@ type PaymentTransactionResponse struct {
 }
 
 type TransactionListParams struct {
-	Page     int    `form:"page"`
-	Limit    int    `form:"limit"`
-	Status   string `form:"status"`
-	UserID   string `form:"user_id"`
-	FromDate string `form:"from_date"`
-	ToDate   string `form:"to_date"`
-	Search   string `form:"search"`
+	Page          int    `form:"page"`
+	Limit         int    `form:"limit"`
+	Status        string `form:"status"`
+	UserID        string `form:"user_id"`
+	FromDate      string `form:"from_date"`
+	ToDate        string `form:"to_date"`
+	Search        string `form:"search"`
+	ReferenceType string `form:"reference_type"`
 }
 
 func (s *PaymentService) GetPaymentTransactions(params TransactionListParams) ([]PaymentTransactionResponse, int64, error) {
@@ -83,6 +84,10 @@ func (s *PaymentService) GetPaymentTransactions(params TransactionListParams) ([
 		searchPattern := "%" + params.Search + "%"
 		query = query.Where("payment_intent_id ILIKE ? OR charge_id ILIKE ? OR reference_id ILIKE ?",
 			searchPattern, searchPattern, searchPattern)
+	}
+
+	if params.ReferenceType != "" {
+		query = query.Where("reference_type = ?", params.ReferenceType)
 	}
 
 	// Get total count
