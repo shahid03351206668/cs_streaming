@@ -565,6 +565,7 @@ func UpdateSystemSettings(c *gin.Context) {
 		ReferralDiscountPercentage     *float64 `json:"referral_discount_percentage"`
 		ReferralRewardAmount           *int64   `json:"referral_reward_amount"`
 	}
+	
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
 		return

@@ -58,8 +58,8 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 	case "charge.succeeded", "charge.updated":
 		s.handleChargeSucceeded(c, &event)
 
-	case "payment_intent.payment_failed":
-		s.handlePaymentIntentFailed(c, &event)
+	// case "payment_intent.payment_failed":
+	// 	s.handlePaymentIntentFailed(c, &event)
 
 	case "charge.refunded":
 		s.handleChargeRefunded(c, &event)
@@ -89,37 +89,30 @@ func (s *PaymentHandler) isEventProcessed(eventID string) bool {
 // handleChargeSucceeded processes charge-based payments.
 // Creates a payment transaction, links it to the contract, and activates the contract.
 func (s *PaymentHandler) handleChargeSucceeded(c *gin.Context, event *stripe.Event) {
-	var charge stripe.Charge
-	if err := json.Unmarshal(event.Data.Raw, &charge); err != nil {
+	var StripeCharge stripe.Charge
+	if err := json.Unmarshal(event.Data.Raw, &StripeCharge); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": fmt.Sprintf("Error parsing Charge JSON: %v", err)})
 		return
 	}
 
-	if charge.Status != "succeeded" {
+	if StripeCharge.Status != "succeeded" {
 		c.JSON(http.StatusOK, gin.H{"message": "received", "info": "charge status not succeeded"})
 		return
 	}
 
-	// Prevent duplicate payment records by ChargeID
 	var existing int64
 	s.service.db.Model(&models.PaymentTransaction{}).
-		Where("charge_id = ?", charge.ID).
+		Where("charge_id = ?", StripeCharge.ID).
 		Count(&existing)
 	if existing > 0 {
-		logger.Log.Info("transaction already exists for charge, skipping", zap.String("charge_id", charge.ID))
+		logger.Log.Info("transaction already exists for charge, skipping", zap.String("charge_id", StripeCharge.ID))
 		c.JSON(http.StatusOK, gin.H{"message": "received", "info": "duplicate charge"})
 		return
 	}
 
-	proposalID := charge.Metadata["proposal_id"]
-	logger.Log.Info("stripe charge event received",
-		zap.String("event_type", string(event.Type)),
-		zap.String("charge_id", charge.ID),
-		zap.String("proposal_id", proposalID),
-	)
-
+	proposalID := StripeCharge.Metadata["proposal_id"]
 	if proposalID == "" {
-		logger.Log.Warn("charge has no proposal_id in metadata, skipping", zap.String("charge_id", charge.ID))
+		logger.Log.Warn("charge has no proposal_id in metadata, skipping", zap.String("charge_id", StripeCharge.ID))
 		c.JSON(http.StatusBadRequest, gin.H{"message": "received", "info": "no proposal_id in metadata"})
 		return
 	}
@@ -131,12 +124,7 @@ func (s *PaymentHandler) handleChargeSucceeded(c *gin.Context, event *stripe.Eve
 		return
 	}
 
-	logger.Log.Info("processing payment for proposal",
-		zap.String("proposal_id", proposalID),
-		zap.String("job_title", proposal.JobPost.Title),
-	)
-
-	payment, err := MakeContractPaymentFromCharge(&proposal, event, &charge)
+	payment, err := MakeContractPaymentFromCharge(&proposal, event, &StripeCharge)
 	if err != nil {
 		logger.Log.Error("error building payment transaction", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
@@ -162,17 +150,14 @@ func (s *PaymentHandler) handleChargeSucceeded(c *gin.Context, event *stripe.Eve
 		return
 	}
 
-	// Link payment to contract and activate it
 	var contract models.Contract
 	if err := tx.Where("proposal_id = ?", proposalID).First(&contract).Error; err == nil {
-		// Update contract status to active after successful payment
 		if err := tx.Model(&models.Contract{}).Where("id = ?", contract.ID).
 			Update("status", models.ContractStatusActive).Error; err != nil {
 			logger.Log.Warn("failed to activate contract after payment",
 				zap.String("contract_id", contract.ID), zap.Error(err))
 		}
 
-		// Update payment reference to contract
 		tx.Model(payment).Updates(map[string]interface{}{
 			"reference_type": "contract",
 			"reference_id":   contract.ID,
@@ -203,7 +188,7 @@ func (s *PaymentHandler) handleChargeSucceeded(c *gin.Context, event *stripe.Eve
 		Amount:        payment.Amount,
 		Status:        payment.Status,
 		Details: map[string]interface{}{
-			"charge_id":             charge.ID,
+			"charge_id":             StripeCharge.ID,
 			"proposal_id":           proposalID,
 			"gross_amount":          payment.Amount,
 			"client_commission":     payment.ClientCommissionAmount,
@@ -223,44 +208,6 @@ func (s *PaymentHandler) handleChargeSucceeded(c *gin.Context, event *stripe.Eve
 	c.JSON(http.StatusOK, gin.H{"message": "success"})
 }
 
-// handlePaymentIntentFailed handles failed payment intents.
-// Logs the failure for auditing.
-func (s *PaymentHandler) handlePaymentIntentFailed(c *gin.Context, event *stripe.Event) {
-	var pi stripe.PaymentIntent
-	if err := json.Unmarshal(event.Data.Raw, &pi); err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "received"})
-		return
-	}
-
-	var failureMessage string
-	if pi.LastPaymentError != nil {
-		failureMessage = pi.LastPaymentError.Msg
-	}
-
-	s.service.WriteAuditLog(AuditLogEntry{
-		EventType:     string(event.Type),
-		StripeEventID: event.ID,
-		Action:        "payment_failed",
-		EntityType:    "payment_intent",
-		EntityID:      pi.ID,
-		Amount:        pi.Amount,
-		Status:        "failed",
-		Details: map[string]interface{}{
-			"payment_intent_id": pi.ID,
-			"failure_message":   failureMessage,
-		},
-	})
-
-	logger.Log.Warn("payment intent failed",
-		zap.String("payment_intent_id", pi.ID),
-		zap.String("failure", failureMessage),
-	)
-
-	c.JSON(http.StatusOK, gin.H{"message": "received"})
-}
-
-// handleChargeRefunded handles charge.refunded events.
-// Updates the payment transaction status and logs the refund.
 func (s *PaymentHandler) handleChargeRefunded(c *gin.Context, event *stripe.Event) {
 	var charge stripe.Charge
 	if err := json.Unmarshal(event.Data.Raw, &charge); err != nil {
@@ -300,7 +247,41 @@ func (s *PaymentHandler) handleChargeRefunded(c *gin.Context, event *stripe.Even
 	c.JSON(http.StatusOK, gin.H{"message": "received"})
 }
 
-// --- Helpers ---
+// // handlePaymentIntentFailed handles failed payment intents.
+// // Logs the failure for auditing.
+// func (s *PaymentHandler) handlePaymentIntentFailed(c *gin.Context, event *stripe.Event) {
+// 	var pi stripe.PaymentIntent
+// 	if err := json.Unmarshal(event.Data.Raw, &pi); err != nil {
+// 		c.JSON(http.StatusOK, gin.H{"message": "received"})
+// 		return
+// 	}
+
+// 	var failureMessage string
+// 	if pi.LastPaymentError != nil {
+// 		failureMessage = pi.LastPaymentError.Msg
+// 	}
+
+// 	s.service.WriteAuditLog(AuditLogEntry{
+// 		EventType:     string(event.Type),
+// 		StripeEventID: event.ID,
+// 		Action:        "payment_failed",
+// 		EntityType:    "payment_intent",
+// 		EntityID:      pi.ID,
+// 		Amount:        pi.Amount,
+// 		Status:        "failed",
+// 		Details: map[string]interface{}{
+// 			"payment_intent_id": pi.ID,
+// 			"failure_message":   failureMessage,
+// 		},
+// 	})
+
+// 	logger.Log.Warn("payment intent failed",
+// 		zap.String("payment_intent_id", pi.ID),
+// 		zap.String("failure", failureMessage),
+// 	)
+
+// 	c.JSON(http.StatusOK, gin.H{"message": "received"})
+// }
 
 func GetSystemSettings() (*models.SystemSettings, error) {
 	if CACHED_SYSTEM_SETTINGS == nil {
@@ -314,7 +295,6 @@ func GetSystemSettings() (*models.SystemSettings, error) {
 	return CACHED_SYSTEM_SETTINGS, nil
 }
 
-// AuditLogEntry is the input for WriteAuditLog.
 type AuditLogEntry struct {
 	EventType     string
 	StripeEventID string
@@ -327,7 +307,6 @@ type AuditLogEntry struct {
 	Details       map[string]interface{}
 }
 
-// WriteAuditLog persists an audit log entry. Errors are logged but not propagated.
 func (s *PaymentService) WriteAuditLog(entry AuditLogEntry) {
 	detailsJSON, _ := json.Marshal(entry.Details)
 
@@ -352,66 +331,67 @@ func (s *PaymentService) WriteAuditLog(entry AuditLogEntry) {
 	}
 }
 
-// MakeContractPayment builds a PaymentTransaction from a contract and PaymentIntent.
-func MakeContractPayment(contract *models.Contract, event *stripe.Event, intent *stripe.PaymentIntent) (*models.PaymentTransaction, error) {
-	settings, _ := GetSystemSettings()
-	totalAmount := contract.TotalAmount
-	freelancerCommissionPct := settings.FreelancerCommissionPercentage
-	clientCommissionPct := settings.ClientCommissionPercentage
-	appFeePct := settings.AppFeePercentage
-	referralDiscountPct := settings.ReferralDiscountPercentage
+// func MakeContractPayment(contract *models.Contract, event *stripe.Event, intent *stripe.PaymentIntent) (*models.PaymentTransaction, error) {
+// 	settings, _ := GetSystemSettings()
+// 	totalAmount := contract.TotalAmount
+// 	freelancerCommissionPct := settings.FreelancerCommissionPercentage
+// 	clientCommissionPct := settings.ClientCommissionPercentage
+// 	appFeePct := settings.AppFeePercentage
+// 	referralDiscountPct := settings.ReferralDiscountPercentage
 
-	freelancerCommission := int64(float64(totalAmount) * freelancerCommissionPct / 100)
-	clientCommission := int64(float64(totalAmount) * clientCommissionPct / 100)
-	appFee := int64(float64(totalAmount) * appFeePct / 100)
-	referralDiscount := int64(float64(freelancerCommission+clientCommission) * referralDiscountPct / 100)
+// 	freelancerCommission := int64(float64(totalAmount) * freelancerCommissionPct / 100)
+// 	clientCommission := int64(float64(totalAmount) * clientCommissionPct / 100)
+// 	appFee := int64(float64(totalAmount) * appFeePct / 100)
+// 	referralDiscount := int64(float64(freelancerCommission+clientCommission) * referralDiscountPct / 100)
 
-	netAmount := int64(totalAmount) - freelancerCommission - clientCommission - appFee + referralDiscount
+// 	netAmount := int64(totalAmount) - freelancerCommission - clientCommission - appFee + referralDiscount
 
-	metadata, _ := json.Marshal(intent.Metadata)
-	var chargeID string
-	if intent.LatestCharge != nil {
-		chargeID = intent.LatestCharge.ID
-	}
+// 	metadata, _ := json.Marshal(intent.Metadata)
+// 	var chargeID string
+// 	if intent.LatestCharge != nil {
+// 		chargeID = intent.LatestCharge.ID
+// 	}
 
-	payment := models.PaymentTransaction{
-		FromUserID:                     contract.ClientID,
-		ToUserID:                       contract.FreelancerID,
-		MetaData:                       metadata,
-		ReferenceType:                  "contract",
-		ReferenceID:                    contract.ID,
-		Status:                         models.PaymentStatusSuccess,
-		StripeEventID:                  event.ID,
-		Amount:                         int64(contract.TotalAmount),
-		Currency:                       "gbp",
-		PaymentMethod:                  "gateway",
-		GatewayRefID:                   chargeID,
-		FreelancerCommissionPercentage: freelancerCommissionPct,
-		FreelancerCommissionAmount:     freelancerCommission,
-		ClientCommissionPercentage:     clientCommissionPct,
-		ClientCommissionAmount:         clientCommission,
-		AppFeePercentage:               appFeePct,
-		AppFeeAmount:                   appFee,
-		ReferralDiscountPercentage:     referralDiscountPct,
-		ReferralDiscountAmount:         referralDiscount,
-		NetAmount:                      netAmount,
-		PaymentIntentID:                intent.ID,
-		ChargeID:                       chargeID,
-	}
-	return &payment, nil
-}
+// 	payment := models.PaymentTransaction{
+// 		FromUserID:                     contract.ClientID,
+// 		ToUserID:                       contract.FreelancerID,
+// 		MetaData:                       metadata,
+// 		ReferenceType:                  "contract",
+// 		ReferenceID:                    contract.ID,
+// 		Status:                         models.PaymentStatusSuccess,
+// 		StripeEventID:                  event.ID,
+// 		Amount:                         int64(contract.TotalAmount),
+// 		Currency:                       "gbp",
+// 		PaymentMethod:                  "gateway",
+// 		GatewayRefID:                   chargeID,
+// 		FreelancerCommissionPercentage: freelancerCommissionPct,
+// 		FreelancerCommissionAmount:     freelancerCommission,
+// 		ClientCommissionPercentage:     clientCommissionPct,
+// 		ClientCommissionAmount:         clientCommission,
+// 		AppFeePercentage:               appFeePct,
+// 		AppFeeAmount:                   appFee,
+// 		ReferralDiscountPercentage:     referralDiscountPct,
+// 		ReferralDiscountAmount:         referralDiscount,
+// 		NetAmount:                      netAmount,
+// 		PaymentIntentID:                intent.ID,
+// 		ChargeID:                       chargeID,
+// 	}
+// 	return &payment, nil
+// }
 
 // MakeContractPaymentFromCharge builds a PaymentTransaction from a Stripe charge.
 func MakeContractPaymentFromCharge(proposal *models.Proposal, event *stripe.Event, charge *stripe.Charge) (*models.PaymentTransaction, error) {
 	settings, _ := GetSystemSettings()
+
 	totalAmount := charge.Amount
+
 	freelancerCommissionPct := settings.FreelancerCommissionPercentage
 	clientCommissionPct := settings.ClientCommissionPercentage
-	appFeePct := settings.AppFeePercentage
+
+	appFee := settings.ApplicationFeeAmount
 
 	freelancerCommission := int64(float64(totalAmount) * freelancerCommissionPct / 100)
 	clientCommission := int64(float64(totalAmount) * clientCommissionPct / 100)
-	appFee := int64(float64(totalAmount) * appFeePct / 100)
 
 	netAmount := totalAmount - freelancerCommission - clientCommission - appFee
 
@@ -438,7 +418,7 @@ func MakeContractPaymentFromCharge(proposal *models.Proposal, event *stripe.Even
 		FreelancerCommissionAmount:     freelancerCommission,
 		ClientCommissionPercentage:     clientCommissionPct,
 		ClientCommissionAmount:         clientCommission,
-		AppFeePercentage:               appFeePct,
+		AppFeePercentage:               settings.AppFeePercentage,
 		AppFeeAmount:                   appFee,
 		NetAmount:                      netAmount,
 		PaymentIntentID:                paymentIntentID,

@@ -169,9 +169,9 @@ func (s *PaymentService) GetEscrowStatus(contractID string) (map[string]interfac
 	}
 
 	result := map[string]interface{}{
-		"contract_id":             contractID,
-		"escrow_status":           contract.EscrowStatus,
-		"escrow_amount":           contract.EscrowAmount,
+		"contract_id":              contractID,
+		"escrow_status":            contract.EscrowStatus,
+		"escrow_amount":            contract.EscrowAmount,
 		"escrow_payment_intent_id": contract.EscrowPaymentIntentID,
 	}
 
