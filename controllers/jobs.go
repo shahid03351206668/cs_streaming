@@ -934,7 +934,8 @@ func CompleteContract(c *gin.Context) {
 				WebhookSecret: os.Getenv("STRIPE_WEBHOOK_SIGNING_SECRET"),
 				APIKey:        os.Getenv("STRIPE_API_KEY"),
 			}
-			paymentService := payments.NewService(stripeCfg, dbConn)
+			ledgerSvc := payments.NewLedgerService(dbConn)
+			paymentService := payments.NewService(stripeCfg, dbConn, ledgerSvc)
 			if err := paymentService.ReleaseContractFunds(ctr.ID); err != nil {
 				fmt.Printf("failed to release funds for contract %s: %v\n", ctr.ID, err)
 			}

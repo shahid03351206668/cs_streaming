@@ -28,8 +28,6 @@ func NewHandler(service *PaymentService) *PaymentHandler {
 	return &PaymentHandler{service: service}
 }
 
-// HandlePaymentIntents is the single Stripe webhook endpoint.
-// It is the sole source of truth for creating payment transaction records.
 func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, int64(65536))
 	payload, err := io.ReadAll(c.Request.Body)
@@ -41,13 +39,13 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 	endpointSecret := s.service.config.WebhookSecret
 	signature := c.GetHeader("Stripe-Signature")
 	event, err := webhook.ConstructEvent(payload, signature, endpointSecret)
+
 	if err != nil {
 		logger.Log.Error("webhook signature verification failed", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
 
-	// Global idempotency: reject duplicate Stripe events
 	if s.isEventProcessed(event.ID) {
 		logger.Log.Info("duplicate stripe event, skipping", zap.String("event_id", event.ID))
 		c.JSON(http.StatusOK, gin.H{"message": "received", "info": "duplicate event"})
@@ -70,7 +68,6 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 	}
 }
 
-// isEventProcessed checks if a Stripe event has already been recorded (idempotency).
 func (s *PaymentHandler) isEventProcessed(eventID string) bool {
 	var count int64
 	s.service.db.Model(&models.PaymentTransaction{}).
@@ -162,6 +159,68 @@ func (s *PaymentHandler) handleChargeSucceeded(c *gin.Context, event *stripe.Eve
 			"reference_type": "contract",
 			"reference_id":   contract.ID,
 		})
+	}
+
+	// Create escrow_fund ledger transaction within the same DB transaction.
+	// Debit: External (what Stripe actually charged).
+	// If a referral discount was applied, Debit: Marketing (to cover the gap).
+	// Credit: System Escrow (full project value = charge + discount).
+	{
+		ledgerInTx := NewLedgerService(tx)
+
+		escrowAcct, err := ledgerInTx.GetSystemAccount(models.AccountTypeEscrow)
+		if err != nil {
+			tx.Rollback()
+			logger.Log.Error("escrow system account not found", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "escrow account not configured"})
+			return
+		}
+		externalAcct, err := ledgerInTx.GetSystemAccount(models.AccountTypeExternal)
+		if err != nil {
+			tx.Rollback()
+			logger.Log.Error("external system account not found", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "external account not configured"})
+			return
+		}
+
+		fullEscrowAmount := payment.Amount + payment.DiscountAmount
+
+		entries := []EntryInput{
+			{AccountID: externalAcct.ID, Amount: -payment.Amount, Category: "stripe_payment"},
+			{AccountID: escrowAcct.ID, Amount: fullEscrowAmount, Category: "escrow_deposit"},
+		}
+
+		if payment.DiscountAmount > 0 {
+			marketingAcct, err := ledgerInTx.GetSystemAccount(models.AccountTypeMarketing)
+			if err != nil {
+				tx.Rollback()
+				logger.Log.Error("marketing system account not found", zap.Error(err))
+				c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "marketing account not configured"})
+				return
+			}
+			entries = []EntryInput{
+				{AccountID: externalAcct.ID, Amount: -payment.Amount, Category: "stripe_payment"},
+				{AccountID: marketingAcct.ID, Amount: -payment.DiscountAmount, Category: "referral_discount_subsidy"},
+				{AccountID: escrowAcct.ID, Amount: fullEscrowAmount, Category: "escrow_deposit"},
+			}
+		}
+
+		contractID := payment.ReferenceID
+		if contractID == "" {
+			contractID = proposalID
+		}
+
+		if _, err := ledgerInTx.CreateLedgerTransaction(
+			models.LedgerTxEscrowFund,
+			payment.ID,
+			fmt.Sprintf("Escrow funded for contract %s (charge %s)", contractID, payment.ChargeID),
+			entries,
+		); err != nil {
+			tx.Rollback()
+			logger.Log.Error("failed to create escrow fund ledger entries", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to record ledger entries"})
+			return
+		}
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -491,49 +550,70 @@ func (s *PaymentService) ReleaseContractFunds(contractID string) error {
 		return nil // Already processed
 	}
 
-	// Calculate freelancer payout: gross amount minus freelancer commission and app fee
+	// Calculate freelancer payout: gross amount minus freelancer commission and app fee.
+	// fullEscrowAmount is what was credited to escrow (including any referral discount subsidy).
 	freelancerPayout := payment.Amount - payment.FreelancerCommissionAmount - payment.AppFeeAmount
 	if freelancerPayout < 0 {
 		freelancerPayout = 0
 	}
+	fullEscrowAmount := payment.Amount + payment.DiscountAmount
+	platformFee := fullEscrowAmount - freelancerPayout
 
-	tx := s.db.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
+	if txErr := s.db.Transaction(func(tx *gorm.DB) error {
+		ledgerInTx := NewLedgerService(tx)
+
+		escrowAcct, err := ledgerInTx.GetSystemAccount(models.AccountTypeEscrow)
+		if err != nil {
+			return fmt.Errorf("escrow account not found: %w", err)
 		}
-	}()
+		revenueAcct, err := ledgerInTx.GetSystemAccount(models.AccountTypeRevenue)
+		if err != nil {
+			return fmt.Errorf("revenue account not found: %w", err)
+		}
+		freelancerWallet, err := ledgerInTx.GetOrCreateUserAccount(contract.FreelancerID)
+		if err != nil {
+			return fmt.Errorf("failed to get freelancer wallet account: %w", err)
+		}
 
-	// Credit freelancer wallet
-	if err := tx.Model(&models.User{}).Where("id = ?", contract.FreelancerID).
-		UpdateColumn("wallet_balance", gorm.Expr("wallet_balance + ?", freelancerPayout)).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to credit freelancer wallet: %w", err)
+		// escrow_release: Debit Escrow, Credit FreelancerWallet + Revenue.
+		// Sum: -fullEscrowAmount + freelancerPayout + platformFee = 0 ✓
+		if _, err := ledgerInTx.CreateLedgerTransaction(
+			models.LedgerTxEscrowRelease,
+			contractID,
+			fmt.Sprintf("Escrow released for contract %s (freelancer %s)", contractID, contract.FreelancerID),
+			[]EntryInput{
+				{AccountID: escrowAcct.ID, Amount: -fullEscrowAmount, Category: "escrow_release"},
+				{AccountID: freelancerWallet.ID, Amount: freelancerPayout, Category: "freelancer_payout"},
+				{AccountID: revenueAcct.ID, Amount: platformFee, Category: "platform_fee"},
+			},
+		); err != nil {
+			return fmt.Errorf("failed to create escrow release ledger entries: %w", err)
+		}
+
+		// Create payout transaction record for audit trail.
+		payout := models.PayoutTransaction{
+			TransactionDate: time.Now(),
+			UserID:          contract.FreelancerID,
+			Amount:          fullEscrowAmount,
+			NetAmount:       freelancerPayout,
+			AppFeeAmount:    platformFee,
+			Currency:        payment.Currency,
+			Status:          models.PaymentStatusSuccess,
+			StripeID:        "contract_" + contractID,
+		}
+		if err := tx.Create(&payout).Error; err != nil {
+			return fmt.Errorf("failed to create payout transaction: %w", err)
+		}
+
+		// Link payment to payout.
+		return tx.Model(&payment).Update("payout_id", payout.ID).Error
+	}); txErr != nil {
+		return fmt.Errorf("failed to release contract funds: %w", txErr)
 	}
 
-	// Create payout transaction record
-	payout := models.PayoutTransaction{
-		TransactionDate: time.Now(),
-		UserID:          contract.FreelancerID,
-		Amount:          payment.Amount,
-		NetAmount:       freelancerPayout,
-		AppFeeAmount:    payment.FreelancerCommissionAmount + payment.AppFeeAmount,
-		Currency:        payment.Currency,
-		Status:          models.PaymentStatusSuccess,
-		StripeID:        "contract_" + contractID, // reference marker for idempotency
-	}
-	if err := tx.Create(&payout).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to create payout transaction: %w", err)
-	}
-
-	// Link payment to payout
-	payoutID := payout.ID
-	tx.Model(&payment).Update("payout_id", payoutID)
-
-	if err := tx.Commit().Error; err != nil {
-		return fmt.Errorf("failed to commit payout: %w", err)
-	}
+	// Re-fetch payout record for the audit log.
+	var payout models.PayoutTransaction
+	s.db.Where("stripe_id = ?", "contract_"+contractID).First(&payout)
 
 	// Audit log
 	s.WriteAuditLog(AuditLogEntry{

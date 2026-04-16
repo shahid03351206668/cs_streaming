@@ -171,21 +171,6 @@ func (Bank) TableName() string {
 	return "banks"
 }
 
-type GLEntry struct {
-	BaseModel
-
-	PostingDate time.Time `gorm:"index"`
-	AccountID   string    `gorm:"type:uuid;index;not null"`
-
-	Debit  int64 `gorm:"default:0"` // in
-	Credit int64 `gorm:"default:0"` // out
-
-	VoucherType string `gorm:"type:varchar(50)"`
-	VoucherNo   string `gorm:"type:uuid;index"`
-	Remarks     string `gorm:"type:text"`
-	IsCancelled bool   `gorm:"default:false"`
-}
-
 // PaymentAuditLog tracks all payment-related events for auditing
 type PaymentAuditLog struct {
 	BaseModel
@@ -219,3 +204,20 @@ type TestPaymentTransactions struct {
 	ReferenceType string `json:"reference_type"`
 	ReferenceNo   string `json:"reference_no"`
 }
+
+// Legacy TransactionType constants kept for PaymentAuditLog compatibility.
+type TransactionType string
+
+const (
+	TransactionTypePayment              TransactionType = "payment"
+	TransactionTypeAppFee               TransactionType = "app_fee"
+	TransactionTypeClientCommission     TransactionType = "client_commission"
+	TransactionTypeFreelancerCommission TransactionType = "freelancer_commission"
+	TransactionTypeRefund               TransactionType = "refund"
+	TransactionTypePayout               TransactionType = "payout"
+	TransactionTypeDispute              TransactionType = "dispute"
+	TransactionTypeReferralReward       TransactionType = "referral_reward"
+	TransactionTypeReferralDiscount     TransactionType = "referral_discount"
+)
+
+// GLEntry and LedgerTransaction are now defined in models/ledger.go

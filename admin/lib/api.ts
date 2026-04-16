@@ -210,6 +210,66 @@ export const adminUpdateBank = (id: string, data: Partial<BankParams>) =>
 export const adminDeleteBank = (id: string) =>
   api.delete(`/api/v1/admin/banks/${id}`);
 
+// Ledger
+export interface LedgerAccount {
+  id: string;
+  name: string;
+  type: string;
+  user_id?: string;
+}
+
+export interface LedgerGLEntry {
+  id: string;
+  account_id: string;
+  account: LedgerAccount;
+  amount: number;
+  category: string;
+  created_at: string;
+}
+
+export interface LedgerTransaction {
+  id: string;
+  type: string;
+  reference_id: string;
+  status: string;
+  description: string;
+  posting_date: string;
+  created_at: string;
+  entries: LedgerGLEntry[];
+}
+
+export interface LedgerSummary {
+  total_escrow: number;
+  total_revenue: number;
+  total_marketing: number;
+}
+
+export interface LedgerReportResponse {
+  system_balance: number;
+  system_healthy: boolean;
+  summary: LedgerSummary;
+  transactions: LedgerTransaction[];
+  meta: { total: number; page: number; limit: number; total_pages: number };
+}
+
+export const getLedgerReport = (params?: {
+  page?: number;
+  limit?: number;
+  type?: string;
+  from_date?: string;
+  to_date?: string;
+}) => {
+  const query = new URLSearchParams();
+  if (params?.page) query.set("page", String(params.page));
+  if (params?.limit) query.set("limit", String(params.limit));
+  if (params?.type) query.set("type", params.type);
+  if (params?.from_date) query.set("from_date", params.from_date);
+  if (params?.to_date) query.set("to_date", params.to_date);
+  return api.get<{ message: string; data: LedgerReportResponse }>(
+    `/api/v1/admin/ledger?${query.toString()}`
+  );
+};
+
 // Disputes
 export type DisputeStatus = "open" | "resolved" | "closed";
 

@@ -19,19 +19,20 @@ import (
 type PayoutService struct {
 	db     *gorm.DB
 	config *config.StripeConfig
+	ledger *LedgerService
 }
 
-func NewPayoutService(db *gorm.DB, cfg *config.StripeConfig) *PayoutService {
-	return &PayoutService{db: db, config: cfg}
+func NewPayoutService(db *gorm.DB, cfg *config.StripeConfig, ledger *LedgerService) *PayoutService {
+	return &PayoutService{db: db, config: cfg, ledger: ledger}
 }
 
 // GetWalletBalance handles GET /api/v1/wallet/balance
+// Balance is derived from the double-entry ledger (sum of all gl_entries for the user's wallet account).
 func (s *PayoutService) GetWalletBalance(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
-	var fresh models.User
-	if err := s.db.Select("id, wallet_balance, referral_reward_balance").
-		First(&fresh, "id = ?", user.ID).Error; err != nil {
+	balance, err := s.ledger.GetUserWalletBalance(user.ID)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to fetch balance"})
 		return
 	}
@@ -39,9 +40,9 @@ func (s *PayoutService) GetWalletBalance(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"data": gin.H{
-			"wallet_balance":          fresh.WalletBalance,
-			"referral_reward_balance": fresh.ReferralRewardBalance,
-			"total_available":         fresh.WalletBalance + fresh.ReferralRewardBalance,
+			"wallet_balance":          balance,
+			"referral_reward_balance": int64(0),
+			"total_available":         balance,
 			"currency":                "gbp",
 		},
 	})
@@ -64,22 +65,23 @@ func (s *PayoutService) RequestPayout(c *gin.Context) {
 		req.Currency = "gbp"
 	}
 
-	var fresh models.User
-	if err := s.db.Select("id, wallet_balance").First(&fresh, "id = ?", user.ID).Error; err != nil {
+	// Check balance from ledger (source of truth).
+	currentBalance, err := s.ledger.GetUserWalletBalance(user.ID)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to fetch balance"})
 		return
 	}
-	if req.Amount > fresh.WalletBalance {
+	if req.Amount > currentBalance {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message":           "error",
 			"error":             "insufficient wallet balance",
-			"available_balance": fresh.WalletBalance,
+			"available_balance": currentBalance,
 			"requested_amount":  req.Amount,
 		})
 		return
 	}
 
-	// Find bank account — use provided ID or fall back to default
+	// Find bank account — use provided ID or fall back to default.
 	var bankAccount models.UserBankAccount
 	query := s.db.Where("user_id = ?", user.ID)
 	if req.BankAccountID != "" {
@@ -101,16 +103,56 @@ func (s *PayoutService) RequestPayout(c *gin.Context) {
 		return
 	}
 
-	// Atomically deduct balance
-	result := s.db.Model(&models.User{}).
-		Where("id = ? AND wallet_balance >= ?", user.ID, req.Amount).
-		UpdateColumn("wallet_balance", gorm.Expr("wallet_balance - ?", req.Amount))
-	if result.Error != nil || result.RowsAffected == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "insufficient balance or concurrent update"})
+	// Atomically create the payout ledger entry and payout record within a single transaction.
+	// Debit: UserWallet (-amount), Credit: External (+amount).
+	// This prevents double-spending — the balance reflects the pending withdrawal immediately.
+	baID := bankAccount.ID
+	payoutTx := models.PayoutTransaction{
+		TransactionDate: time.Now(),
+		UserID:          user.ID,
+		Amount:          req.Amount,
+		NetAmount:       req.Amount,
+		AppFeeAmount:    0,
+		Currency:        req.Currency,
+		Status:          models.PaymentStatusPending,
+		BankAccountID:   &baID,
+	}
+
+	var ledgerTxID string
+	if txErr := s.db.Transaction(func(tx *gorm.DB) error {
+		ledgerInTx := NewLedgerService(tx)
+
+		userWallet, err := ledgerInTx.GetOrCreateUserAccount(user.ID)
+		if err != nil {
+			return fmt.Errorf("failed to get user wallet account: %w", err)
+		}
+		externalAcct, err := ledgerInTx.GetSystemAccount(models.AccountTypeExternal)
+		if err != nil {
+			return fmt.Errorf("external account not found: %w", err)
+		}
+
+		// Debit user wallet, Credit external — sum = -amount + amount = 0 ✓
+		ledgerTxn, err := ledgerInTx.CreateLedgerTransaction(
+			models.LedgerTxPayout,
+			user.ID,
+			fmt.Sprintf("Wallet withdrawal of %d %s", req.Amount, req.Currency),
+			[]EntryInput{
+				{AccountID: userWallet.ID, Amount: -req.Amount, Category: "wallet_withdrawal"},
+				{AccountID: externalAcct.ID, Amount: req.Amount, Category: "wallet_withdrawal"},
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create payout ledger entries: %w", err)
+		}
+		ledgerTxID = ledgerTxn.ID
+
+		return tx.Create(&payoutTx).Error
+	}); txErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to initiate withdrawal"})
 		return
 	}
 
-	// Transfer from platform balance → freelancer's Connect account
+	// Transfer from platform balance → freelancer's Connect account.
 	transferParams := &stripe.TransferParams{
 		Amount:      stripe.Int64(req.Amount),
 		Currency:    stripe.String(req.Currency),
@@ -118,14 +160,14 @@ func (s *PayoutService) RequestPayout(c *gin.Context) {
 	}
 	tr, err := stripetransfer.New(transferParams)
 	if err != nil {
-		// Rollback balance deduction
-		s.db.Model(&models.User{}).Where("id = ?", user.ID).
-			UpdateColumn("wallet_balance", gorm.Expr("wallet_balance + ?", req.Amount))
+		// Stripe failed — create a reversing ledger entry to restore the balance (immutability rule).
+		s.reversePayoutLedger(user.ID, req.Amount, req.Currency, ledgerTxID)
+		s.db.Model(&payoutTx).Update("status", models.PaymentStatusFailed)
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to initiate transfer: " + err.Error()})
 		return
 	}
 
-	// Payout from Connect account → bank account
+	// Payout from Connect account → bank account.
 	payoutParams := &stripe.PayoutParams{
 		Amount:   stripe.Int64(req.Amount),
 		Currency: stripe.String(req.Currency),
@@ -151,32 +193,19 @@ func (s *PayoutService) RequestPayout(c *gin.Context) {
 		}
 	}
 
-	baID := bankAccount.ID
-	payoutTx := models.PayoutTransaction{
-		TransactionDate: time.Now(),
-		UserID:          user.ID,
-		Amount:          req.Amount,
-		NetAmount:       req.Amount,
-		AppFeeAmount:    0,
-		Currency:        req.Currency,
-		Status:          payoutStatus,
-		StripeID:        tr.ID,
-		StripePayoutID:  stripePayoutID,
-		BankAccountID:   &baID,
-	}
-	if err := s.db.Create(&payoutTx).Error; err != nil {
-		// Rollback balance deduction
-		s.db.Model(&models.User{}).Where("id = ?", user.ID).
-			UpdateColumn("wallet_balance", gorm.Expr("wallet_balance + ?", req.Amount))
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to record withdrawal"})
-		return
-	}
+	// Update payout record with Stripe IDs and final status.
+	s.db.Model(&payoutTx).Updates(map[string]interface{}{
+		"stripe_id":       tr.ID,
+		"stripe_payout_id": stripePayoutID,
+		"status":          payoutStatus,
+	})
 
+	remainingBalance := currentBalance - req.Amount
 	resp := gin.H{
 		"payout_id":          payoutTx.ID,
 		"amount":             payoutTx.Amount,
 		"currency":           payoutTx.Currency,
-		"status":             payoutTx.Status,
+		"status":             payoutStatus,
 		"stripe_transfer_id": tr.ID,
 		"stripe_payout_id":   stripePayoutID,
 		"bank_account": gin.H{
@@ -186,12 +215,39 @@ func (s *PayoutService) RequestPayout(c *gin.Context) {
 			"account_number_last4": bankAccount.AccountNumberLast4,
 			"bank_name":            bankAccount.BankName,
 		},
-		"remaining_balance": fresh.WalletBalance - req.Amount,
+		"remaining_balance": remainingBalance,
 	}
 	if payoutWarning != "" {
 		resp["warning"] = payoutWarning
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": resp})
+}
+
+// reversePayoutLedger creates a reversing ledger transaction when a Stripe transfer fails.
+// Credit: UserWallet (+amount), Debit: External (-amount) — exactly cancels the original entry.
+func (s *PayoutService) reversePayoutLedger(userID string, amount int64, currency string, originalLedgerTxID string) {
+	userWallet, err := s.ledger.GetOrCreateUserAccount(userID)
+	if err != nil {
+		logger.Log.Error("reversal: failed to get user wallet account", zap.String("user_id", userID), zap.Error(err))
+		return
+	}
+	externalAcct, err := s.ledger.GetSystemAccount(models.AccountTypeExternal)
+	if err != nil {
+		logger.Log.Error("reversal: external account not found", zap.Error(err))
+		return
+	}
+	_, err = s.ledger.CreateLedgerTransaction(
+		models.LedgerTxPayout,
+		originalLedgerTxID,
+		fmt.Sprintf("Reversal of failed withdrawal of %d %s", amount, currency),
+		[]EntryInput{
+			{AccountID: userWallet.ID, Amount: amount, Category: "withdrawal_reversal"},
+			{AccountID: externalAcct.ID, Amount: -amount, Category: "withdrawal_reversal"},
+		},
+	)
+	if err != nil {
+		logger.Log.Error("reversal: failed to create reversing ledger entry", zap.String("user_id", userID), zap.Error(err))
+	}
 }
 
 // GetPayoutHistory handles GET /api/v1/wallet/withdrawals

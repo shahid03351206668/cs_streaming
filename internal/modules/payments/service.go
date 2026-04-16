@@ -10,12 +10,14 @@ import (
 type PaymentService struct {
 	config *config.StripeConfig
 	db     *gorm.DB
+	ledger *LedgerService
 }
 
-func NewService(config *config.StripeConfig, db *gorm.DB) *PaymentService {
+func NewService(config *config.StripeConfig, db *gorm.DB, ledger *LedgerService) *PaymentService {
 	return &PaymentService{
 		config: config,
 		db:     db,
+		ledger: ledger,
 	}
 }
 

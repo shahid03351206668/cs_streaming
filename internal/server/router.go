@@ -55,9 +55,13 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	jobPostService := job.NewService(db, s3Client, queueClient, notifService)
 	jobPostHandler := job.NewHandler(jobPostService)
 
-	paymentService := payments.NewService(&appConfig.Stripe, db)
+	ledgerService := payments.NewLedgerService(db)
+	ledgerService.EnsureSystemAccounts()
+	ledgerHandler := payments.NewLedgerHandler(ledgerService, db)
+
+	paymentService := payments.NewService(&appConfig.Stripe, db, ledgerService)
 	paymentHandler := payments.NewHandler(paymentService)
-	payoutService := payments.NewPayoutService(db, &appConfig.Stripe)
+	payoutService := payments.NewPayoutService(db, &appConfig.Stripe, ledgerService)
 
 	promotionService := promotions.NewService(db)
 	promotionHandler := promotions.NewHandler(promotionService)
@@ -155,6 +159,9 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		adminRoutes.PUT("/jobs/:id", controllers.AdminUpdateJobController)
 		adminRoutes.GET("/payouts", payoutService.AdminListPayouts)
 		adminRoutes.GET("/payments/audit-logs", paymentHandler.GetPaymentAuditLogs)
+
+		adminRoutes.GET("/ledger", ledgerHandler.GetAdminLedgerReport)
+		adminRoutes.GET("/ledger/accounts/:id/balance", ledgerHandler.GetAccountBalanceHandler)
 
 		adminRoutes.PUT("/settings", controllers.UpdateSystemSettings)
 		adminRoutes.GET("/banks", controllers.AdminListBanks)

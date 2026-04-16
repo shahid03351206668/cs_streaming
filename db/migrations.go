@@ -126,6 +126,11 @@ func ApplyMigrations() error {
 		&models.Bank{},
 		&models.Dispute{},
 		&models.PaymentAuditLog{},
+
+		// Double-entry ledger
+		&models.Account{},
+		&models.LedgerTransaction{},
+		&models.GLEntry{},
 	}
 
 	if err := DB.AutoMigrate(modelsToMigrate...); err != nil {
