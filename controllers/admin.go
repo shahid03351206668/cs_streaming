@@ -550,7 +550,6 @@ func GetSystemSettings(c *gin.Context) {
 		return
 	}
 
-	// Return amount fields as pounds (float64) so the frontend can display them directly.
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": gin.H{
 		"id":                               settings.ID,
 		"client_commission_percentage":     settings.ClientCommissionPercentage,

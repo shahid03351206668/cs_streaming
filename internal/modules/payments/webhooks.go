@@ -38,6 +38,7 @@ func NewHandler(service *PaymentService) *PaymentHandler {
 
 func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, int64(65536))
+
 	payload, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"message": "error"})
