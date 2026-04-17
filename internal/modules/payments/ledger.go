@@ -145,7 +145,6 @@ func (s *LedgerService) GetSystemAccount(accountType models.AccountType) (*model
 	return &acct, nil
 }
 
-// GetOrCreateUserAccount returns or creates the wallet account for a user.
 func (s *LedgerService) GetOrCreateUserAccount(userID string) (*models.Account, error) {
 	var acct models.Account
 	err := s.db.Where("type = ? AND user_id = ?", models.AccountTypeUserWallet, userID).First(&acct).Error
@@ -173,8 +172,6 @@ func (s *LedgerService) GetOrCreateUserAccount(userID string) (*models.Account, 
 	return &acct, nil
 }
 
-// GetUserWalletBalance returns the current ledger balance for a user's wallet account.
-// Returns 0 if the user has no wallet account yet.
 func (s *LedgerService) GetUserWalletBalance(userID string) (int64, error) {
 	var balance int64
 	err := s.db.Model(&models.GLEntry{}).

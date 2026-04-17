@@ -555,10 +555,10 @@ func GetSystemSettings(c *gin.Context) {
 		"id":                               settings.ID,
 		"client_commission_percentage":     settings.ClientCommissionPercentage,
 		"freelancer_commission_percentage": settings.FreelancerCommissionPercentage,
-		"application_fee_amount":           float64(settings.ApplicationFeeAmount) / 100.0,
+		"application_fee_amount":           float64(settings.ApplicationFeeAmount),
 		"app_fee_percentage":               settings.AppFeePercentage,
 		"referral_discount_percentage":     settings.ReferralDiscountPercentage,
-		"referral_reward_amount":           float64(settings.ReferralRewardAmount) / 100.0,
+		"referral_reward_amount":           float64(settings.ReferralRewardAmount),
 	}})
 }
 
