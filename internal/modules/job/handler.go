@@ -1,12 +1,16 @@
 package job
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
 	"go.uber.org/zap"
+	"tasksy/db"
+	"tasksy/lib"
 	"tasksy/models"
 	"tasksy/pkg/logger"
 )
@@ -61,14 +65,34 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 		limit = MAX_JOBS_PER_PAGE
 	}
 
+	// Load feed preferences when the user sends a valid JWT but no explicit
+	// category filter — gives a personalised feed without breaking public access.
+	var preferredCategoryIDs []string
+	if category == "" {
+		if userID := lib.TryGetUserID(c); userID != "" {
+			var prefs models.UserFeedPreferences
+			if err := db.DB.Where("user_id = ?", userID).First(&prefs).Error; err == nil {
+				var cats []models.CategoryItem
+				if json.Unmarshal(prefs.Categories, &cats) == nil {
+					for _, cat := range cats {
+						if cat.ID != "" {
+							preferredCategoryIDs = append(preferredCategoryIDs, cat.ID)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	params := JobFeedParams{
-		Category:    category,
-		SearchQuery: searchQuery,
-		Page:        page,
-		Limit:       limit,
-		Latitude:    lat,
-		Longitude:   lng,
-		RadiusKM:    JOB_SEARCH_RADIUS,
+		Category:             category,
+		SearchQuery:          searchQuery,
+		Page:                 page,
+		Limit:                limit,
+		Latitude:             lat,
+		Longitude:            lng,
+		RadiusKM:             JOB_SEARCH_RADIUS,
+		PreferredCategoryIDs: preferredCategoryIDs,
 	}
 
 	jobs, count, err := h.service.GetJobFeed(params)
@@ -95,6 +119,34 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 		"message": "success",
 		"meta":    meta,
 	})
+}
+
+func (h *Handler) DeleteJobPost(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	jobID := c.Param("id")
+
+	if jobID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "job id is required"})
+		return
+	}
+
+	err := h.service.DeleteJobPost(jobID, user.ID)
+	if err == nil {
+		c.JSON(http.StatusOK, gin.H{"message": "success"})
+		return
+	}
+
+	switch {
+	case errors.Is(err, ErrJobNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": err.Error()})
+	case errors.Is(err, ErrJobNotOwned):
+		c.JSON(http.StatusForbidden, gin.H{"message": "error", "error": err.Error()})
+	case errors.Is(err, ErrJobCannotBeDeleted):
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"message": "error", "error": err.Error()})
+	default:
+		logger.Log.Error("delete job post failed", zap.String("job_id", jobID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to delete job"})
+	}
 }
 
 func (h *Handler) CreateJobPost(c *gin.Context) {

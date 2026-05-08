@@ -16,6 +16,9 @@ type JobFeedParams struct {
 	Latitude    *float64 // nil means no location filter
 	Longitude   *float64
 	RadiusKM    float64
+	// PreferredCategoryIDs is applied when the user has feed preferences and
+	// no explicit Category filter was given. Empty = no preference filter.
+	PreferredCategoryIDs []string
 }
 
 // Haversine SQL expression to calculate distance in km between two lat/lng points.
@@ -70,8 +73,11 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 			Where(haversineWhere+" <= ?", lat, lng, lat, params.RadiusKM)
 	}
 
+	// Explicit category filter takes priority; fall back to user preferences.
 	if params.Category != "" {
 		jobQuery = jobQuery.Where("job_posts.category_id = ?", params.Category)
+	} else if len(params.PreferredCategoryIDs) > 0 {
+		jobQuery = jobQuery.Where("job_posts.category_id IN ?", params.PreferredCategoryIDs)
 	}
 
 	if params.SearchQuery != "" {

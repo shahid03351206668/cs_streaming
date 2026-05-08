@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 )
 
 func GetUsers(c *gin.Context) {
@@ -554,21 +555,21 @@ func GetSystemSettings(c *gin.Context) {
 		"id":                               settings.ID,
 		"client_commission_percentage":     settings.ClientCommissionPercentage,
 		"freelancer_commission_percentage": settings.FreelancerCommissionPercentage,
-		"application_fee_amount":           float64(settings.ApplicationFeeAmount),
+		"application_fee_amount":           settings.ApplicationFeeAmount,
 		"app_fee_percentage":               settings.AppFeePercentage,
 		"referral_discount_percentage":     settings.ReferralDiscountPercentage,
-		"referral_reward_amount":           float64(settings.ReferralRewardAmount),
+		"referral_reward_amount":           settings.ReferralRewardAmount,
 	}})
 }
 
 func UpdateSystemSettings(c *gin.Context) {
 	var body struct {
-		ClientCommissionPercentage     *float64 `json:"client_commission_percentage"`
-		FreelancerCommissionPercentage *float64 `json:"freelancer_commission_percentage"`
-		ApplicationFeeAmount           *float64 `json:"application_fee_amount"`
-		AppFeePercentage               *float64 `json:"app_fee_percentage"`
-		ReferralDiscountPercentage     *float64 `json:"referral_discount_percentage"`
-		ReferralRewardAmount           *float64 `json:"referral_reward_amount"`
+		ClientCommissionPercentage     *float64         `json:"client_commission_percentage"`
+		FreelancerCommissionPercentage *float64         `json:"freelancer_commission_percentage"`
+		ApplicationFeeAmount           *decimal.Decimal `json:"application_fee_amount"`
+		AppFeePercentage               *float64         `json:"app_fee_percentage"`
+		ReferralDiscountPercentage     *float64         `json:"referral_discount_percentage"`
+		ReferralRewardAmount           *decimal.Decimal `json:"referral_reward_amount"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -618,10 +619,10 @@ func UpdateSystemSettings(c *gin.Context) {
 		"id":                               updated.ID,
 		"client_commission_percentage":     updated.ClientCommissionPercentage,
 		"freelancer_commission_percentage": updated.FreelancerCommissionPercentage,
-		"application_fee_amount":           float64(updated.ApplicationFeeAmount) / 100.0,
+		"application_fee_amount":           updated.ApplicationFeeAmount,
 		"app_fee_percentage":               updated.AppFeePercentage,
 		"referral_discount_percentage":     updated.ReferralDiscountPercentage,
-		"referral_reward_amount":           float64(updated.ReferralRewardAmount) / 100.0,
+		"referral_reward_amount":           updated.ReferralRewardAmount,
 	}})
 }
 

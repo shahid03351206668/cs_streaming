@@ -153,3 +153,29 @@ func GetClaims(c *gin.Context) (*Claims, bool) {
 	}
 	return nil, false
 }
+
+// TryGetUserID parses the Authorization header on public routes without aborting.
+// Returns the user ID string if a valid Bearer token is present, otherwise "".
+func TryGetUserID(c *gin.Context) string {
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		return ""
+	}
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		return ""
+	}
+	token, err := jwt.ParseWithClaims(parts[1], &Claims{}, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return GetJWTSecret(), nil
+	})
+	if err != nil || !token.Valid {
+		return ""
+	}
+	if claims, ok := token.Claims.(*Claims); ok && claims.Type == "access" {
+		return claims.UserID
+	}
+	return ""
+}

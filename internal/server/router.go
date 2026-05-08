@@ -158,6 +158,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		adminRoutes.GET("/jobs", controllers.AdminListJobsController)
 		adminRoutes.GET("/jobs/:id", controllers.AdminGetJobDetailController)
 		adminRoutes.PUT("/jobs/:id", controllers.AdminUpdateJobController)
+
 		adminRoutes.GET("/payouts", payoutService.AdminListPayouts)
 		adminRoutes.GET("/payments/audit-logs", paymentHandler.GetPaymentAuditLogs)
 
@@ -222,10 +223,10 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		jobRoutes.GET("/my", controllers.GetMyJobs)
 		jobRoutes.GET("/proposals/my", controllers.GetMyProposals)
 		jobRoutes.POST("/send-proposal", controllers.CreateProposal)
-
 		jobRoutes.GET("/:id/contract", controllers.GetContracts)
 		jobRoutes.GET("/:id/proposal", controllers.GetJobProposals)
 		jobRoutes.POST("/update/:id", controllers.UpdateJob)
+		jobRoutes.DELETE("/:id", jobPostHandler.DeleteJobPost)
 	}
 
 	router.GET("/api/v1/get/system-settings", userHandler.GetSystemSettings)
@@ -239,6 +240,8 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 
 			protected := userGroup.Use(middleware.AuthMiddleware())
 			{
+				protected.GET("/feed/preferences", userHandler.GetUserFeedPreferences)
+			protected.POST("/feed/preferences", userHandler.UpdateUserFeedPreferences)
 				protected.POST("/certifications", userHandler.AddCertification)
 				protected.PUT("/certifications", userHandler.UpdateCertification)
 				protected.DELETE("/certifications", userHandler.DeleteCertification)

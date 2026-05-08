@@ -3,6 +3,7 @@ package user
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -11,14 +12,15 @@ import (
 	"strings"
 	"time"
 
-	"tasksy/lib"
-	"tasksy/models"
-	"tasksy/pkg/logger"
-
 	"github.com/gin-gonic/gin"
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/webhook"
 	"go.uber.org/zap"
+	"gorm.io/datatypes"
+	"gorm.io/gorm"
+	"tasksy/lib"
+	"tasksy/models"
+	"tasksy/pkg/logger"
 )
 
 type Handler struct {
@@ -29,7 +31,170 @@ func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
 }
 
-// generateUserReferralCode generates a random referral code for new users
+// UpdateUserFeedPreferences saves the authenticated user's category preferences.
+// Body: {"categories": [{"id": "uuid", "name": "Design"}]}
+// Passing an empty array clears all preferences.
+func (h *Handler) UpdateUserFeedPreferences(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	var req struct {
+		Categories []models.CategoryItem `json:"categories" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	// Validate every supplied category ID actually exists.
+	if len(req.Categories) > 0 {
+		ids := make([]string, 0, len(req.Categories))
+		for _, cat := range req.Categories {
+			if cat.ID == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "each category must have a non-empty id"})
+				return
+			}
+			ids = append(ids, cat.ID)
+		}
+		var found int64
+		h.service.db.Model(&models.Category{}).Where("id IN ?", ids).Count(&found)
+		if int(found) != len(ids) {
+			c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "one or more category IDs are invalid"})
+			return
+		}
+	}
+
+	// Marshal the slice into JSONB.
+	catJSON, err := json.Marshal(req.Categories)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to encode categories"})
+		return
+	}
+
+	prefs := models.UserFeedPreferences{
+		UserID:     user.ID,
+		Categories: datatypes.JSON(catJSON),
+	}
+
+	// Upsert: create if not exists, update Categories if exists.
+	result := h.service.db.
+		Where(models.UserFeedPreferences{UserID: user.ID}).
+		Assign(models.UserFeedPreferences{Categories: prefs.Categories}).
+		FirstOrCreate(&prefs)
+
+	if result.Error != nil {
+		logger.Log.Error("failed to upsert feed preferences", zap.Error(result.Error))
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to save preferences"})
+		return
+	}
+
+	// If the row already existed, explicitly update categories.
+	if result.RowsAffected == 0 {
+		if err := h.service.db.Model(&prefs).Update("categories", prefs.Categories).Error; err != nil {
+			logger.Log.Error("failed to update feed preferences", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to update preferences"})
+			return
+		}
+	}
+
+	// Return the stored preferences hydrated with full category objects from DB.
+	categories, err := h.hydratePreferenceCategories(req.Categories)
+	if err != nil {
+		logger.Log.Warn("failed to hydrate categories after update", zap.Error(err))
+		categories = req.Categories
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data": gin.H{
+			"user_id":    user.ID,
+			"categories": categories,
+		},
+	})
+}
+
+// GetUserFeedPreferences returns the authenticated user's saved category preferences.
+// GET /api/v1/user/:id/feed/preferences
+func (h *Handler) GetUserFeedPreferences(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	var prefs models.UserFeedPreferences
+	err := h.service.db.Where("user_id = ?", user.ID).First(&prefs).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// No preferences saved yet — return empty list.
+			c.JSON(http.StatusOK, gin.H{
+				"message": "success",
+				"data": gin.H{
+					"user_id":    user.ID,
+					"categories": []models.CategoryItem{},
+				},
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	// Unmarshal stored JSON → []CategoryItem.
+	var stored []models.CategoryItem
+	if err := json.Unmarshal(prefs.Categories, &stored); err != nil || len(stored) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "success",
+			"data": gin.H{
+				"user_id":    user.ID,
+				"categories": []models.CategoryItem{},
+			},
+		})
+		return
+	}
+
+	// Re-fetch from DB so the response always reflects the current category name.
+	categories, err := h.hydratePreferenceCategories(stored)
+	if err != nil {
+		logger.Log.Warn("failed to hydrate preference categories", zap.Error(err))
+		categories = stored
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data": gin.H{
+			"user_id":    user.ID,
+			"categories": categories,
+		},
+	})
+}
+
+// hydratePreferenceCategories fetches the current name for each stored category
+// from the DB and returns a merged slice. Missing IDs are silently dropped.
+func (h *Handler) hydratePreferenceCategories(stored []models.CategoryItem) ([]models.CategoryItem, error) {
+	if len(stored) == 0 {
+		return []models.CategoryItem{}, nil
+	}
+
+	ids := make([]string, 0, len(stored))
+	for _, c := range stored {
+		ids = append(ids, c.ID)
+	}
+
+	var dbCats []models.Category
+	if err := h.service.db.Where("id IN ?", ids).Find(&dbCats).Error; err != nil {
+		return nil, err
+	}
+
+	nameByID := make(map[string]string, len(dbCats))
+	for _, cat := range dbCats {
+		nameByID[cat.ID] = cat.Name
+	}
+
+	result := make([]models.CategoryItem, 0, len(dbCats))
+	for _, id := range ids {
+		if name, ok := nameByID[id]; ok {
+			result = append(result, models.CategoryItem{ID: id, Name: name})
+		}
+	}
+	return result, nil
+}
+
 func generateUserReferralCode(length int) (string, error) {
 	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	result := make([]byte, length)

@@ -2,6 +2,7 @@ package job
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"slices"
@@ -15,6 +16,12 @@ import (
 	"github.com/hibiken/asynq"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+)
+
+var (
+	ErrJobNotFound          = errors.New("job not found")
+	ErrJobNotOwned          = errors.New("you are not the owner of this job")
+	ErrJobCannotBeDeleted   = errors.New("job cannot be deleted while it is in progress or has an active contract")
 )
 
 type TypeCategory struct {
@@ -73,7 +80,6 @@ type JobPostData struct {
 	OpenBudget  bool    `form:"open_budget"`
 	Address     string  `form:"address"`
 
-	// job location fields for job job post
 
 	City       string  `form:"city"`
 	State      string  `form:"state"`
@@ -82,6 +88,7 @@ type JobPostData struct {
 	PostalCode string  `form:"postalcode"`
 	Street     string  `form:"street"`
 	Country    string  `form:"country"`
+	DoorNo       string  `form:"door_no"`
 }
 
 type Service struct {
@@ -212,6 +219,7 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 		PostalCode: data.PostalCode,
 		Street:     data.Street,
 		Country:    data.Country,
+		DoorNo:     data.DoorNo,
 	}
 
 	if err := tx.Create(&jobLocation).Error; err != nil {
@@ -262,4 +270,71 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 	}
 
 	return &jobPost, nil
+}
+
+// DeleteJobPost removes a job post owned by userID, provided the job is not
+// in progress and has no active/disputed contract. Associated S3 media is
+// cleaned up before the database row is deleted.
+func (s *Service) DeleteJobPost(jobID string, userID string) error {
+	var job models.JobPost
+	if err := s.db.First(&job, "id = ?", jobID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrJobNotFound
+		}
+		return fmt.Errorf("fetching job: %w", err)
+	}
+
+	if job.CreatedByID != userID {
+		return ErrJobNotOwned
+	}
+
+	// Block deletion when the job itself is in an active work state.
+	blocked := map[string]bool{
+		models.JobStatusInProgress: true,
+	}
+	if blocked[job.Status] {
+		return ErrJobCannotBeDeleted
+	}
+
+	// Block deletion when a live contract exists for this job.
+	var activeContracts int64
+	s.db.Model(&models.Contract{}).
+		Where("job_post_id = ? AND status IN ?", jobID, []string{
+			models.ContractStatusActive,
+			models.ContractStatusPending,
+			models.ContractStatusDisputed,
+		}).
+		Count(&activeContracts)
+	if activeContracts > 0 {
+		return ErrJobCannotBeDeleted
+	}
+
+	// Collect S3 keys before deleting DB rows (CASCADE will remove JobMedia rows).
+	var media []models.JobMedia
+	s.db.Where("job_id = ?", jobID).Find(&media)
+
+	if err := s.db.Delete(&models.JobPost{}, "id = ?", jobID).Error; err != nil {
+		return fmt.Errorf("deleting job: %w", err)
+	}
+
+	// Best-effort S3 cleanup — log failures but don't fail the request.
+	for _, m := range media {
+		if m.ObjectKey != "" {
+			if err := s.s3Client.DeleteObject(m.ObjectKey); err != nil {
+				logger.Log.Warn("failed to delete job media from S3",
+					zap.String("job_id", jobID),
+					zap.String("key", m.ObjectKey),
+					zap.Error(err),
+				)
+			}
+		}
+	}
+
+	s.InvalidateJobFeedCache()
+
+	logger.Log.Info("job post deleted",
+		zap.String("job_id", jobID),
+		zap.String("user_id", userID),
+	)
+	return nil
 }

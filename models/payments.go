@@ -3,15 +3,18 @@ package models
 import (
 	"time"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/datatypes"
 )
 
 const (
-	PaymentStatusSuccess  = "succeeded"
-	PaymentStatusPending  = "pending"
-	PaymentStatusFailed   = "failed"
-	PaymentStatusRefunded = "refunded"
-	PaymentStatusDisputed = "disputed"
+	PaymentStatusCreated   = "created"
+	PaymentStatusHeld      = "held"
+	PaymentStatusDisputed  = "disputed"
+	PaymentStatusRefunded  = "refunded"
+	PaymentStatusSucceed   = "succeed"
+	PaymentStatusFailed    = "failed"
+	PaymentStatusCancelled = "cancelled"
 )
 
 const (
@@ -171,7 +174,6 @@ func (Bank) TableName() string {
 	return "banks"
 }
 
-// PaymentAuditLog tracks all payment-related events for auditing
 type PaymentAuditLog struct {
 	BaseModel
 
@@ -191,30 +193,32 @@ func (PaymentAuditLog) TableName() string {
 	return "payment_audit_logs"
 }
 
-type TestPaymentTransactions struct {
-	Amount          int64 `gorm:"not null" json:"amount"`
-	TransactionDate *time.Time
+type PaymentTransactionV2 struct {
+	BaseModel
 
-	UserID        string `gorm:"index;not null" json:"user_id"`
-	AgainstUserID string `gorm:"index;not null" json:"against_user_id"`
+	PostingDate *time.Time `gorm:"not null" json:"posting_date"`
 
-	User        User `gorm:"foreignKey:UserID" json:"user"`
-	AgainstUser User `gorm:"foreignKey:AgainstUserID" json:"against_user"`
+	ContractID string   `gorm:"not null" json:"contract_id"`
+	Contract   Contract `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"contract"`
 
-	ReferenceType string `json:"reference_type"`
-	ReferenceNo   string `json:"reference_no"`
+	StripeEventID string `gorm:"not null" json:"stripe_event_id"`
+	// PaymentIntentID string `gorm:"not null" json:"payment_intent_id"`
+
+	FromUserID string `gorm:"index;not null" json:"from_user_id"`
+	ToUserID   string `gorm:"index;not null" json:"to_user_id"`
+
+	FromUser User `gorm:"foreignKey:FromUserID;constraint:OnDelete:CASCADE" json:"from_user"`
+	ToUser   User `gorm:"foreignKey:ToUserID;constraint:OnDelete:CASCADE" json:"to_user"`
+
+	Amount decimal.Decimal `gorm:"default:0" json:"amount"`
+	AppFee decimal.Decimal `gorm:"default:0" json:"app_fee"`
+
+	ClientCommPct     float64         `gorm:"default:0" json:"client_comm_pct"`
+	FreelancerCommPct float64         `gorm:"default:0" json:"freelancer_comm_pct"`
+	DisountAmount     decimal.Decimal `gorm:"default:0" json:"discount_amount"`
+	Status            string          `gorm:"default:created"`
 }
 
-type TransactionType string
-
-const (
-	TransactionTypePayment              TransactionType = "payment"
-	TransactionTypeAppFee               TransactionType = "app_fee"
-	TransactionTypeClientCommission     TransactionType = "client_commission"
-	TransactionTypeFreelancerCommission TransactionType = "freelancer_commission"
-	TransactionTypeRefund               TransactionType = "refund"
-	TransactionTypePayout               TransactionType = "payout"
-	TransactionTypeDispute              TransactionType = "dispute"
-	TransactionTypeReferralReward       TransactionType = "referral_reward"
-	TransactionTypeReferralDiscount     TransactionType = "referral_discount"
-)
+func (PaymentTransactionV2) TableName() string {
+	return "payment_transaction"
+}

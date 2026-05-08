@@ -167,6 +167,23 @@ func (c *S3Client) DownloadFile(key, bucket, path string) error {
 	return nil
 }
 
+// DeleteObject removes a single object from the default bucket.
+// A missing key is treated as a no-op (idempotent).
+func (c *S3Client) DeleteObject(key string) error {
+	if c.client == nil {
+		return errors.New("S3 client is not initialized")
+	}
+	bucket := c.appConfig.AWS.BucketName
+	_, err := c.client.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		logger.Log.Error("S3 DeleteObject failed", zap.String("key", key), zap.Error(err))
+	}
+	return err
+}
+
 func (c *S3Client) UploadFileWithFixedKey(file io.Reader, key, contentType string) (string, error) {
 	targetBucket := c.appConfig.AWS.BucketName
 	region := c.appConfig.AWS.Region

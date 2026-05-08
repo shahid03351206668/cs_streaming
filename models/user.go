@@ -3,6 +3,7 @@ package models
 import (
 	"time"
 
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -19,18 +20,18 @@ type Role struct {
 
 type User struct {
 	BaseModel
-	FirstName             string `gorm:"column:first_name" json:"first_name"`
-	LastName              string `gorm:"column:last_name" json:"last_name"`
-	Email                 string `gorm:"column:email" json:"email"`
-	Password              string
-	Disabled              bool   `gorm:"default:false;column:disabled" json:"disabled"`
-	PhoneNumber           string `gorm:"column:phone_number" json:"phone_number"`
-	PhoneVerified         bool   `gorm:"default:false;column:phone_verified" json:"phone_verified"`
-	EmailVerified         bool   `gorm:"default:false;column:email_verified" json:"email_verified"`
-	ProfilePhoto          string `gorm:"size:255;column:profile_photo" json:"profile_photo"`
-	IdentityVerfied       bool   `gorm:"default:false;column:identity_verified" json:"identity_verified"`
-	GoogleID              string
-	Roles                 []Role `gorm:"many2many:user_roles;" json:"roles"`
+	FirstName              string `gorm:"column:first_name" json:"first_name"`
+	LastName               string `gorm:"column:last_name" json:"last_name"`
+	Email                  string `gorm:"column:email" json:"email"`
+	Password               string
+	Disabled               bool   `gorm:"default:false;column:disabled" json:"disabled"`
+	PhoneNumber            string `gorm:"column:phone_number" json:"phone_number"`
+	PhoneVerified          bool   `gorm:"default:false;column:phone_verified" json:"phone_verified"`
+	EmailVerified          bool   `gorm:"default:false;column:email_verified" json:"email_verified"`
+	ProfilePhoto           string `gorm:"size:255;column:profile_photo" json:"profile_photo"`
+	IdentityVerfied        bool   `gorm:"default:false;column:identity_verified" json:"identity_verified"`
+	GoogleID               string
+	Roles                  []Role `gorm:"many2many:user_roles;" json:"roles"`
 	ReferralRewardBalance  int64  `gorm:"default:0" json:"referral_reward_balance"`
 	WalletBalance          int64  `gorm:"default:0" json:"wallet_balance"`
 	StripeConnectAccountID string `gorm:"type:varchar(100)" json:"-"`
@@ -74,4 +75,20 @@ type Certification struct {
 
 func (Certification) TableName() string {
 	return "certifications"
+}
+
+// CategoryItem is a minimal {id, name} pair stored in feed preferences.
+type CategoryItem struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type UserFeedPreferences struct {
+	UserID     string         `gorm:"primaryKey" json:"user_id"`
+	User       User           `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
+	Categories datatypes.JSON `gorm:"type:jsonb;default:'[]'" json:"categories"`
+}
+
+func (UserFeedPreferences) TableName() string {
+	return "user_feed_preferences"
 }

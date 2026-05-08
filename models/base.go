@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -22,13 +23,13 @@ func (model *BaseModel) BeforeCreate(tx *gorm.DB) (err error) {
 }
 
 type SystemSettings struct {
-	ID                             string  `gorm:"type:string;primaryKey" json:"id"`
-	ClientCommissionPercentage     float64 `gorm:"type:decimal(5,2);default:0" json:"client_commission_percentage"`
-	FreelancerCommissionPercentage float64 `gorm:"type:decimal(5,2);default:0" json:"freelancer_commission_percentage"`
-	ApplicationFeeAmount           int64   `gorm:"default:0" json:"application_fee_amount"`
-	AppFeePercentage               float64 `gorm:"type:decimal(5,2);default:0" json:"app_fee_percentage"`
-	ReferralDiscountPercentage     float64 `gorm:"type:decimal(5,2);default:0" json:"referral_discount_percentage"`
-	ReferralRewardAmount           int64   `gorm:"default:0" json:"referral_reward_amount"`
+	ID                             string          `gorm:"type:string;primaryKey" json:"id"`
+	ClientCommissionPercentage     float64         `gorm:"type:decimal(5,2);default:0" json:"client_commission_percentage"`
+	FreelancerCommissionPercentage float64         `gorm:"type:decimal(5,2);default:0" json:"freelancer_commission_percentage"`
+	ApplicationFeeAmount           decimal.Decimal `gorm:"default:0" json:"application_fee_amount"`
+	AppFeePercentage               float64         `gorm:"type:decimal(5,2);default:0" json:"app_fee_percentage"`
+	ReferralDiscountPercentage     float64         `gorm:"type:decimal(5,2);default:0" json:"referral_discount_percentage"`
+	ReferralRewardAmount           decimal.Decimal `gorm:"default:0" json:"referral_reward_amount"`
 }
 
 func (SystemSettings) TableName() string {

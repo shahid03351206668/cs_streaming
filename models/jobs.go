@@ -2,7 +2,6 @@ package models
 
 import "time"
 
-
 const (
 	DisputeStatusOpen     = "open"
 	DisputeStatusResolved = "resolved"
@@ -91,6 +90,7 @@ type JobPostLocation struct {
 	City       string  `gorm:"not null" json:"city"`
 	State      string  `gorm:"not null" json:"state"`
 	Country    string  `gorm:"not null" json:"country"`
+	DoorNo     string  `gorm:"not null" json:"door_no"`
 }
 
 func (Category) TableName() string {
@@ -121,6 +121,7 @@ type Proposal struct {
 
 type ProposalAttachment struct {
 	BaseModel
+
 	ProposalID string   `gorm:"not null;index" json:"proposal_id"`
 	Proposal   Proposal `gorm:"foreignKey:ProposalID;constraint:OnDelete:CASCADE" json:"proposal,omitempty"`
 	URL        string   `gorm:"type:varchar(500);not null" json:"url"`
@@ -194,10 +195,10 @@ func (Review) TableName() string {
 
 type Dispute struct {
 	BaseModel
-	ContractID  string   `gorm:"not null;index" json:"contract_id"`
-	Contract    Contract `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"contract,omitempty"`
-	FiledByID   string   `gorm:"not null;index" json:"filed_by_id"`
-	FiledBy     User     `gorm:"foreignKey:FiledByID;constraint:OnDelete:CASCADE" json:"filed_by"`
+	ContractID string   `gorm:"not null;index" json:"contract_id"`
+	Contract   Contract `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"contract,omitempty"`
+	FiledByID  string   `gorm:"not null;index" json:"filed_by_id"`
+	FiledBy    User     `gorm:"foreignKey:FiledByID;constraint:OnDelete:CASCADE" json:"filed_by"`
 	// FiledByRole stores whether the filer is "client" or "freelancer" on the contract
 	FiledByRole string `gorm:"type:varchar(20);not null;default:'client'" json:"filed_by_role"`
 	Reason      string `gorm:"type:varchar(255);not null" json:"reason"`

@@ -8,15 +8,14 @@ import (
 	"strconv"
 	"time"
 
-	"tasksy/db"
-	"tasksy/models"
-	"tasksy/pkg/logger"
-
 	"github.com/gin-gonic/gin"
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/webhook"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"tasksy/db"
+	"tasksy/models"
+	"tasksy/pkg/logger"
 )
 
 var CACHED_SYSTEM_SETTINGS *models.SystemSettings
@@ -48,7 +47,6 @@ func (s *PaymentHandler) HandlePaymentIntents(c *gin.Context) {
 	endpointSecret := s.service.config.WebhookSecret
 	signature := c.GetHeader("Stripe-Signature")
 	event, err := webhook.ConstructEvent(payload, signature, endpointSecret)
-
 	if err != nil {
 		logger.Log.Error("webhook signature verification failed", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})

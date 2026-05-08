@@ -127,6 +127,8 @@ func ApplyMigrations() error {
 		&models.Dispute{},
 		&models.PaymentAuditLog{},
 
+		&models.UserFeedPreferences{},
+
 		// Double-entry ledger
 		&models.Account{},
 		&models.LedgerTransaction{},
