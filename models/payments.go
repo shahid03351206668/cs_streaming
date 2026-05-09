@@ -9,9 +9,11 @@ import (
 
 const (
 	PaymentStatusCreated   = "created"
+	PaymentStatusPending   = "pending"
 	PaymentStatusHeld      = "held"
 	PaymentStatusDisputed  = "disputed"
 	PaymentStatusRefunded  = "refunded"
+	PaymentStatusSuccess   = "succeeded"
 	PaymentStatusSucceed   = "succeed"
 	PaymentStatusFailed    = "failed"
 	PaymentStatusCancelled = "cancelled"

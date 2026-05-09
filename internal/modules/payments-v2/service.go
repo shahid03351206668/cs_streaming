@@ -18,7 +18,7 @@ import (
 )
 
 type SystemSetting struct {
-	AppFee               decimal.Decimal
+	AppFee               int64
 	ClientCommission     float64
 	FreelancerCommission float64
 }
@@ -101,7 +101,7 @@ func (s *Service) handleChargeSucceeded(c *gin.Context, event *stripe.Event) {
 			FromUserID:        contract.ClientID,
 			ToUserID:          contract.FreelancerID,
 			StripeEventID:     event.ID,
-			AppFee:            decimal.Decimal(appFees),
+			AppFee:            decimal.NewFromInt(appFees),
 			ClientCommPct:     clientComission,
 			FreelancerCommPct: freelancerComission,
 			Status:            models.PaymentStatusHeld,
