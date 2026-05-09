@@ -12,15 +12,16 @@ import (
 	"strings"
 	"time"
 
+	"tasksy/lib"
+	"tasksy/models"
+	"tasksy/pkg/logger"
+
 	"github.com/gin-gonic/gin"
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/webhook"
 	"go.uber.org/zap"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
-	"tasksy/lib"
-	"tasksy/models"
-	"tasksy/pkg/logger"
 )
 
 type Handler struct {
@@ -244,8 +245,6 @@ func (h *Handler) GetSystemSettings(c *gin.Context) {
 func (h *Handler) GetUserProfile(c *gin.Context) {
 	userID := c.Param("id")
 
-	// ✅ removed fmt.Println debug logs
-
 	res, err := h.service.GetUserProfile(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -255,14 +254,12 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 		return
 	}
 
-	// ✅ moved portfolio + certification DB queries into the service ideally,
-	// but at minimum scoped here cleanly
 	var portfolios []models.Portfolio
 	if err := h.service.db.
 		Preload("Media", "entity_type = ?", "portfolios").
 		Where("user_id = ?", userID).
 		Find(&portfolios).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{ // ✅ was StatusOK on error
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "error",
 			"step":    "portfolio",
 			"error":   err.Error(),

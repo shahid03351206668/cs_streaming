@@ -30,7 +30,6 @@ func (h *Handler) HandleStripeWebhook(c *gin.Context) {
 	signature := c.GetHeader("Stripe-Signature")
 
 	event, err := webhook.ConstructEvent(payload, signature, webhookSecret)
-
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
@@ -39,6 +38,7 @@ func (h *Handler) HandleStripeWebhook(c *gin.Context) {
 		return
 	}
 
+	fmt.Println(event)
 	switch event.Type {
 	case "charge.succeeded", "charge.updated":
 		h.service.handleChargeSucceeded(c, &event)

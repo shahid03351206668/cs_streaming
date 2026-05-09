@@ -90,7 +90,7 @@ type JobPostLocation struct {
 	City       string  `gorm:"not null" json:"city"`
 	State      string  `gorm:"not null" json:"state"`
 	Country    string  `gorm:"not null" json:"country"`
-	DoorNo     string  `gorm:"not null" json:"door_no"`
+	DoorNo     string  `json:"door_no"`
 }
 
 func (Category) TableName() string {

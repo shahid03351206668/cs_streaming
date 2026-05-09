@@ -46,6 +46,9 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	})
 
 	router.Use(middleware.LoggerMiddleware())
+	testingRoutes := router.Group("/test")
+	testingRoutes.POST("webhooks/stripe/payment")
+
 	router.GET("/ping", func(c *gin.Context) {
 		settings, _ := payments.GetSystemSettings()
 		c.JSON(200, gin.H{"message": "pong", "settings": settings})
@@ -230,6 +233,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	}
 
 	router.GET("/api/v1/get/system-settings", userHandler.GetSystemSettings)
+	
 	publicRoutes := router.Group("/api/v1")
 	{
 		userGroup := publicRoutes.Group("/user/:id")
@@ -241,7 +245,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 			protected := userGroup.Use(middleware.AuthMiddleware())
 			{
 				protected.GET("/feed/preferences", userHandler.GetUserFeedPreferences)
-			protected.POST("/feed/preferences", userHandler.UpdateUserFeedPreferences)
+				protected.POST("/feed/preferences", userHandler.UpdateUserFeedPreferences)
 				protected.POST("/certifications", userHandler.AddCertification)
 				protected.PUT("/certifications", userHandler.UpdateCertification)
 				protected.DELETE("/certifications", userHandler.DeleteCertification)
