@@ -27,6 +27,10 @@ type Service struct {
 	db *gorm.DB
 }
 
+func NewService(db *gorm.DB) *Service {
+	return &Service{db: db}
+}
+
 func (s *Service) GetSystemSettings() (*SystemSetting, error) {
 	var data models.SystemSettings
 	if err := s.db.First(&data).Error; err != nil {
@@ -40,31 +44,17 @@ func (s *Service) GetSystemSettings() (*SystemSetting, error) {
 	}, nil
 }
 
-type GLEntry struct {
-	UserID string      `gorm:"not null;index" json:"user_id"`
-	User   models.User `gorm:"foreignKey:UserID" json:"user,omitempty"`
-
-	PostingDate *time.Time      `gorm:"not null;index" json:"posting_date"`
-	Credit      decimal.Decimal `gorm:"not null" json:"credit"`
-	Debit       decimal.Decimal `gorm:"not null" json:"debit"`
-
-	ReferenceType string `json:"reference_type"`
-	ReferenceID   string `json:"reference_id"`
-}
-
-func (s *Service) handleChargeSucceeded(c *gin.Context, event *stripe.Event) {
+func (s *Service) handleChargeSucceeded(c *gin.Context, event *stripe.Event) error {
 	var charge stripe.Charge
 
 	tx := s.db.Begin()
 	if tx.Error != nil {
 		fmt.Println(tx.Error.Error())
-		// fmt.Printf("failed to begin transaction: %w", tx.Error)
-		return
+		return tx.Error
 	}
 
 	defer func() {
 		if r := recover(); r != nil {
-			// logger.Log.Log(fmt.Sprintf("error on handle stripe succeed transaction %v\n", r))
 			tx.Rollback()
 		}
 	}()
@@ -73,42 +63,71 @@ func (s *Service) handleChargeSucceeded(c *gin.Context, event *stripe.Event) {
 
 	if err := json.Unmarshal(event.Data.Raw, &charge); err != nil {
 		fmt.Println(err.Error())
-		// logger.Log.Error(err.Error(), zap.String("stripe handle charge succeed event"))
-		return
+		return err
 	}
 
 	proposalID := charge.Metadata["proposal_id"]
 
-	if proposalID != "" {
-		return
+	if proposalID == "" {
+		return fmt.Errorf("proposal id is not found in the meta data")
 	}
 
 	var contract models.Contract
-
 	if err := s.db.Where("proposal_id = ?", proposalID).First(&contract).Error; err != nil {
-		return
+		fmt.Println("error in proposal id querys")
+		return err
 	}
 
+	amount := decimal.NewFromInt(charge.Amount / 100)
 	appFees := settings.AppFee
+
 	clientComission := settings.ClientCommission
 	freelancerComission := settings.FreelancerCommission
 
-	amount := decimal.NewFromInt(charge.Amount / 100)
+	FreelancerComissionAmount := amount.Div(decimal.NewFromFloat(100)).Mul(decimal.NewFromFloat(settings.FreelancerCommission))
+	clientComissionAmount := amount.Div(decimal.NewFromInt(100)).Mul(decimal.NewFromFloat(settings.ClientCommission))
+
+	totalCharges := FreelancerComissionAmount.Add(clientComissionAmount).Add(decimal.NewFromInt(appFees))
+
+	netAmount := amount.Sub(totalCharges)
 
 	if charge.Status == "succeeded" {
 		transaction := models.PaymentTransactionV2{
+			PostingDate:       time.Now(),
 			Amount:            amount,
 			FromUserID:        contract.ClientID,
 			ToUserID:          contract.FreelancerID,
 			StripeEventID:     event.ID,
 			AppFee:            decimal.NewFromInt(appFees),
+			NetAmount:         netAmount,
 			ClientCommPct:     clientComission,
 			FreelancerCommPct: freelancerComission,
 			Status:            models.PaymentStatusHeld,
 		}
 
 		s.ApplyDiscountOnTransaction(&transaction)
+
+		if err := tx.Create(&transaction).Error; err != nil {
+			return fmt.Errorf("failed to create transaction: %w", err)
+		}
+
+		escrow := models.EscrowTransaction{
+			UserID:        contract.FreelancerID,
+			Amount:        netAmount,
+			TransactionID: transaction.ID,
+			Status:        models.EscrowStatusHeld,
+			ContractID:    contract.ID,
+		}
+
+		if err := tx.Create(&escrow).Error; err != nil {
+			return fmt.Errorf("failed to create escrow record: %w", err)
+		}
+
+		if err := tx.Commit().Error; err != nil {
+			return fmt.Errorf("failed to commit transaction: %w", err)
+		}
 	}
+	return nil
 }
 
 func (s *Service) ApplyDiscountOnTransaction(transaction *models.PaymentTransactionV2) {

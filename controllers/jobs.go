@@ -24,7 +24,6 @@ import (
 const ALLOWED_JOB_POST_MEDIA int = 6
 const MEDIA_FILE_PATH string = "media/"
 
-
 func getMediaType(file *multipart.FileHeader) string {
 	ext := strings.ToLower(filepath.Ext(file.Filename))
 

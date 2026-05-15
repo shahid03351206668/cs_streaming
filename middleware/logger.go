@@ -21,6 +21,7 @@ func LoggerMiddleware() gin.HandlerFunc {
 		status := c.Writer.Status()
 		method := c.Request.Method
 		responseSize := c.Writer.Size()
+
 		if responseSize < 0 {
 			responseSize = 0
 		}
@@ -46,7 +47,7 @@ func LoggerMiddleware() gin.HandlerFunc {
 		case status >= 400:
 			logger.Log.Warn("client error", fields...)
 		default:
-			logger.Log.Info("request completed", fields...)
+			// logger.Log.Info("request completed", fields...)
 		}
 	}
 }

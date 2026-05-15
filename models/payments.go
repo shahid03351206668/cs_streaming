@@ -198,13 +198,12 @@ func (PaymentAuditLog) TableName() string {
 type PaymentTransactionV2 struct {
 	BaseModel
 
-	PostingDate *time.Time `gorm:"not null" json:"posting_date"`
+	PostingDate time.Time `json:"posting_date"`
 
 	ContractID string   `gorm:"not null" json:"contract_id"`
 	Contract   Contract `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"contract"`
 
 	StripeEventID string `gorm:"not null" json:"stripe_event_id"`
-	// PaymentIntentID string `gorm:"not null" json:"payment_intent_id"`
 
 	FromUserID string `gorm:"index;not null" json:"from_user_id"`
 	ToUserID   string `gorm:"index;not null" json:"to_user_id"`
@@ -212,15 +211,41 @@ type PaymentTransactionV2 struct {
 	FromUser User `gorm:"foreignKey:FromUserID;constraint:OnDelete:CASCADE" json:"from_user"`
 	ToUser   User `gorm:"foreignKey:ToUserID;constraint:OnDelete:CASCADE" json:"to_user"`
 
-	Amount decimal.Decimal `gorm:"default:0" json:"amount"`
-	AppFee decimal.Decimal `gorm:"default:0" json:"app_fee"`
+	Amount    decimal.Decimal `gorm:"default:0" json:"amount"`
+	AppFee    decimal.Decimal `gorm:"default:0" json:"app_fee"`
+	NetAmount decimal.Decimal `gorm:"default:0" json:"net_amount"`
 
-	ClientCommPct     float64         `gorm:"default:0" json:"client_comm_pct"`
-	FreelancerCommPct float64         `gorm:"default:0" json:"freelancer_comm_pct"`
-	DisountAmount     decimal.Decimal `gorm:"default:0" json:"discount_amount"`
-	Status            string          `gorm:"default:created"`
+	ClientCommPct     float64 `gorm:"default:0" json:"client_comm_pct"`
+	FreelancerCommPct float64 `gorm:"default:0" json:"freelancer_comm_pct"`
+
+	DisountAmount decimal.Decimal `gorm:"default:0" json:"discount_amount"`
+	Status        string          `gorm:"default:created"`
 }
 
 func (PaymentTransactionV2) TableName() string {
-	return "payment_transaction"
+	return "payment_transactionv2"
+}
+
+type EscrowStatus string
+
+const (
+	EscrowStatusHeld     EscrowStatus = "held"
+	EscrowStatusReleased EscrowStatus = "released"
+	EscrowStatusRefunded EscrowStatus = "refunded"
+)
+
+type EscrowTransaction struct {
+	BaseModel
+
+	UserID string `gorm:"index;not null" json:"user_id"`
+	User   User   `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" `
+
+	ContractID string
+	Contract   Contract `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE"`
+
+	TransactionID string
+
+	Amount     decimal.Decimal
+	Status     EscrowStatus
+	ReleasedAt *time.Time
 }

@@ -101,7 +101,8 @@ func ApplyMigrations() error {
 		&models.Role{},
 
 		&models.Category{},
-
+		&models.PaymentTransactionV2{},
+		&models.EscrowTransaction{},
 		&models.JobPostVideo{},
 		&models.JobMedia{},
 		&models.Proposal{},

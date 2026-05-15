@@ -8,6 +8,7 @@ import (
 	"tasksy/internal/modules/job"
 	"tasksy/internal/modules/notifications"
 	"tasksy/internal/modules/payments"
+	paymentsv2 "tasksy/internal/modules/payments-v2"
 	"tasksy/internal/modules/promotions"
 	"tasksy/internal/modules/user"
 	"tasksy/middleware"
@@ -47,7 +48,9 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 
 	router.Use(middleware.LoggerMiddleware())
 	testingRoutes := router.Group("/test")
-	testingRoutes.POST("webhooks/stripe/payment")
+
+	testingHandler := paymentsv2.NewHandler(appConfig, paymentsv2.NewService(db))
+	testingRoutes.POST("webhooks/stripe/payment", testingHandler.HandleStripeWebhook)
 
 	router.GET("/ping", func(c *gin.Context) {
 		settings, _ := payments.GetSystemSettings()
@@ -233,7 +236,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	}
 
 	router.GET("/api/v1/get/system-settings", userHandler.GetSystemSettings)
-	
+
 	publicRoutes := router.Group("/api/v1")
 	{
 		userGroup := publicRoutes.Group("/user/:id")
