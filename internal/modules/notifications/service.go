@@ -34,6 +34,7 @@ type UpsertPreferencesInput struct {
 	CategoryIDs            *[]string
 }
 
+
 func (s *Service) defaultPreference(userID string) models.NotificationPreference {
 	return models.NotificationPreference{
 		UserID:                 userID,

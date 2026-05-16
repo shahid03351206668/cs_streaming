@@ -76,6 +76,12 @@ func (PaymentTransaction) TableName() string {
 	return "payment_transaction"
 }
 
+const (
+	PayoutPending = "pending"
+	PayoutSuccess = "success"
+	PayoutFailed  = "failed"
+)
+
 type PayoutTransaction struct {
 	BaseModel
 
@@ -249,3 +255,30 @@ type EscrowTransaction struct {
 	Status     EscrowStatus
 	ReleasedAt *time.Time
 }
+
+type UserAccountDetails struct {
+	UserID      string `gorm:"index;not null" json:"user_id"`
+	User        User   `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user"`
+	AccountNo   string `gorm:"not null" json:"account_no"`
+	CountryCode string `gorm:"size:2" json:"country_code"`
+	Currency    string `gorm:"size:3;not null" json:"currency"`
+}
+
+
+
+// type UserBankAccount struct {
+// 	BaseModel
+
+// 	UserID                 string `gorm:"index;not null" json:"user_id"`
+// 	User                   User   `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"-"`
+// 	StripeConnectAccountID string `gorm:"type:varchar(100);not null" json:"stripe_connect_account_id"`
+// 	StripeBankAccountID    string `gorm:"type:varchar(100);not null" json:"stripe_bank_account_id"`
+// 	AccountHolderName      string `gorm:"type:varchar(255);not null" json:"account_holder_name"`
+// 	SortCode               string `gorm:"type:varchar(10)" json:"sort_code"`
+// 	AccountNumber          string `gorm:"type:varchar(20)" json:"account_number"`
+// 	AccountNumberLast4     string `gorm:"type:varchar(4)" json:"account_number_last4"`
+// 	BankName               string `gorm:"type:varchar(100)" json:"bank_name"`
+// 	BankLogoURL            string `gorm:"type:varchar(500)" json:"bank_logo_url"`
+// 	Currency               string `gorm:"type:varchar(3);default:'gbp'" json:"currency"`
+// 	IsDefault              bool   `gorm:"default:false" json:"is_default"`
+// }

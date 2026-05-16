@@ -48,6 +48,34 @@ func (s *PayoutService) GetWalletBalance(c *gin.Context) {
 	})
 }
 
+func (s *PayoutService) CreatePayout(c *gin.Context) {
+	// type RequestData struct {
+	// 	Amount float64
+	// }
+	// description :=  "Payout request create by user"
+
+	// payload := map[string]any{
+	// 	"from": map[string]any{
+	// 		"financial_account": "",
+	// 		"currency":          "gpb",
+	// 	},
+	// 	"to": map[string]any{
+	// 		"recipient":   "recipientAccountID",
+	// 		"destination": "payoutMethodID",
+	// 		"currency":    "gpb",
+	// 	},
+	// 	"amount": map[string]any{
+	// 		"value":    "amount",
+	// 		"currency": "gbp",
+	// 	},
+	// 	"description": description,
+	// }
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+	})
+
+}
 func (s *PayoutService) RequestPayout(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 	stripe.Key = s.config.SecretKey
