@@ -154,6 +154,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	// Admin: users, jobs, settings, banks
 	router.GET("/api/v1/admin/settings", controllers.GetSystemSettings)
 	adminRoutes := router.Group("/api/v1/admin")
+	// admin routes securuty middleware removed temporarly
 	// adminRoutes.Use(middleware.AuthMiddleware())
 	{
 		adminRoutes.GET("/users", controllers.AdminUserListController)
