@@ -1,7 +1,7 @@
 package job
 
 import (
-	"encoding/json"
+	// "encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -9,8 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"tasksy/db"
-	"tasksy/lib"
+	// "tasksy/db"
+	// "tasksy/lib"
 	"tasksy/models"
 	"tasksy/pkg/logger"
 
@@ -66,25 +66,28 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 	}
 
 	var preferredCategoryIDs []string
-	if category == "" {
-		if userID := lib.TryGetUserID(c); userID != "" {
-			var prefs models.UserFeedPreferences
-			if err := db.DB.Where("user_id = ?", userID).First(&prefs).Error; err == nil {
-				var cats []models.CategoryItem
-				if json.Unmarshal(prefs.Categories, &cats) == nil {
-					for _, cat := range cats {
-						if cat.ID != "" {
-							preferredCategoryIDs = append(preferredCategoryIDs, cat.ID)
-						}
-					}
-				}
-			}
-		}
-	}
+	// if category == "" {
+	// 	if userID := lib.TryGetUserID(c); userID != "" {
+	// 		var prefs models.UserFeedPreferences
+	// 		if err := db.DB.Where("user_id = ?", userID).First(&prefs).Error; err == nil {
+	// 			var cats []models.CategoryItem
+	// 			if json.Unmarshal(prefs.Categories, &cats) == nil {
+	// 				for _, cat := range cats {
+	// 					if cat.ID != "" {
+	// 						preferredCategoryIDs = append(preferredCategoryIDs, cat.ID)
+	// 					}
+	// 				}
+	// 			}
+	// 		}
+	// 	}
+	// }
 
 	var CategoryIds []string
-	for _, id := range strings.Split(category, ",") {
-		CategoryIds = append(CategoryIds, id)
+
+	splittedCats := strings.Split(category, ",")
+	for _, id := range splittedCats {
+		val := strings.TrimSpace(id)
+		CategoryIds = append(CategoryIds, val)
 	}
 
 	params := JobFeedParams{

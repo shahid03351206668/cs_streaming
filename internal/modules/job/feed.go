@@ -72,7 +72,6 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 			Where(haversineWhere+" <= ?", lat, lng, lat, params.RadiusKM)
 	}
 
-	// Explicit category filter takes priority; fall back to user preferences.
 	if len(params.Category) > 0 {
 		jobQuery = jobQuery.Where("job_posts.category_id IN ?", params.Category)
 	} else if len(params.PreferredCategoryIDs) > 0 {
@@ -89,8 +88,6 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 	}
 
 	offset := (params.Page - 1) * params.Limit
-
-	// We need a struct to scan the extra distance column when location is used
 	type jobWithDistance struct {
 		models.JobPost
 		DistanceKM *float64 `gorm:"column:distance_km" json:"distance_km,omitempty"`
