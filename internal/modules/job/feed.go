@@ -9,7 +9,7 @@ import (
 
 // JobFeedParams holds all query parameters for the job feed
 type JobFeedParams struct {
-	Category    string
+	Category    []string
 	SearchQuery string
 	Page        int
 	Limit       int
@@ -50,7 +50,6 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 	}
 
 	var total int64
-
 	useLocation := params.Latitude != nil && params.Longitude != nil
 	jobQuery := s.db.Model(&models.JobPost{}).Where("job_posts.status = ?", models.JobStatusOpen)
 
@@ -74,8 +73,8 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 	}
 
 	// Explicit category filter takes priority; fall back to user preferences.
-	if params.Category != "" {
-		jobQuery = jobQuery.Where("job_posts.category_id = ?", params.Category)
+	if len(params.Category) > 0 {
+		jobQuery = jobQuery.Where("job_posts.category_id IN ?", params.Category)
 	} else if len(params.PreferredCategoryIDs) > 0 {
 		jobQuery = jobQuery.Where("job_posts.category_id IN ?", params.PreferredCategoryIDs)
 	}
@@ -179,7 +178,6 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 			UpdatedAt:   post.UpdatedAt,
 			DistanceKM:  row.DistanceKM,
 		}
-
 
 		jobsArray = append(jobsArray, job)
 	}

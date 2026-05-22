@@ -5,14 +5,16 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
-	"go.uber.org/zap"
 	"tasksy/db"
 	"tasksy/lib"
 	"tasksy/models"
 	"tasksy/pkg/logger"
+
+	"go.uber.org/zap"
 )
 
 // search radius in Kilometers
@@ -33,7 +35,6 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 	category := c.Query("category")
 	searchQuery := c.Query("query")
 
-	// Parse optional location parameters for radius-based filtering
 	var lat, lng *float64
 	if latStr := c.Query("lat"); latStr != "" {
 		if v, err := strconv.ParseFloat(latStr, 64); err == nil {
@@ -46,7 +47,6 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 		}
 	}
 
-	// Both lat and long must be provided together
 	if (lat != nil && lng == nil) || (lat == nil && lng != nil) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "both 'lat' and 'long' query parameters are required for location filtering",
@@ -65,8 +65,6 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 		limit = MAX_JOBS_PER_PAGE
 	}
 
-	// Load feed preferences when the user sends a valid JWT but no explicit
-	// category filter — gives a personalised feed without breaking public access.
 	var preferredCategoryIDs []string
 	if category == "" {
 		if userID := lib.TryGetUserID(c); userID != "" {
@@ -84,8 +82,13 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 		}
 	}
 
+	var CategoryIds []string
+	for _, id := range strings.Split(category, ",") {
+		CategoryIds = append(CategoryIds, id)
+	}
+
 	params := JobFeedParams{
-		Category:             category,
+		Category:             CategoryIds,
 		SearchQuery:          searchQuery,
 		Page:                 page,
 		Limit:                limit,

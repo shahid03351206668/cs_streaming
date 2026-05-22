@@ -29,8 +29,9 @@ const (
 
 type Category struct {
 	BaseModel
-	Name    string `gorm:"type:varchar(100);uniqueIndex;not null" json:"name"`
-	Disable bool   `gorm:"default:false" json:"disable"`
+	Name      string `gorm:"type:varchar(100);uniqueIndex;not null" json:"name"`
+	Disable   bool   `gorm:"default:false" json:"disable"`
+	SortOrder int    `gorm:"default:0;index" json:"sort_order"`
 }
 
 type JobPost struct {

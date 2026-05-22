@@ -10,21 +10,24 @@ import (
 
 func GetCategories(c *gin.Context) {
 	type Response struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		SortOrder int    `json:"sort_order"`
 	}
 
 	var results []Response
 
 	err := db.DB.
 		Model(&models.Category{}).
-		Select("id", "name").
+		Select("id", "name", "sort_order").
 		Where("disable = ?", false).
+		Order("sort_order ASC, created_at ASC").
 		Scan(&results).Error
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "error fetching categories",
+			"error":   err.Error(),
 		})
 		return
 	}
@@ -44,7 +47,7 @@ func CreateCategory(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "error fucked",
+			"message": "error",
 			"error":   err.Error(),
 		})
 		return
@@ -59,13 +62,15 @@ func CreateCategory(c *gin.Context) {
 		return
 	}
 
-	var category = models.Category{Name: body.Name}
-	results := DB.Create(&category)
+	// Place new category at the end of the sort order.
+	var maxOrder int
+	DB.Model(&models.Category{}).Select("COALESCE(MAX(sort_order), -1)").Scan(&maxOrder)
 
-	if results.Error != nil {
+	category := models.Category{Name: body.Name, SortOrder: maxOrder + 1}
+	if err := DB.Create(&category).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
-			"error":   results.Error.Error(),
+			"error":   err.Error(),
 		})
 		return
 	}
@@ -78,21 +83,13 @@ func CreateCategory(c *gin.Context) {
 
 func GetCategoryByID(c *gin.Context) {
 	id := c.Param("id")
-
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "error",
-			"error":   "id is required",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "id is required"})
 		return
 	}
 
-	DB := db.DB
-
 	var category models.Category
-	err := DB.Where("id = ? ", id).First(&category).Error
-
-	if err != nil {
+	if err := db.DB.Where("id = ?", id).First(&category).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "error fetching category",
 			"error":   err.Error(),
@@ -100,74 +97,96 @@ func GetCategoryByID(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"data":    category,
-		"message": "success",
-	})
-
+	c.JSON(http.StatusOK, gin.H{"data": category, "message": "success"})
 }
 
 func UpdateCategory(c *gin.Context) {
 	id := c.Param("id")
-
-
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "error",
-			"error":   "id is required",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "id is required"})
 		return
 	}
 
 	var body struct {
 		Name    string `binding:"required" json:"name"`
 		Disable bool   `json:"disable"`
-		ID      string `json:"id"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "error",
-			"error":   err.Error(),
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
-
-	DB := db.DB
 
 	var category models.Category
-	err := DB.Model(&category).Where("id = ?", id).Updates(&body).Error
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": "error",
-			"error":   err.Error(),
-		})
+	if err := db.DB.Model(&category).Where("id = ?", id).Updates(&body).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "success",
-		"data":    category,
-	})
-
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": category})
 }
+
 func DeleteCategory(c *gin.Context) {
 	id := c.Param("id")
-
 	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "error",
-			"error":   "id is required",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "id is required"})
 		return
 	}
 
-	DB := db.DB
+	db.DB.Where("id = ?", id).Delete(&models.Category{})
+	c.JSON(http.StatusOK, gin.H{"message": "success"})
+}
 
-	DB.Where("id = ?", id).Delete(&models.Category{})
+// ReorderCategories accepts an ordered list of category IDs and writes their
+// sort_order positions in a single transaction.
+// PUT /api/v1/category/reorder
+// Body: {"ids": ["uuid1", "uuid2", "uuid3"]}
+func ReorderCategories(c *gin.Context) {
+	var body struct {
+		IDs []string `json:"ids" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "success",
-	})
+	tx := db.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	for i, id := range body.IDs {
+		if err := tx.Model(&models.Category{}).
+			Where("id = ?", id).
+			Update("sort_order", i).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"message": "error",
+				"error":   "failed to update sort order: " + err.Error(),
+			})
+			return
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	// Return the freshly sorted list so the client stays in sync.
+	type Response struct {
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		SortOrder int    `json:"sort_order"`
+	}
+	var results []Response
+	db.DB.Model(&models.Category{}).
+		Select("id", "name", "sort_order").
+		Where("disable = ?", false).
+		Order("sort_order ASC, created_at ASC").
+		Scan(&results)
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": results})
 }
