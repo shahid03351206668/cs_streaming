@@ -195,6 +195,9 @@ export const updateCategory = (id: string, data: { name: string }) =>
 export const deleteCategory = (id: string) =>
   api.delete(`/api/v1/category/delete/${id}`);
 
+export const reorderCategories = (ids: string[]) =>
+  api.put("/api/v1/category/reorder", { ids });
+
 // Escrow
 export const depositEscrow = (contractId: string) =>
   api.post(`/api/v1/escrow/contracts/${contractId}/deposit`);
