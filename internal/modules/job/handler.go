@@ -85,9 +85,14 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 	var CategoryIds []string
 
 	splittedCats := strings.Split(category, ",")
-	for _, id := range splittedCats {
-		val := strings.TrimSpace(id)
-		CategoryIds = append(CategoryIds, val)
+	if len(splittedCats) > 0 {
+		for _, id := range splittedCats {
+			if id != "" {
+				val := strings.TrimSpace(id)
+				CategoryIds = append(CategoryIds, val)
+			}
+		}
+
 	}
 
 	params := JobFeedParams{
