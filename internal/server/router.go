@@ -66,8 +66,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	ledgerService.EnsureSystemAccounts()
 	ledgerHandler := payments.NewLedgerHandler(ledgerService, db)
 
-	paymentService := payments.NewService(&appConfig.Stripe, db, ledgerService)
-	paymentHandler := payments.NewHandler(paymentService)
 	payoutService := payments.NewPayoutService(db, &appConfig.Stripe, ledgerService)
 
 	promotionService := promotions.NewService(db)
@@ -76,28 +74,35 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	disputeService := dispute.NewService(db, notifService, s3Client)
 	disputeHandler := dispute.NewHandler(disputeService)
 	// http://localhost:5679/api/v1/webhooks/stripe/payment
-	router.POST("/api/v1/webhooks/stripe/payment", paymentHandler.HandlePaymentIntents)
+
+	paymentService := paymentsv2.NewService(db)
+	paymentHandler := paymentsv2.NewHandler(appConfig, paymentService)
+
+	router.POST("/api/v1/webhooks/stripe/payment", paymentHandler.HandleStripeWebhook)
 
 	paymentRoutes := router.Group("/api/v1/payments")
+	paymentRoutes.Use(middleware.AuthMiddleware())
 	{
-		paymentRoutes.GET("/transactions", paymentHandler.GetPaymentTransactions)
-		paymentRoutes.GET("/transactions/:id", paymentHandler.GetPaymentTransactionByID)
+		paymentRoutes.POST("/add/user-account", paymentHandler.AddUserPaymentAccount)
+		paymentRoutes.GET("/add/user-account", paymentHandler.GetUserAccount)
+		paymentRoutes.POST("/payout/create", paymentHandler.HandleCreatePayout)
+		paymentRoutes.GET("/wallet", paymentHandler.HandleUserWallet)
 	}
 
 	// Authenticated payment routes
-	paymentProtected := router.Group("/api/v1/payments")
-	paymentProtected.Use(middleware.AuthMiddleware())
-	{
-		paymentProtected.GET("/transactions/my", paymentHandler.GetUserPaymentTransactions)
-	}
+	// paymentProtected := router.Group("/api/v1/payments")
+	// paymentProtected.Use(middleware.AuthMiddleware())
+	// {
+	// 	// paymentProtected.GET("/transactions/my", paymentHandler.GetUserPaymentTransactions)
+	// }
 
 	// Wallet / withdrawal routes (authenticated)
 	walletRoutes := router.Group("/api/v1/wallet")
 	walletRoutes.Use(middleware.AuthMiddleware())
 	{
 		walletRoutes.GET("/balance", payoutService.GetWalletBalance)
-		walletRoutes.POST("/withdraw", payoutService.RequestPayout)
-		walletRoutes.GET("/withdrawals", payoutService.GetPayoutHistory)
+		// walletRoutes.POST("/withdraw", payoutService.RequestPayout)
+		// walletRoutes.GET("/withdrawals", payoutService.GetPayoutHistory)
 		walletRoutes.GET("/bank-accounts", payoutService.ListBankAccounts)
 		walletRoutes.POST("/bank-accounts", payoutService.AddBankAccount)
 		walletRoutes.PUT("/bank-accounts/:id/default", payoutService.SetDefaultBankAccount)
@@ -105,41 +110,41 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	}
 
 	// Referral routes (public)
-	referralRoutes := router.Group("/api/v1/referrals")
-	{
-		referralRoutes.GET("/validate/:code", paymentHandler.ValidateReferralCode)
-	}
+	// referralRoutes := router.Group("/api/v1/referrals")
+	// {
+	// 	referralRoutes.GET("/validate/:code", paymentHandler.ValidateReferralCode)
+	// }
 
-	// Referral routes (authenticated)
-	referralProtected := router.Group("/api/v1/referrals")
-	referralProtected.Use(middleware.AuthMiddleware())
-	{
-		referralProtected.POST("/codes", paymentHandler.CreateReferralCode)
-		referralProtected.GET("/codes/my", paymentHandler.GetMyReferralCodes)
-		referralProtected.GET("/codes/:id", paymentHandler.GetReferralCodeByID)
-		referralProtected.PUT("/codes/:id", paymentHandler.UpdateReferralCode)
-		referralProtected.DELETE("/codes/:id", paymentHandler.DeleteReferralCode)
-		referralProtected.GET("/my", paymentHandler.GetMyReferrals)
-		referralProtected.GET("/status", paymentHandler.GetMyReferralStatus)
+	// // Referral routes (authenticated)
+	// referralProtected := router.Group("/api/v1/referrals")
+	// referralProtected.Use(middleware.AuthMiddleware())
+	// {
+	// 	referralProtected.POST("/codes", paymentHandler.CreateReferralCode)
+	// 	referralProtected.GET("/codes/my", paymentHandler.GetMyReferralCodes)
+	// 	referralProtected.GET("/codes/:id", paymentHandler.GetReferralCodeByID)
+	// 	referralProtected.PUT("/codes/:id", paymentHandler.UpdateReferralCode)
+	// 	referralProtected.DELETE("/codes/:id", paymentHandler.DeleteReferralCode)
+	// 	referralProtected.GET("/my", paymentHandler.GetMyReferrals)
+	// 	referralProtected.GET("/status", paymentHandler.GetMyReferralStatus)
 
-	}
+	// }
 
-	referralAdmin := router.Group("/api/v1/admin/referrals")
-	referralAdmin.Use(middleware.AuthMiddleware())
-	{
-		referralAdmin.GET("/codes", paymentHandler.GetAllReferralCodes)
-		referralAdmin.GET("/usages", paymentHandler.GetAllReferralUsages)
-	}
+	// referralAdmin := router.Group("/api/v1/admin/referrals")
+	// referralAdmin.Use(middleware.AuthMiddleware())
+	// {
+	// 	referralAdmin.GET("/codes", paymentHandler.GetAllReferralCodes)
+	// 	referralAdmin.GET("/usages", paymentHandler.GetAllReferralUsages)
+	// }
 
 	// Escrow routes (authenticated)
-	escrowRoutes := router.Group("/api/v1/escrow")
-	escrowRoutes.Use(middleware.AuthMiddleware())
-	{
-		escrowRoutes.POST("/contracts/:id/deposit", paymentHandler.InitiateEscrowDeposit)
-		escrowRoutes.GET("/contracts/:id/status", paymentHandler.GetEscrowStatus)
-		escrowRoutes.POST("/contracts/:id/refund", paymentHandler.RefundEscrow)
-		escrowRoutes.GET("/contracts/:id/summary", paymentHandler.GetPaymentSummaryWithPromotion)
-	}
+	// escrowRoutes := router.Group("/api/v1/escrow")
+	// escrowRoutes.Use(middleware.AuthMiddleware())
+	// {
+	// 	escrowRoutes.POST("/contracts/:id/deposit", paymentHandler.InitiateEscrowDeposit)
+	// 	escrowRoutes.GET("/contracts/:id/status", paymentHandler.GetEscrowStatus)
+	// 	escrowRoutes.POST("/contracts/:id/refund", paymentHandler.RefundEscrow)
+	// 	escrowRoutes.GET("/contracts/:id/summary", paymentHandler.GetPaymentSummaryWithPromotion)
+	// }
 
 	// Promotional offer routes (public list)
 	router.GET("/api/v1/promotions", promotionHandler.ListActiveOffers)
@@ -167,7 +172,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		adminRoutes.PUT("/jobs/:id", controllers.AdminUpdateJobController)
 
 		adminRoutes.GET("/payouts", payoutService.AdminListPayouts)
-		adminRoutes.GET("/payments/audit-logs", paymentHandler.GetPaymentAuditLogs)
+		// adminRoutes.GET("/payments/audit-logs", paymentHandler.GetPaymentAuditLogs)
 
 		adminRoutes.GET("/ledger", ledgerHandler.GetAdminLedgerReport)
 		adminRoutes.GET("/ledger/accounts/:id/balance", ledgerHandler.GetAccountBalanceHandler)
@@ -220,7 +225,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	proposalRoutes.Use(middleware.AuthMiddleware())
 	{
 		proposalRoutes.POST("/:id/decision", controllers.ManageProposalDecision)
-		proposalRoutes.GET("/:id/payment-summary", paymentHandler.GetProposalPaymentDetails)
+		// proposalRoutes.GET("/:id/payment-summary", paymentHandler.GetProposalPaymentDetails)
 	}
 
 	jobRoutes := router.Group("/api/job")
@@ -273,7 +278,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	protected := router.Group("/")
 	protected.Use(middleware.AuthMiddleware())
 	{
-		protected.GET("/api/jobs/:id/payment-details", paymentHandler.GetJobPostPaymentDetails)
+		// protected.GET("/api/jobs/:id/payment-details", paymentHandler.GetJobPostPaymentDetails)
 		protected.GET("/api/user/profile", controllers.GetProfile)
 		protected.POST("/api/user/device-token", userHandler.SaveDeviceToken)
 		protected.POST("/api/user/verify-credentials", controllers.VerifyUserCredential)

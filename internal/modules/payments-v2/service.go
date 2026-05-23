@@ -3,15 +3,17 @@ package paymentsv2
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"tasksy/models"
-	// "tasksy/pkg/logger"
 
-	"github.com/gin-gonic/gin"
+	"github.com/stripe/stripe-go/v84/token"
+
 	"github.com/shopspring/decimal"
 	"github.com/stripe/stripe-go/v84"
+	"github.com/stripe/stripe-go/v84/payout"
 
 	// "go.uber.org/zap"
 	"gorm.io/gorm"
@@ -44,7 +46,7 @@ func (s *Service) GetSystemSettings() (*SystemSetting, error) {
 	}, nil
 }
 
-func (s *Service) handleChargeSucceeded(c *gin.Context, event *stripe.Event) error {
+func (s *Service) handleChargeSucceeded(event *stripe.Event) error {
 	var charge stripe.Charge
 
 	tx := s.db.Begin()
@@ -67,14 +69,13 @@ func (s *Service) handleChargeSucceeded(c *gin.Context, event *stripe.Event) err
 	}
 
 	proposalID := charge.Metadata["proposal_id"]
-
 	if proposalID == "" {
 		return fmt.Errorf("proposal id is not found in the meta data")
 	}
 
 	var contract models.Contract
 	if err := s.db.Where("proposal_id = ?", proposalID).First(&contract).Error; err != nil {
-		fmt.Println("error in proposal id querys")
+		fmt.Println("error in proposal id query")
 		return err
 	}
 
@@ -105,8 +106,6 @@ func (s *Service) handleChargeSucceeded(c *gin.Context, event *stripe.Event) err
 			Status:            models.PaymentStatusHeld,
 		}
 
-		s.ApplyDiscountOnTransaction(&transaction)
-
 		if err := tx.Create(&transaction).Error; err != nil {
 			return fmt.Errorf("failed to create transaction: %w", err)
 		}
@@ -130,77 +129,212 @@ func (s *Service) handleChargeSucceeded(c *gin.Context, event *stripe.Event) err
 	return nil
 }
 
-func (s *Service) ApplyDiscountOnTransaction(transaction *models.PaymentTransactionV2) {
+type TypeWalletTransaction struct {
+	Amount      float64
+	Type        string
+	Description string
+	Date        time.Time
 }
 
-func (s *Service) GetUserWallet(user *models.User) {
-	// query all user user trnasactions and show him thier balance including escrow payments
+type UserWalletVal struct {
+	Balance      float64
+	Transactions []TypeWalletTransaction
 }
 
-func (s *Service) GetUserTransactions(c *gin.Context) {
-	user := c.MustGet("user").(models.User)
-
-	type Params struct {
-		FromDate *time.Time `form:"from_date"`
-		ToDate   *time.Time `form:"to_date"`
+func (s *Service) AddUserBankAccount(user *models.User, accountNo string, routingNo string, currency string, countryCode string) error {
+	account := models.UserAccountDetails{
+		UserID:        user.ID,
+		AccountNo:     accountNo,
+		CountryCode:   countryCode,
+		Currency:      currency,
+		RoutingNumber: routingNo,
 	}
 
-	var args Params
+	if err := s.db.Create(&account).Error; err != nil {
+		return err
+	}
+	return nil
+}
 
-	if err := c.BindQuery(&args); err != nil {
-		fmt.Println(err.Error())
+func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *time.Time) (*UserWalletVal, error) {
+	var transactions []TypeWalletTransaction
+
+	totalReleased := decimal.Zero
+	if err := s.db.Model(&models.EscrowTransaction{}).
+		Where("user_id = ? AND status = ?", user.ID, models.EscrowStatusReleased).
+		Select("COALESCE(SUM(amount), 0)").
+		Scan(&totalReleased).Error; err != nil {
+		return nil, fmt.Errorf("failed to sum released escrows: %w", err)
 	}
 
-	if args.FromDate == nil || args.ToDate == nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "error",
-			"error":   "from_date and to_date are required",
-		})
-		return
+	totalPaidOut := decimal.Zero
+	if err := s.db.Model(&models.PayoutTransaction{}).
+		Where("user_id = ? AND status = ?", user.ID, models.PayoutSuccess).
+		Select("COALESCE(SUM(amount), 0)").
+		Scan(&totalPaidOut).Error; err != nil {
+		return nil, fmt.Errorf("failed to sum successful payouts: %w", err)
 	}
 
-	type TransactionValue struct {
-		JobTitle string
-		Status   string          `json:"status"`
-		Amount   decimal.Decimal `json:"amount"`
-		Type     string          `json:"type"`
+	totalPending := decimal.Zero
+	if err := s.db.Model(&models.PayoutTransaction{}).
+		Where("user_id = ? AND status = ?", user.ID, models.PayoutPending).
+		Select("COALESCE(SUM(amount), 0)").
+		Scan(&totalPending).Error; err != nil {
+		return nil, fmt.Errorf("failed to sum pending payouts: %w", err)
 	}
 
-	var data []models.PaymentTransactionV2
-
-	if err := s.db.Preload("Contract.JobPost").Where("from_user_id = ? ", user.ID).
-		Or("to_user_id = ?", user.ID).
-		Where("posting_date BETWEEN ? AND ?", args.FromDate, args.ToDate).
-		Find(&data).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "error",
-			"error":   err.Error(),
-		})
-		return
+	balance, _ := totalReleased.Sub(totalPaidOut).Sub(totalPending).Float64()
+	paymentQuery := s.db.Model(&models.PaymentTransactionV2{}).
+		Where("(from_user_id = ? OR to_user_id = ?)", user.ID, user.ID)
+	if fromDate != nil {
+		paymentQuery = paymentQuery.Where("posting_date >= ?", fromDate)
+	}
+	if toDate != nil {
+		paymentQuery = paymentQuery.Where("posting_date <= ?", toDate)
 	}
 
-	transactions := make([]TransactionValue, 0)
+	var paymentTxns []models.PaymentTransactionV2
+	if err := paymentQuery.Find(&paymentTxns).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch payment transactions: %w", err)
+	}
+	for _, p := range paymentTxns {
+		amt, _ := p.Amount.Float64()
+		netAmt, _ := p.NetAmount.Float64()
 
-	for _, row := range data {
-		var TransactionType string
-		Amount := row.Amount
-
-		if row.FromUserID == user.ID {
-			TransactionType = "pay"
-			Amount = Amount.Mul(decimal.NewFromInt(-1))
-		} else {
-			TransactionType = "receive"
+		if p.FromUserID == user.ID {
+			transactions = append(transactions, TypeWalletTransaction{
+				Amount:      amt,
+				Type:        "debit",
+				Description: "Contract payment sent",
+				Date:        p.PostingDate,
+			})
+		} else if p.ToUserID == user.ID {
+			transactions = append(transactions, TypeWalletTransaction{
+				Amount:      netAmt,
+				Type:        "credit",
+				Description: "Payment received (held in escrow)",
+				Date:        p.PostingDate,
+			})
 		}
+	}
 
-		transactions = append(transactions, TransactionValue{
-			JobTitle: row.Contract.JobPost.Title,
-			Amount:   Amount,
-			Type:     TransactionType,
+	escrowQuery := s.db.Where("user_id = ? AND status = ?", user.ID, models.EscrowStatusReleased)
+	if fromDate != nil {
+		escrowQuery = escrowQuery.Where("released_at >= ?", fromDate)
+	}
+	if toDate != nil {
+		escrowQuery = escrowQuery.Where("released_at <= ?", toDate)
+	}
+
+	var filteredEscrows []models.EscrowTransaction
+	if err := escrowQuery.Find(&filteredEscrows).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch escrow transactions: %w", err)
+	}
+	for _, e := range filteredEscrows {
+		amt, _ := e.Amount.Float64()
+		transactions = append(transactions, TypeWalletTransaction{
+			Amount:      amt,
+			Type:        "credit",
+			Description: "Escrow released",
+			Date:        *e.ReleasedAt,
 		})
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "success",
+	payoutQuery := s.db.Where("user_id = ?", user.ID)
+	if fromDate != nil {
+		payoutQuery = payoutQuery.Where("transaction_date >= ?", fromDate)
+	}
+	if toDate != nil {
+		payoutQuery = payoutQuery.Where("transaction_date <= ?", toDate)
+	}
+
+	var filteredPayouts []models.PayoutTransaction
+	if err := payoutQuery.Find(&filteredPayouts).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch payout transactions: %w", err)
+	}
+	for _, p := range filteredPayouts {
+		amt, _ := p.Amount.Float64()
+		transactions = append(transactions, TypeWalletTransaction{
+			Amount:      amt,
+			Type:        "debit",
+			Description: "Payout to bank",
+			Date:        p.TransactionDate,
+		})
+	}
+
+	sort.Slice(transactions, func(i, j int) bool {
+		return transactions[i].Date.After(transactions[j].Date)
 	})
 
+	return &UserWalletVal{
+		Balance:      balance,
+		Transactions: transactions,
+	}, nil
+}
+
+func (s *Service) CreatePayout(user *models.User, amount float64, account *models.UserAccountDetails) error {
+	wallet, err := s.GetUserWallet(user, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	balance := wallet.Balance
+	if balance < amount {
+		return fmt.Errorf("the user dont have that balance")
+	}
+
+	payoutAmount := int64(amount / 100)
+	tx := s.db.Begin()
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	tokenParams := &stripe.TokenParams{
+		BankAccount: &stripe.BankAccountParams{
+			Country:       stripe.String(account.CountryCode),
+			Currency:      stripe.String(strings.ToLower(account.Currency)),
+			AccountNumber: stripe.String(account.AccountNo),
+			RoutingNumber: stripe.String(account.RoutingNumber),
+		},
+	}
+
+	bankToken, err := token.New(tokenParams)
+	if err != nil {
+		return fmt.Errorf("failed to create bank token: %w", err)
+	}
+
+	params := &stripe.PayoutParams{
+		Amount:      stripe.Int64(payoutAmount),
+		Currency:    stripe.String(string(stripe.CurrencyUSD)),
+		Destination: stripe.String(bankToken.ID),
+		Method:      stripe.String("standard"),
+	}
+
+	params.IdempotencyKey = stripe.String("payout-" + user.ID + "-" + fmt.Sprint(time.Now().Unix()))
+	stripePayout, err := payout.New(params)
+
+	if err != nil {
+		return err
+	}
+
+	payoutTransaction := models.PayoutTransaction{
+		UserID:          user.ID,
+		Amount:          decimal.NewFromFloat(amount),
+		BankAccountID:   &account.ID,
+		Currency:        account.Currency,
+		TransactionDate: time.Now(),
+		Status:          models.PayoutPending,
+		StripePayoutID:  stripePayout.ID,
+	}
+
+	if err := tx.Create(&payoutTransaction).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	tx.Commit()
+	return nil
 }

@@ -16,7 +16,6 @@ func GetCategories(c *gin.Context) {
 	}
 
 	var results []Response
-
 	err := db.DB.
 		Model(&models.Category{}).
 		Select("id", "name", "sort_order").

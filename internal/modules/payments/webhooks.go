@@ -12,7 +12,7 @@ import (
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/webhook"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
+	// "gorm.io/gorm"
 	"tasksy/db"
 	"tasksy/models"
 	"tasksy/pkg/logger"
@@ -479,124 +479,6 @@ func (s *PaymentService) ProcessReferralAfterPayment(paymentID string, userID st
 	return s.MarkReferralAsQualified(&usage, paymentID, discountApplied)
 }
 
-// ReleaseContractFunds credits the freelancer's wallet and creates a payout record
-// when both parties confirm contract completion. This is called from the CompleteContract
-// controller after both client and freelancer have confirmed.
-func (s *PaymentService) ReleaseContractFunds(contractID string) error {
-	var contract models.Contract
-	if err := s.db.First(&contract, "id = ?", contractID).Error; err != nil {
-		return fmt.Errorf("contract not found: %w", err)
-	}
-
-	// Find the payment transaction for this contract
-	var payment models.PaymentTransaction
-	if err := s.db.Where("reference_id = ? AND reference_type = ? AND status = ?",
-		contractID, "contract", models.PaymentStatusSuccess).
-		First(&payment).Error; err != nil {
-		return fmt.Errorf("no successful payment found for contract: %w", err)
-	}
-
-	// Prevent duplicate payouts
-	var existingPayout int64
-	s.db.Model(&models.PayoutTransaction{}).
-		Where("stripe_id = ?", "contract_"+contractID).
-		Count(&existingPayout)
-	if existingPayout > 0 {
-		return nil // Already processed
-	}
-
-	// Calculate freelancer payout: gross amount minus BOTH commissions and the fixed app fee.
-	// fullEscrowAmount is what was credited to escrow (including any referral discount subsidy from marketing).
-	// Platform revenue = client_commission + freelancer_commission + app_fee + discount_subsidy.
-	freelancerPayout := payment.Amount - payment.FreelancerCommissionAmount - payment.ClientCommissionAmount - payment.AppFeeAmount
-	if freelancerPayout < 0 {
-		freelancerPayout = 0
-	}
-	fullEscrowAmount := payment.Amount + payment.DiscountAmount
-	platformFee := fullEscrowAmount - freelancerPayout
-
-	if txErr := s.db.Transaction(func(tx *gorm.DB) error {
-		ledgerInTx := NewLedgerService(tx)
-
-		escrowAcct, err := ledgerInTx.GetSystemAccount(models.AccountTypeEscrow)
-		if err != nil {
-			return fmt.Errorf("escrow account not found: %w", err)
-		}
-		revenueAcct, err := ledgerInTx.GetSystemAccount(models.AccountTypeRevenue)
-		if err != nil {
-			return fmt.Errorf("revenue account not found: %w", err)
-		}
-		freelancerWallet, err := ledgerInTx.GetOrCreateUserAccount(contract.FreelancerID)
-		if err != nil {
-			return fmt.Errorf("failed to get freelancer wallet account: %w", err)
-		}
-
-		// escrow_release: Debit Escrow, Credit FreelancerWallet + Revenue.
-		// Sum: -fullEscrowAmount + freelancerPayout + platformFee = 0 ✓
-		if _, err := ledgerInTx.CreateLedgerTransaction(
-			models.LedgerTxEscrowRelease,
-			contractID,
-			fmt.Sprintf("Escrow released for contract %s (freelancer %s)", contractID, contract.FreelancerID),
-			[]EntryInput{
-				{AccountID: escrowAcct.ID, Amount: -fullEscrowAmount, Category: "escrow_release"},
-				{AccountID: freelancerWallet.ID, Amount: freelancerPayout, Category: "freelancer_payout"},
-				{AccountID: revenueAcct.ID, Amount: platformFee, Category: "platform_fee"},
-			},
-		); err != nil {
-			return fmt.Errorf("failed to create escrow release ledger entries: %w", err)
-		}
-
-		// Create payout transaction record for audit trail.
-		payout := models.PayoutTransaction{
-			TransactionDate: time.Now(),
-			UserID:          contract.FreelancerID,
-			Amount:          fullEscrowAmount,
-			NetAmount:       freelancerPayout,
-			AppFeeAmount:    platformFee,
-			Currency:        payment.Currency,
-			Status:          models.PaymentStatusSuccess,
-			StripeID:        "contract_" + contractID,
-		}
-		if err := tx.Create(&payout).Error; err != nil {
-			return fmt.Errorf("failed to create payout transaction: %w", err)
-		}
-
-		// Link payment to payout.
-		return tx.Model(&payment).Update("payout_id", payout.ID).Error
-	}); txErr != nil {
-		return fmt.Errorf("failed to release contract funds: %w", txErr)
-	}
-
-	// Re-fetch payout record for the audit log.
-	var payout models.PayoutTransaction
-	s.db.Where("stripe_id = ?", "contract_"+contractID).First(&payout)
-
-	// Audit log
-	s.WriteAuditLog(AuditLogEntry{
-		Action:     "freelancer_wallet_credited",
-		EntityType: "payout_transaction",
-		EntityID:   payout.ID,
-		UserID:     contract.FreelancerID,
-		Amount:     freelancerPayout,
-		Status:     "credited",
-		Details: map[string]interface{}{
-			"contract_id":           contractID,
-			"payment_id":            payment.ID,
-			"gross_amount":          payment.Amount,
-			"freelancer_commission": payment.FreelancerCommissionAmount,
-			"app_fee":               payment.AppFeeAmount,
-			"net_credited":          freelancerPayout,
-		},
-	})
-
-	logger.Log.Info("contract funds released to freelancer",
-		zap.String("contract_id", contractID),
-		zap.String("freelancer_id", contract.FreelancerID),
-		zap.Int64("payout_amount", freelancerPayout),
-	)
-
-	return nil
-}
 
 // func MakeContractPayment(contract *models.Contract, event *stripe.Event, intent *stripe.PaymentIntent) (*models.PaymentTransaction, error) {
 // 	settings, _ := GetSystemSettings()

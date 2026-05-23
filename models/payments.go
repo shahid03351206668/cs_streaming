@@ -89,18 +89,13 @@ type PayoutTransaction struct {
 	UserID          string    `gorm:"index;not null" json:"user_id"`
 	User            User      `gorm:"foreignKey:UserID;constraint:OnDelete:RESTRICT" json:"user"`
 
-	StripeID       string `gorm:"type:varchar(100);not null" json:"stripe_transfer_id"`
-	StripePayoutID string `gorm:"type:varchar(100)" json:"stripe_payout_id"`
+	StripePayoutID string           `gorm:"type:varchar(100)" json:"stripe_payout_id"`
+	BankAccountID  *string          `gorm:"index" json:"bank_account_id,omitempty"`
+	BankAccount    *UserBankAccount `gorm:"foreignKey:BankAccountID" json:"bank_account,omitempty"`
 
-	BankAccountID *string          `gorm:"index" json:"bank_account_id,omitempty"`
-	BankAccount   *UserBankAccount `gorm:"foreignKey:BankAccountID" json:"bank_account,omitempty"`
-
-	Amount       int64 `gorm:"default:0" json:"amount"`
-	NetAmount    int64 `gorm:"default:0" json:"net_amount"`
-	AppFeeAmount int64 `gorm:"default:0" json:"app_fee_amount"`
-
-	Currency string `gorm:"type:varchar(3);default:'gbp'" json:"currency"`
-	Status   string `gorm:"index;not null;default:'pending'" json:"status"`
+	Amount   decimal.Decimal `gorm:"default:0" json:"amount"`
+	Currency string          `gorm:"type:varchar(3);default:'gbp'" json:"currency"`
+	Status   string          `gorm:"index;not null;default:'pending'" json:"status"`
 }
 
 type UserBankAccount struct {
@@ -257,14 +252,15 @@ type EscrowTransaction struct {
 }
 
 type UserAccountDetails struct {
-	UserID      string `gorm:"index;not null" json:"user_id"`
-	User        User   `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user"`
-	AccountNo   string `gorm:"not null" json:"account_no"`
-	CountryCode string `gorm:"size:2" json:"country_code"`
-	Currency    string `gorm:"size:3;not null" json:"currency"`
+	BaseModel
+
+	UserID        string `gorm:"index;not null" json:"user_id"`
+	User          User   `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user"`
+	AccountNo     string `gorm:"not null" json:"account_no"`
+	CountryCode   string `gorm:"size:2" json:"country_code"`
+	Currency      string `gorm:"size:3;not null" json:"currency"`
+	RoutingNumber string `jsom:"routing_no"`
 }
-
-
 
 // type UserBankAccount struct {
 // 	BaseModel

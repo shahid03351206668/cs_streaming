@@ -11,9 +11,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"tasksy/config"
+
+	// "tasksy/config"
 	"tasksy/db"
-	"tasksy/internal/modules/payments"
+	// "tasksy/internal/modules/payments"
 	"tasksy/models"
 	"time"
 
@@ -707,15 +708,15 @@ func CreateContract(c *gin.Context) {
 }
 
 // haversineDistance calculates the distance between two lat/lng points in meters.
-func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
-	const earthRadiusM = 6371000.0
-	toRad := func(deg float64) float64 { return deg * (3.14159265358979323846 / 180.0) }
-	dLat := toRad(lat2 - lat1)
-	dLon := toRad(lon2 - lon1)
-	a := (dLat / 2 * dLat / 2) + (toRad(lat1) * toRad(lat2) * (dLon / 2 * dLon / 2))
-	// simplified approximation sufficient for ≤ 1km checks
-	return earthRadiusM * 2 * (a + (1-a)*0) // see note below
-}
+// func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
+// 	const earthRadiusM = 6371000.0
+// 	toRad := func(deg float64) float64 { return deg * (3.14159265358979323846 / 180.0) }
+// 	dLat := toRad(lat2 - lat1)
+// 	dLon := toRad(lon2 - lon1)
+// 	a := (dLat / 2 * dLat / 2) + (toRad(lat1) * toRad(lat2) * (dLon / 2 * dLon / 2))
+// 	// simplified approximation sufficient for ≤ 1km checks
+// 	return earthRadiusM * 2 * (a + (1-a)*0) // see note below
+// }
 
 // haversineDistanceAccurate returns the distance in meters using the full haversine formula.
 func haversineDistanceAccurate(lat1, lon1, lat2, lon2 float64) float64 {
@@ -928,16 +929,16 @@ func CompleteContract(c *gin.Context) {
 
 		// Release funds to freelancer wallet when both parties have confirmed
 		if ctr.ClientCompleted && ctr.FreelancerCompleted {
-			stripeCfg := &config.StripeConfig{
-				SecretKey:     os.Getenv("STRIPE_SECRET_KEY"),
-				WebhookSecret: os.Getenv("STRIPE_WEBHOOK_SIGNING_SECRET"),
-				APIKey:        os.Getenv("STRIPE_API_KEY"),
-			}
-			ledgerSvc := payments.NewLedgerService(dbConn)
-			paymentService := payments.NewService(stripeCfg, dbConn, ledgerSvc)
-			if err := paymentService.ReleaseContractFunds(ctr.ID); err != nil {
-				fmt.Printf("failed to release funds for contract %s: %v\n", ctr.ID, err)
-			}
+			// stripeCfg := &config.StripeConfig{
+			// 	SecretKey:     os.Getenv("STRIPE_SECRET_KEY"),
+			// 	WebhookSecret: os.Getenv("STRIPE_WEBHOOK_SIGNING_SECRET"),
+			// 	APIKey:        os.Getenv("STRIPE_API_KEY"),
+			// }
+			// ledgerSvc := payments.NewLedgerService(dbConn)
+			// paymentService := payments.NewService(stripeCfg, dbConn, ledgerSvc)
+			// if err := paymentService.ReleaseContractFunds(ctr.ID); err != nil {
+			// 	fmt.Printf("failed to release funds for contract %s: %v\n", ctr.ID, err)
+			// }
 		}
 	}(contract, user.ID)
 
@@ -1117,7 +1118,7 @@ func AddReview(c *gin.Context) {
 	var existingReview models.Review
 	if err := db.DB.Where("contract_id = ? AND reviewer_id = ?", contract.ID, user.ID).
 		First(&existingReview).Error; err == nil {
-		c.JSON(http.StatusConflict, gin.H{ // 409 Conflict
+		c.JSON(http.StatusConflict, gin.H{
 			"error": "You have already submitted a review for this contract",
 		})
 		return
