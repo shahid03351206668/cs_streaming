@@ -10,6 +10,7 @@ import (
 	"tasksy/internal/modules/payments"
 	paymentsv2 "tasksy/internal/modules/payments-v2"
 	"tasksy/internal/modules/promotions"
+	"tasksy/internal/modules/referrals"
 	"tasksy/internal/modules/user"
 	"tasksy/middleware"
 	aws_services "tasksy/pkg"
@@ -109,32 +110,33 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 		walletRoutes.DELETE("/bank-accounts/:id", payoutService.DeleteBankAccount)
 	}
 
+	referralHandler := referrals.NewHandler(referrals.NewService(db))
+
 	// Referral routes (public)
-	// referralRoutes := router.Group("/api/v1/referrals")
-	// {
-	// 	referralRoutes.GET("/validate/:code", paymentHandler.ValidateReferralCode)
-	// }
+	referralRoutes := router.Group("/api/v1/referrals")
+	{
+		referralRoutes.GET("/validate/:code", referralHandler.ValidateReferralCode)
+	}
 
-	// // Referral routes (authenticated)
-	// referralProtected := router.Group("/api/v1/referrals")
-	// referralProtected.Use(middleware.AuthMiddleware())
-	// {
-	// 	referralProtected.POST("/codes", paymentHandler.CreateReferralCode)
-	// 	referralProtected.GET("/codes/my", paymentHandler.GetMyReferralCodes)
-	// 	referralProtected.GET("/codes/:id", paymentHandler.GetReferralCodeByID)
-	// 	referralProtected.PUT("/codes/:id", paymentHandler.UpdateReferralCode)
-	// 	referralProtected.DELETE("/codes/:id", paymentHandler.DeleteReferralCode)
-	// 	referralProtected.GET("/my", paymentHandler.GetMyReferrals)
-	// 	referralProtected.GET("/status", paymentHandler.GetMyReferralStatus)
+	// Referral routes (authenticated)
+	referralProtected := router.Group("/api/v1/referrals")
+	referralProtected.Use(middleware.AuthMiddleware())
+	{
+		referralProtected.POST("/codes", referralHandler.CreateReferralCode)
+		referralProtected.GET("/codes/my", referralHandler.GetMyReferralCodes)
+		referralProtected.GET("/codes/:id", referralHandler.GetReferralCodeByID)
+		referralProtected.PUT("/codes/:id", referralHandler.UpdateReferralCode)
+		referralProtected.DELETE("/codes/:id", referralHandler.DeleteReferralCode)
+		referralProtected.GET("/my", referralHandler.GetMyReferrals)
+		referralProtected.GET("/status", referralHandler.GetMyReferralStatus)
+	}
 
-	// }
-
-	// referralAdmin := router.Group("/api/v1/admin/referrals")
-	// referralAdmin.Use(middleware.AuthMiddleware())
-	// {
-	// 	referralAdmin.GET("/codes", paymentHandler.GetAllReferralCodes)
-	// 	referralAdmin.GET("/usages", paymentHandler.GetAllReferralUsages)
-	// }
+	referralAdmin := router.Group("/api/v1/admin/referrals")
+	referralAdmin.Use(middleware.AuthMiddleware())
+	{
+		referralAdmin.GET("/codes", referralHandler.GetAllReferralCodes)
+		referralAdmin.GET("/usages", referralHandler.GetAllReferralUsages)
+	}
 
 	// Escrow routes (authenticated)
 	// escrowRoutes := router.Group("/api/v1/escrow")
@@ -278,7 +280,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	protected := router.Group("/")
 	protected.Use(middleware.AuthMiddleware())
 	{
-		// protected.GET("/api/jobs/:id/payment-details", paymentHandler.GetJobPostPaymentDetails)
+		protected.GET("/api/jobs/:id/payment-details", paymentHandler.GetJobPostPaymentDetails)
 		protected.GET("/api/user/profile", controllers.GetProfile)
 		protected.POST("/api/user/device-token", userHandler.SaveDeviceToken)
 		protected.POST("/api/user/verify-credentials", controllers.VerifyUserCredential)

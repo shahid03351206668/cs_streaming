@@ -142,6 +142,99 @@ func (h *Handler) AddUserPaymentAccount(c *gin.Context) {
 	})
 }
 
+func (h *Handler) GetJobPostPaymentDetails(c *gin.Context) {
+	jobPostID := c.Param("id")
+	user := c.MustGet("user").(models.User)
+
+	var jobPost models.JobPost
+	if err := h.service.db.Where("id = ?", jobPostID).First(&jobPost).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Job post not found"})
+		return
+	}
+
+	settings, err := h.service.GetSystemSettings()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to load system settings"})
+		return
+	}
+
+	budgetAmount := int64(jobPost.Budget * 100)
+	appFees := settings.AppFee
+	commissionPct := settings.FreelancerCommission
+
+	commissionAmount := int64(0)
+	if commissionPct > 0 {
+		commissionAmount = int64(float64(budgetAmount) * commissionPct / 100.0)
+	}
+
+	discountAmount := int64(0)
+	referralCode := ""
+	var discountPct float64
+
+	var userReferral models.ReferralUsage
+	if err := h.service.db.Preload("ReferralCode").
+		Where("referee_id = ? AND is_qualified = ?", user.ID, false).
+		First(&userReferral).Error; err == nil {
+
+		referralCode = userReferral.ReferralCode.Code
+		discountPct = float64(userReferral.ReferralCode.DiscountPercentage)
+
+		if discountPct > 0 {
+			discountAmount = int64(float64(commissionAmount) * discountPct / 100.0)
+		}
+		if discountAmount > commissionAmount {
+			discountAmount = commissionAmount
+		}
+	}
+
+	finalCommission := commissionAmount - discountAmount
+	grandTotal := budgetAmount + finalCommission + appFees
+
+	toDollars := func(cents int64) float64 {
+		return float64(cents) / 100.0
+	}
+
+	budgetDescription := "Fixed budget"
+	if jobPost.OpenBudget {
+		budgetDescription = "Budget is flexible, final amount may vary"
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data": gin.H{
+			"job_post_id": jobPost.ID,
+			"currency":    "usd",
+			"open_budget": jobPost.OpenBudget,
+			"budget": gin.H{
+				"amount":      toDollars(budgetAmount),
+				"is_open":     jobPost.OpenBudget,
+				"description": budgetDescription,
+			},
+			"commission": gin.H{
+				"original_amount":  toDollars(commissionAmount),
+				"percentage":       commissionPct,
+				"discount_applied": toDollars(discountAmount),
+				"final_amount":     toDollars(finalCommission),
+			},
+			"app_fees": toDollars(appFees),
+			"referral": gin.H{
+				"code":       referralCode,
+				"percentage": discountPct,
+				"saved":      toDollars(discountAmount),
+			},
+			"grand_total": toDollars(grandTotal),
+			"summary": gin.H{
+				"budget":         toDollars(budgetAmount),
+				"commission":     toDollars(finalCommission),
+				"app_fees":       toDollars(appFees),
+				"total_fees":     toDollars(finalCommission + appFees),
+				"discount_saved": toDollars(discountAmount),
+				"amount_due":     toDollars(grandTotal),
+			},
+		},
+	})
+}
+
 func (h *Handler) GetUserAccount(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 	var data models.UserAccountDetails
