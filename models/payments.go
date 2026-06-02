@@ -262,6 +262,7 @@ type UserAccountDetails struct {
 	CountryCode   string `gorm:"size:2" json:"country_code"`
 	Currency      string `gorm:"size:3;not null" json:"currency"`
 	RoutingNumber string `json:"routing_no"`
+	Enabled       bool   `gorm:"default:true" json:"enabled"`
 }
 
 // type UserBankAccount struct {

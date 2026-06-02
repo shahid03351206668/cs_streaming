@@ -170,34 +170,25 @@ func (s *PayoutService) SetDefaultBankAccount(c *gin.Context) {
 func (s *PayoutService) DeleteBankAccount(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 	baID := c.Param("id")
-	stripe.Key = s.config.SecretKey
 
-	var ba models.UserBankAccount
-	if err := s.db.Where("id = ? AND user_id = ?", baID, user.ID).First(&ba).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": "bank account not found"})
+	result := s.db.Where("id = ? AND user_id = ?", baID, user.ID).
+		Delete(&models.UserAccountDetails{})
+
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "error",
+			"error":   result.Error.Error(),
+		})
 		return
 	}
 
-	// Remove from Stripe (best-effort)
-	delParams := &stripe.BankAccountParams{
-		Account: stripe.String(ba.StripeConnectAccountID),
-	}
-	stripebankaccount.Del(ba.StripeBankAccountID, delParams) //nolint:errcheck
-
-	if err := s.db.Delete(&ba).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to delete bank account"})
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{
+			"message": "error",
+			"error":   "bank account not found",
+		})
 		return
 	}
-
-	// If this was the default, promote the next account
-	if ba.IsDefault {
-		var next models.UserBankAccount
-		if err := s.db.Where("user_id = ?", user.ID).Order("created_at DESC").First(&next).Error; err == nil {
-			s.db.Model(&next).UpdateColumn("is_default", true)
-		}
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "success"})
 }
 
 // createConnectAccount creates a Stripe Custom Connect account for a user.

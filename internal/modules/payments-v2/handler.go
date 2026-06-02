@@ -317,8 +317,7 @@ func (h *Handler) GetUserAccount(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 	var data []models.UserAccountDetails
 
-
-	if err := h.service.db.Where("user_id  = ? ", user.ID).Find(&data).Error; err != nil {
+	if err := h.service.db.Where("user_id  = ? AND enabled = 1", user.ID).Find(&data).Error; err != nil {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
