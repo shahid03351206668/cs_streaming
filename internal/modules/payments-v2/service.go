@@ -139,6 +139,7 @@ type TypeWalletTransaction struct {
 type UserWalletVal struct {
 	Balance      float64
 	Transactions []TypeWalletTransaction
+	escrowAmount float64
 }
 
 func (s *Service) AddUserBankAccount(user *models.User, accountNo string, routingNo string, currency string, countryCode string) error {
@@ -157,7 +158,7 @@ func (s *Service) AddUserBankAccount(user *models.User, accountNo string, routin
 }
 
 func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *time.Time) (*UserWalletVal, error) {
-	var transactions []TypeWalletTransaction
+	transactions := make([]TypeWalletTransaction, 0)
 
 	totalReleased := decimal.Zero
 	if err := s.db.Model(&models.EscrowTransaction{}).
@@ -266,9 +267,11 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 		return transactions[i].Date.After(transactions[j].Date)
 	})
 
+	escrowAmount, _ := totalPending.Float64()
 	return &UserWalletVal{
 		Balance:      balance,
 		Transactions: transactions,
+		escrowAmount: escrowAmount,
 	}, nil
 }
 
