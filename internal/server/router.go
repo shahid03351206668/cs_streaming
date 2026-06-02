@@ -227,7 +227,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	proposalRoutes.Use(middleware.AuthMiddleware())
 	{
 		proposalRoutes.POST("/:id/decision", controllers.ManageProposalDecision)
-		// proposalRoutes.GET("/:id/payment-summary", paymentHandler.GetProposalPaymentDetails)
+		proposalRoutes.GET("/:id/payment-summary", paymentHandler.GetProposalPaymentDetails)
 	}
 
 	jobRoutes := router.Group("/api/job")
