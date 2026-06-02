@@ -115,7 +115,7 @@ func ApplyMigrations() error {
 		&models.ChatAttachment{},
 		&models.ChatParticipant{},
 		&models.File{},
-
+		&models.UserAccountDetails{},
 		&models.Certification{},
 		&models.ReferralCode{},
 		&models.ReferralUsage{},
