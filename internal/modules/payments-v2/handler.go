@@ -40,8 +40,9 @@ func (h *Handler) HandleUserWallet(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"data": map[string]any{
-			"balance":      wallet.Balance,
-			"transactions": wallet.Transactions,
+			"balance":       wallet.Balance,
+			"transactions":  wallet.Transactions,
+			"escrow_amount": wallet.escrowAmount,
 		},
 	})
 }
