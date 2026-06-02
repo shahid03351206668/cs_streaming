@@ -261,7 +261,7 @@ type UserAccountDetails struct {
 	AccountNo     string `gorm:"not null" json:"account_no"`
 	CountryCode   string `gorm:"size:2" json:"country_code"`
 	Currency      string `gorm:"size:3;not null" json:"currency"`
-	RoutingNumber string `jsom:"routing_no"`
+	RoutingNumber string `json:"routing_no"`
 }
 
 // type UserBankAccount struct {
