@@ -115,10 +115,12 @@ func (h *Handler) AddUserPaymentAccount(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
 	type RequestData struct {
-		AccountNo   string `json:"account_no"`
-		RoutingNo   string `json:"routing_no"`
-		Currency    string `jsom:"currency"`
-		CountryCode string `jsom:"country_code"`
+		AccountNo     string `json:"account_no"`
+		RoutingNo     string `json:"routing_no"`
+		Currency      string `json:"currency"`
+		CountryCode   string `json:"country_code"`
+		AccountHolder string `json:"account_holder_name"`
+		BankName      string `json:"bank_name"`
 	}
 
 	var data RequestData
@@ -130,7 +132,7 @@ func (h *Handler) AddUserPaymentAccount(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.AddUserBankAccount(&user, data.AccountNo, data.RoutingNo, data.Currency, data.CountryCode); err != nil {
+	if err := h.service.AddUserBankAccount(&user, data.AccountNo, data.RoutingNo, data.Currency, data.CountryCode, data.AccountHolder, data.BankName); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
 			"error":   err.Error(),

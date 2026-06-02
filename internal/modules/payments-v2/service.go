@@ -134,6 +134,7 @@ type TypeWalletTransaction struct {
 	Type        string
 	Description string
 	Date        time.Time
+	ID          string
 }
 
 type UserWalletVal struct {
@@ -142,13 +143,15 @@ type UserWalletVal struct {
 	escrowAmount float64
 }
 
-func (s *Service) AddUserBankAccount(user *models.User, accountNo string, routingNo string, currency string, countryCode string) error {
+func (s *Service) AddUserBankAccount(user *models.User, accountNo string, routingNo string, currency string, countryCode string, accountHolder string, bankName string) error {
 	account := models.UserAccountDetails{
 		UserID:        user.ID,
 		AccountNo:     accountNo,
 		CountryCode:   countryCode,
 		Currency:      currency,
 		RoutingNumber: routingNo,
+		AccountHolder: accountHolder,
+		BankName:      bankName,
 	}
 
 	if err := s.db.Create(&account).Error; err != nil {
@@ -208,6 +211,7 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 				Type:        "debit",
 				Description: "Contract payment sent",
 				Date:        p.PostingDate,
+				ID:          p.ID,
 			})
 		} else if p.ToUserID == user.ID {
 			transactions = append(transactions, TypeWalletTransaction{
@@ -215,6 +219,7 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 				Type:        "credit",
 				Description: "Payment received (held in escrow)",
 				Date:        p.PostingDate,
+				ID:          p.ID,
 			})
 		}
 	}
@@ -238,6 +243,7 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 			Type:        "credit",
 			Description: "Escrow released",
 			Date:        *e.ReleasedAt,
+			ID:          *&e.ID,
 		})
 	}
 

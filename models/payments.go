@@ -256,6 +256,8 @@ type UserAccountDetails struct {
 
 	UserID        string `gorm:"index;not null" json:"user_id"`
 	User          User   `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user"`
+	BankName      string `json:"bank_name"`
+	AccountHolder string `json:"account_holder"`
 	AccountNo     string `gorm:"not null" json:"account_no"`
 	CountryCode   string `gorm:"size:2" json:"country_code"`
 	Currency      string `gorm:"size:3;not null" json:"currency"`
