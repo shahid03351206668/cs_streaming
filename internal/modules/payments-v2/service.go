@@ -162,7 +162,7 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 	totalReleased := decimal.Zero
 	if err := s.db.Model(&models.EscrowTransaction{}).
 		Where("user_id = ? AND status = ?", user.ID, models.EscrowStatusReleased).
-		Select("COALESCE(SUM(amount), 0)").
+		Select("COALESCE(SUM(amount::numeric), 0)").
 		Scan(&totalReleased).Error; err != nil {
 		return nil, fmt.Errorf("failed to sum released escrows: %w", err)
 	}
@@ -170,7 +170,7 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 	totalPaidOut := decimal.Zero
 	if err := s.db.Model(&models.PayoutTransaction{}).
 		Where("user_id = ? AND status = ?", user.ID, models.PayoutSuccess).
-		Select("COALESCE(SUM(amount), 0)").
+		Select("COALESCE(SUM(amount::numeric), 0)").
 		Scan(&totalPaidOut).Error; err != nil {
 		return nil, fmt.Errorf("failed to sum successful payouts: %w", err)
 	}
@@ -178,7 +178,7 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 	totalPending := decimal.Zero
 	if err := s.db.Model(&models.PayoutTransaction{}).
 		Where("user_id = ? AND status = ?", user.ID, models.PayoutPending).
-		Select("COALESCE(SUM(amount), 0)").
+		Select("COALESCE(SUM(amount::numeric), 0)").
 		Scan(&totalPending).Error; err != nil {
 		return nil, fmt.Errorf("failed to sum pending payouts: %w", err)
 	}
