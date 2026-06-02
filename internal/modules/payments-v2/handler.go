@@ -321,6 +321,5 @@ func (h *Handler) GetUserAccount(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": data})
 }

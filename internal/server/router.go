@@ -85,7 +85,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	paymentRoutes.Use(middleware.AuthMiddleware())
 	{
 		paymentRoutes.POST("/add/user-account", paymentHandler.AddUserPaymentAccount)
-		paymentRoutes.GET("/add/user-account", paymentHandler.GetUserAccount)
+		paymentRoutes.GET("/get/user-account", paymentHandler.GetUserAccount)
 		paymentRoutes.POST("/payout/create", paymentHandler.HandleCreatePayout)
 		paymentRoutes.GET("/wallet", paymentHandler.HandleUserWallet)
 	}
