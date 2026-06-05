@@ -222,7 +222,7 @@ func (h *Handler) GetProposalPaymentDetails(c *gin.Context) {
 
 func (h *Handler) GetJobPostPaymentDetails(c *gin.Context) {
 	jobPostID := c.Param("id")
-	user := c.MustGet("user").(models.User)
+	// user := c.MustGet("user").(models.User)
 
 	var jobPost models.JobPost
 	if err := h.service.db.Where("id = ?", jobPostID).First(&jobPost).Error; err != nil {
@@ -242,30 +242,30 @@ func (h *Handler) GetJobPostPaymentDetails(c *gin.Context) {
 
 	commissionAmount := int64(0)
 	if commissionPct > 0 {
-		commissionAmount = int64(float64(budgetAmount) * commissionPct / 100.0)
+		commissionAmount = int64(float64(budgetAmount) / 100.0 * commissionPct)
 	}
 
-	discountAmount := int64(0)
+	// discountAmount := int64(0)
 	referralCode := ""
 	var discountPct float64
 
-	var userReferral models.ReferralUsage
-	if err := h.service.db.Preload("ReferralCode").
-		Where("referee_id = ? AND is_qualified = ?", user.ID, false).
-		First(&userReferral).Error; err == nil {
+	// var userReferral models.ReferralUsage
+	// if err := h.service.db.Preload("ReferralCode").
+	// 	Where("referee_id = ? AND is_qualified = ?", user.ID, false).
+	// 	First(&userReferral).Error; err == nil {
 
-		referralCode = userReferral.ReferralCode.Code
-		discountPct = float64(userReferral.ReferralCode.DiscountPercentage)
+	// 	referralCode = userReferral.ReferralCode.Code
+	// 	discountPct = float64(userReferral.ReferralCode.DiscountPercentage)
 
-		if discountPct > 0 {
-			discountAmount = int64(float64(commissionAmount) * discountPct / 100.0)
-		}
-		if discountAmount > commissionAmount {
-			discountAmount = commissionAmount
-		}
-	}
+	// 	if discountPct > 0 {
+	// 		discountAmount = int64(float64(commissionAmount) * discountPct / 100.0)
+	// 	}
+	// 	if discountAmount > commissionAmount {
+	// 		discountAmount = commissionAmount
+	// 	}
+	// }
 
-	finalCommission := commissionAmount - discountAmount
+	finalCommission := commissionAmount
 	grandTotal := budgetAmount + finalCommission + appFees
 
 	toDollars := func(cents int64) float64 {
@@ -284,30 +284,30 @@ func (h *Handler) GetJobPostPaymentDetails(c *gin.Context) {
 			"currency":    "usd",
 			"open_budget": jobPost.OpenBudget,
 			"budget": gin.H{
-				"amount":      toDollars(budgetAmount),
+				"amount":      budgetAmount,
 				"is_open":     jobPost.OpenBudget,
 				"description": budgetDescription,
 			},
 			"commission": gin.H{
-				"original_amount":  toDollars(commissionAmount),
-				"percentage":       commissionPct,
-				"discount_applied": toDollars(discountAmount),
-				"final_amount":     toDollars(finalCommission),
+				"original_amount": commissionAmount,
+				"percentage":      commissionPct,
+				// "discount_applied": toDollars(discountAmount),
+				"final_amount": finalCommission,
 			},
-			"app_fees": toDollars(appFees),
+			"app_fees": appFees,
 			"referral": gin.H{
 				"code":       referralCode,
 				"percentage": discountPct,
-				"saved":      toDollars(discountAmount),
+				// "saved":      toDollars(discountAmount),
 			},
 			"grand_total": toDollars(grandTotal),
 			"summary": gin.H{
-				"budget":         toDollars(budgetAmount),
-				"commission":     toDollars(finalCommission),
-				"app_fees":       toDollars(appFees),
-				"total_fees":     toDollars(finalCommission + appFees),
-				"discount_saved": toDollars(discountAmount),
-				"amount_due":     toDollars(grandTotal),
+				"budget":     budgetAmount,
+				"commission": finalCommission,
+				"app_fees":   appFees,
+				"total_fees": finalCommission + appFees,
+				// "discount_saved": toDollars(discountAmount),
+				"amount_due": grandTotal,
 			},
 		},
 	})
