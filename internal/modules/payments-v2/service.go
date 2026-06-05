@@ -185,7 +185,7 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 	// 	return nil, fmt.Errorf("failed to sum pending payouts: %w", err)
 	// }
 
-	balance, _ := totalReleased.Sub(totalPaidOut).Sub(totalPending).Float64()
+	balance, _ := totalReleased.Sub(totalPaidOut).Float64()
 	paymentQuery := s.db.Model(&models.PaymentTransactionV2{}).
 		Where("(from_user_id = ? OR to_user_id = ?)", user.ID, user.ID)
 	if fromDate != nil {
