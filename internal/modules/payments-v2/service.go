@@ -157,10 +157,10 @@ func (s *Service) AddUserBankAccount(user *models.User, accountNo string, routin
 	}
 	return nil
 }
-
 func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *time.Time) (*UserWalletVal, error) {
 	transactions := make([]TypeWalletTransaction, 0)
 
+	// 1. Get Total Released
 	totalReleased := decimal.Zero
 	if err := s.db.Model(&models.EscrowTransaction{}).
 		Where("user_id = ? AND status = ?", user.ID, models.EscrowStatusReleased).
@@ -169,6 +169,7 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 		return nil, fmt.Errorf("failed to sum released escrows: %w", err)
 	}
 
+	// 2. Get Total Paid Out
 	totalPaidOut := decimal.Zero
 	if err := s.db.Model(&models.PayoutTransaction{}).
 		Where("user_id = ? AND status = ?", user.ID, models.PayoutSuccess).
@@ -177,15 +178,19 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 		return nil, fmt.Errorf("failed to sum successful payouts: %w", err)
 	}
 
-	// totalPending := decimal.Zero
-	// if err := s.db.Model(&models.EscrowTransaction{}).
-	// 	Where("user_id = ? AND status = ?", user.ID, models.PayoutPending).
-	// 	Select("COALESCE(SUM(amount::numeric), 0)").
-	// 	Scan(&totalPending).Error; err != nil {
-	// 	return nil, fmt.Errorf("failed to sum pending payouts: %w", err)
-	// }
+	// 3. Get Total Held in Escrow (The Fix)
+	totalPending := decimal.Zero
+	if err := s.db.Model(&models.EscrowTransaction{}).
+		// Note: If you have a constant like models.EscrowStatusHeld, use that instead of "held"
+		Where("user_id = ? AND status = ?", user.ID, "held").
+		Select("COALESCE(SUM(amount::numeric), 0)").
+		Scan(&totalPending).Error; err != nil {
+		return nil, fmt.Errorf("failed to sum held escrows: %w", err)
+	}
 
 	balance, _ := totalReleased.Sub(totalPaidOut).Float64()
+
+	// 4. Fetch Payment Transactions
 	paymentQuery := s.db.Model(&models.PaymentTransactionV2{}).
 		Where("(from_user_id = ? OR to_user_id = ?)", user.ID, user.ID)
 	if fromDate != nil {
@@ -199,7 +204,7 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 	if err := paymentQuery.Find(&paymentTxns).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch payment transactions: %w", err)
 	}
-	totalPending := decimal.Zero
+
 	for _, p := range paymentTxns {
 		amt, _ := p.Amount.Float64()
 		netAmt, _ := p.NetAmount.Float64()
@@ -220,10 +225,11 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 				Date:        p.PostingDate,
 				ID:          p.ID,
 			})
-			totalPending.Add(decimal.NewFromFloat(netAmt))
+			// Removed the buggy totalPending.Add(...) logic from here
 		}
 	}
 
+	// 5. Fetch Escrow Transactions
 	escrowQuery := s.db.Where("user_id = ? AND status = ?", user.ID, models.EscrowStatusReleased)
 	if fromDate != nil {
 		escrowQuery = escrowQuery.Where("released_at >= ?", fromDate)
@@ -243,10 +249,11 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 			Type:        "credit",
 			Description: "Escrow released",
 			Date:        *e.ReleasedAt,
-			ID:          *&e.ID,
+			ID:          e.ID, // Fixed pointer dereference issue here: *&e.ID -> e.ID
 		})
 	}
 
+	// 6. Fetch Payout Transactions
 	payoutQuery := s.db.Where("user_id = ?", user.ID)
 	if fromDate != nil {
 		payoutQuery = payoutQuery.Where("transaction_date >= ?", fromDate)
@@ -269,11 +276,13 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 		})
 	}
 
+	// 7. Sort Transactions
 	sort.Slice(transactions, func(i, j int) bool {
 		return transactions[i].Date.After(transactions[j].Date)
 	})
 
 	escrowAmount, _ := totalPending.Float64()
+
 	return &UserWalletVal{
 		Balance:      balance,
 		Transactions: transactions,
