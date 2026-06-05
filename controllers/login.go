@@ -165,7 +165,6 @@ func GetUserAuthToken(c *gin.Context) {
 	var body struct {
 		Email       string `json:"email"`
 		PhoneNumber string `json:"phone_number"`
-		Password    string `json:"password"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -178,12 +177,6 @@ func GetUserAuthToken(c *gin.Context) {
 	if body.Email == "" && body.PhoneNumber == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "Please provide either email or phone number",
-		})
-		return
-	}
-	if body.Password == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Password is required",
 		})
 		return
 	}
