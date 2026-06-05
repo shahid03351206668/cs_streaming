@@ -177,13 +177,13 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 		return nil, fmt.Errorf("failed to sum successful payouts: %w", err)
 	}
 
-	totalPending := decimal.Zero
-	if err := s.db.Model(&models.EscrowTransaction{}).
-		Where("user_id = ? AND status = ?", user.ID, models.PayoutPending).
-		Select("COALESCE(SUM(amount::numeric), 0)").
-		Scan(&totalPending).Error; err != nil {
-		return nil, fmt.Errorf("failed to sum pending payouts: %w", err)
-	}
+	// totalPending := decimal.Zero
+	// if err := s.db.Model(&models.EscrowTransaction{}).
+	// 	Where("user_id = ? AND status = ?", user.ID, models.PayoutPending).
+	// 	Select("COALESCE(SUM(amount::numeric), 0)").
+	// 	Scan(&totalPending).Error; err != nil {
+	// 	return nil, fmt.Errorf("failed to sum pending payouts: %w", err)
+	// }
 
 	balance, _ := totalReleased.Sub(totalPaidOut).Sub(totalPending).Float64()
 	paymentQuery := s.db.Model(&models.PaymentTransactionV2{}).
@@ -199,6 +199,7 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 	if err := paymentQuery.Find(&paymentTxns).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch payment transactions: %w", err)
 	}
+	totalPending := decimal.Zero
 	for _, p := range paymentTxns {
 		amt, _ := p.Amount.Float64()
 		netAmt, _ := p.NetAmount.Float64()
@@ -219,6 +220,7 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 				Date:        p.PostingDate,
 				ID:          p.ID,
 			})
+			totalPending.Add(decimal.NewFromFloat(netAmt))
 		}
 	}
 
