@@ -101,7 +101,6 @@ func (h *Handler) HandleStripeWebhook(c *gin.Context) {
 	case "charge.succeeded":
 		err := h.service.handleChargeSucceeded(&event)
 		if err != nil {
-			fmt.Println(err.Error())
 			c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
 			return
 		}
@@ -147,9 +146,8 @@ func (h *Handler) AddUserPaymentAccount(c *gin.Context) {
 
 func (h *Handler) GetProposalPaymentDetails(c *gin.Context) {
 	proposalID := c.Param("id")
-	// user := c.MustGet("user").(models.User)
-
 	var proposal models.Proposal
+
 	if err := h.service.db.Where("id = ?", proposalID).First(&proposal).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Proposal not found"})
 		return
@@ -173,7 +171,6 @@ func (h *Handler) GetProposalPaymentDetails(c *gin.Context) {
 	discountAmount := int64(0)
 	referralCode := ""
 	// var discountPct float64
-
 	// var userReferral models.ReferralUsage
 	// if err := h.service.db.Preload("ReferralCode").
 	// 	Where("referee_id = ? AND is_qualified = ?", user.ID, false).
@@ -192,10 +189,6 @@ func (h *Handler) GetProposalPaymentDetails(c *gin.Context) {
 
 	finalCommission := commissionAmount - discountAmount
 	grandTotal := bidAmount + finalCommission + appFees
-
-	// toDollars := func(cents int64) float64 {
-	// 	return float64(cents) / 100.0
-	// }
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
@@ -268,9 +261,9 @@ func (h *Handler) GetJobPostPaymentDetails(c *gin.Context) {
 	finalCommission := commissionAmount
 	grandTotal := budgetAmount + finalCommission + appFees
 
-	toDollars := func(cents int64) float64 {
-		return float64(cents) / 100.0
-	}
+	// toDollars := func(cents int64) float64 {
+	// 	return float64(cents) / 100.0
+	// }
 
 	budgetDescription := "Fixed budget"
 	if jobPost.OpenBudget {
@@ -300,7 +293,7 @@ func (h *Handler) GetJobPostPaymentDetails(c *gin.Context) {
 				"percentage": discountPct,
 				// "saved":      toDollars(discountAmount),
 			},
-			"grand_total": toDollars(grandTotal),
+			"grand_total": grandTotal,
 			"summary": gin.H{
 				"budget":     budgetAmount,
 				"commission": finalCommission,

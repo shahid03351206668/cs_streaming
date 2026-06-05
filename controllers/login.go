@@ -161,6 +161,65 @@ func LoginController(c *gin.Context) {
 	})
 }
 
+func GetUserAuthToken(c *gin.Context) {
+	var body struct {
+		Email       string `json:"email"`
+		PhoneNumber string `json:"phone_number"`
+		Password    string `json:"password"`
+	}
+
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "Please provide a valid request body",
+		})
+		return
+	}
+
+	if body.Email == "" && body.PhoneNumber == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Please provide either email or phone number",
+		})
+		return
+	}
+	if body.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Password is required",
+		})
+		return
+	}
+
+	var user models.User
+	var result *gorm.DB
+
+	if body.Email != "" {
+		result = db.DB.Where("email = ?", body.Email).First(&user)
+	} else {
+		result = db.DB.Where("phone_number = ?", body.PhoneNumber).First(&user)
+	}
+
+	if result.Error != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "Invalid credentials",
+		})
+		return
+	}
+
+	tokens, err := lib.GenerateAuthTokens(user.ID, 0)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Internal server error",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"tokens":  tokens,
+		"user":    user,
+	})
+}
+
 func RefreshTokenController(c *gin.Context) {
 	var body struct {
 		RefreshToken string

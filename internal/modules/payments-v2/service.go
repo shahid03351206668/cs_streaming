@@ -51,7 +51,6 @@ func (s *Service) handleChargeSucceeded(event *stripe.Event) error {
 
 	tx := s.db.Begin()
 	if tx.Error != nil {
-		fmt.Println(tx.Error.Error())
 		return tx.Error
 	}
 
@@ -75,7 +74,6 @@ func (s *Service) handleChargeSucceeded(event *stripe.Event) error {
 
 	var contract models.Contract
 	if err := s.db.Where("proposal_id = ?", proposalID).First(&contract).Error; err != nil {
-		fmt.Println("error in proposal id query")
 		return err
 	}
 
@@ -130,11 +128,11 @@ func (s *Service) handleChargeSucceeded(event *stripe.Event) error {
 }
 
 type TypeWalletTransaction struct {
-	Amount      float64
-	Type        string
-	Description string
-	Date        time.Time
-	ID          string
+	Amount      float64   `json:"amount"`
+	Type        string    `json:"type"`
+	Description string    `json:"description"`
+	Date        time.Time `json:"date"`
+	ID          string    `json:"id"`
 }
 
 type UserWalletVal struct {

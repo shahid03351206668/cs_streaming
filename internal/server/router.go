@@ -218,6 +218,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	{
 		authRoutes.POST("/register", userHandler.RegisterUser)
 		authRoutes.POST("/login", controllers.LoginController)
+		authRoutes.POST("/user/auth-token", controllers.GetUserAuthToken)
 		authRoutes.POST("/verify-user", controllers.VerifyUser)
 		authRoutes.POST("/refresh", controllers.RefreshTokenController)
 		authRoutes.POST("/google-auth", controllers.GoogleSignInFirebaseController)
