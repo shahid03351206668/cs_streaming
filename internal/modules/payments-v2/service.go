@@ -178,7 +178,7 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 	}
 
 	totalPending := decimal.Zero
-	if err := s.db.Model(&models.PayoutTransaction{}).
+	if err := s.db.Model(&models.EscrowTransaction{}).
 		Where("user_id = ? AND status = ?", user.ID, models.PayoutPending).
 		Select("COALESCE(SUM(amount::numeric), 0)").
 		Scan(&totalPending).Error; err != nil {
