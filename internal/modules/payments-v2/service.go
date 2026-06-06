@@ -2,13 +2,16 @@ package paymentsv2
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"tasksy/lib"
 	"tasksy/models"
 
+	"github.com/google/uuid"
 	"github.com/stripe/stripe-go/v84/token"
 
 	"github.com/shopspring/decimal"
@@ -38,7 +41,6 @@ func (s *Service) GetSystemSettings() (*SystemSetting, error) {
 	if err := s.db.First(&data).Error; err != nil {
 		return nil, err
 	}
-
 	return &SystemSetting{
 		AppFee:               data.ApplicationFeeAmount,
 		FreelancerCommission: data.FreelancerCommissionPercentage,
@@ -49,9 +51,16 @@ func (s *Service) GetSystemSettings() (*SystemSetting, error) {
 func (s *Service) handleChargeSucceeded(event *stripe.Event) error {
 	var charge stripe.Charge
 
+	var existingPayment *models.PaymentTransactionV2
+	if err := s.db.Where("stripe_event_id = ?", event.ID).First(&existingPayment).Error; err == nil {
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
 	tx := s.db.Begin()
 	if tx.Error != nil {
-		return tx.Error
+		return fmt.Errorf("failed to begin transaction: %w", tx.Error)
 	}
 
 	defer func() {
@@ -61,9 +70,7 @@ func (s *Service) handleChargeSucceeded(event *stripe.Event) error {
 	}()
 
 	settings, _ := s.GetSystemSettings()
-
 	if err := json.Unmarshal(event.Data.Raw, &charge); err != nil {
-		fmt.Println(err.Error())
 		return err
 	}
 
@@ -74,49 +81,52 @@ func (s *Service) handleChargeSucceeded(event *stripe.Event) error {
 
 	var contract models.Contract
 	if err := s.db.Where("proposal_id = ?", proposalID).First(&contract).Error; err != nil {
+		tx.Rollback()
 		return err
 	}
 
-	amount := decimal.NewFromInt(charge.Amount / 100)
-	appFees := settings.AppFee
+	amount := lib.Float(charge.Amount / 100)
+	appFees := lib.Float(settings.AppFee)
 
 	clientComission := settings.ClientCommission
 	freelancerComission := settings.FreelancerCommission
 
-	FreelancerComissionAmount := amount.Div(decimal.NewFromFloat(100)).Mul(decimal.NewFromFloat(settings.FreelancerCommission))
-	clientComissionAmount := amount.Div(decimal.NewFromInt(100)).Mul(decimal.NewFromFloat(settings.ClientCommission))
+	FreelancerComissionAmount := amount / 100 * settings.FreelancerCommission
+	clientComissionAmount := amount / 100 * settings.ClientCommission
+	totalCharges := FreelancerComissionAmount + clientComissionAmount + appFees
 
-	totalCharges := FreelancerComissionAmount.Add(clientComissionAmount).Add(decimal.NewFromInt(appFees))
-
-	netAmount := amount.Sub(totalCharges)
+	netAmount := amount - totalCharges
 
 	if charge.Status == "succeeded" {
 		transaction := models.PaymentTransactionV2{
 			PostingDate:       time.Now(),
-			Amount:            amount,
+			Amount:            decimal.NewFromFloat(amount),
 			FromUserID:        contract.ClientID,
+			JobPostID:         contract.JobPostID,
 			ToUserID:          contract.FreelancerID,
 			StripeEventID:     event.ID,
-			AppFee:            decimal.NewFromInt(appFees),
-			NetAmount:         netAmount,
+			AppFee:            decimal.NewFromFloat(amount),
+			NetAmount:         decimal.NewFromFloat(netAmount),
 			ClientCommPct:     clientComission,
 			FreelancerCommPct: freelancerComission,
 			Status:            models.PaymentStatusHeld,
 		}
 
 		if err := tx.Create(&transaction).Error; err != nil {
+			tx.Rollback()
 			return fmt.Errorf("failed to create transaction: %w", err)
 		}
 
 		escrow := models.EscrowTransaction{
 			UserID:        contract.FreelancerID,
-			Amount:        netAmount,
+			Amount:        decimal.NewFromFloat(netAmount),
 			TransactionID: transaction.ID,
 			Status:        models.EscrowStatusHeld,
 			ContractID:    contract.ID,
 		}
 
 		if err := tx.Create(&escrow).Error; err != nil {
+			tx.Rollback()
 			return fmt.Errorf("failed to create escrow record: %w", err)
 		}
 
@@ -124,6 +134,7 @@ func (s *Service) handleChargeSucceeded(event *stripe.Event) error {
 			return fmt.Errorf("failed to commit transaction: %w", err)
 		}
 	}
+
 	return nil
 }
 
@@ -138,7 +149,7 @@ type TypeWalletTransaction struct {
 type UserWalletVal struct {
 	Balance      float64
 	Transactions []TypeWalletTransaction
-	escrowAmount float64
+	EscrowAmount float64
 }
 
 func (s *Service) AddUserBankAccount(user *models.User, accountNo string, routingNo string, currency string, countryCode string, accountHolder string, bankName string) error {
@@ -157,40 +168,47 @@ func (s *Service) AddUserBankAccount(user *models.User, accountNo string, routin
 	}
 	return nil
 }
-func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *time.Time) (*UserWalletVal, error) {
-	transactions := make([]TypeWalletTransaction, 0)
 
-	// 1. Get Total Released
-	totalReleased := decimal.Zero
+func (s *Service) GetUserBalance(user *models.User) (float64, error) {
+	released := 0.00
+	paidout := 0.00
+
 	if err := s.db.Model(&models.EscrowTransaction{}).
-		Where("user_id = ? AND status = ?", user.ID, models.EscrowStatusReleased).
+		Where("user_id = ? AND status = ? ", user.ID, models.EscrowStatusReleased).
 		Select("COALESCE(SUM(amount::numeric), 0)").
-		Scan(&totalReleased).Error; err != nil {
-		return nil, fmt.Errorf("failed to sum released escrows: %w", err)
+		Scan(&released).Error; err != nil {
+
+		return 0.00, fmt.Errorf("failed to sum escrows: %w", err)
 	}
 
-	// 2. Get Total Paid Out
-	totalPaidOut := decimal.Zero
 	if err := s.db.Model(&models.PayoutTransaction{}).
 		Where("user_id = ? AND status = ?", user.ID, models.PayoutSuccess).
 		Select("COALESCE(SUM(amount::numeric), 0)").
-		Scan(&totalPaidOut).Error; err != nil {
-		return nil, fmt.Errorf("failed to sum successful payouts: %w", err)
-	}
+		Scan(&paidout).Error; err != nil {
 
-	// 3. Get Total Held in Escrow (The Fix)
+		return 0.00, fmt.Errorf("failed to sum payouts: %w", err)
+	}
+	balance := released - paidout
+
+	return balance, nil
+}
+
+func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *time.Time) (*UserWalletVal, error) {
+	transactions := make([]TypeWalletTransaction, 0)
+
 	totalPending := decimal.Zero
 	if err := s.db.Model(&models.EscrowTransaction{}).
-		// Note: If you have a constant like models.EscrowStatusHeld, use that instead of "held"
 		Where("user_id = ? AND status = ?", user.ID, "held").
 		Select("COALESCE(SUM(amount::numeric), 0)").
 		Scan(&totalPending).Error; err != nil {
 		return nil, fmt.Errorf("failed to sum held escrows: %w", err)
 	}
 
-	balance, _ := totalReleased.Sub(totalPaidOut).Float64()
+	balance, err := s.GetUserBalance(user)
+	if err != nil {
+		return nil, err
+	}
 
-	// 4. Fetch Payment Transactions
 	paymentQuery := s.db.Model(&models.PaymentTransactionV2{}).
 		Where("(from_user_id = ? OR to_user_id = ?)", user.ID, user.ID)
 	if fromDate != nil {
@@ -217,6 +235,7 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 				Date:        p.PostingDate,
 				ID:          p.ID,
 			})
+
 		} else if p.ToUserID == user.ID {
 			transactions = append(transactions, TypeWalletTransaction{
 				Amount:      netAmt,
@@ -225,11 +244,9 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 				Date:        p.PostingDate,
 				ID:          p.ID,
 			})
-			// Removed the buggy totalPending.Add(...) logic from here
 		}
 	}
 
-	// 5. Fetch Escrow Transactions
 	escrowQuery := s.db.Where("user_id = ? AND status = ?", user.ID, models.EscrowStatusReleased)
 	if fromDate != nil {
 		escrowQuery = escrowQuery.Where("released_at >= ?", fromDate)
@@ -249,11 +266,10 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 			Type:        "credit",
 			Description: "Escrow released",
 			Date:        *e.ReleasedAt,
-			ID:          e.ID, // Fixed pointer dereference issue here: *&e.ID -> e.ID
+			ID:          e.ID,
 		})
 	}
 
-	// 6. Fetch Payout Transactions
 	payoutQuery := s.db.Where("user_id = ?", user.ID)
 	if fromDate != nil {
 		payoutQuery = payoutQuery.Where("transaction_date >= ?", fromDate)
@@ -262,21 +278,20 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 		payoutQuery = payoutQuery.Where("transaction_date <= ?", toDate)
 	}
 
-	var filteredPayouts []models.PayoutTransaction
-	if err := payoutQuery.Find(&filteredPayouts).Error; err != nil {
+	var payoutsTnx []models.PayoutTransaction
+	if err := payoutQuery.Find(&payoutsTnx).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch payout transactions: %w", err)
 	}
-	for _, p := range filteredPayouts {
+	for _, p := range payoutsTnx {
 		amt, _ := p.Amount.Float64()
 		transactions = append(transactions, TypeWalletTransaction{
 			Amount:      amt,
 			Type:        "debit",
-			Description: "Payout to bank",
+			Description: "Payout to bank account no:",
 			Date:        p.TransactionDate,
 		})
 	}
 
-	// 7. Sort Transactions
 	sort.Slice(transactions, func(i, j int) bool {
 		return transactions[i].Date.After(transactions[j].Date)
 	})
@@ -286,7 +301,7 @@ func (s *Service) GetUserWallet(user *models.User, fromDate *time.Time, toDate *
 	return &UserWalletVal{
 		Balance:      balance,
 		Transactions: transactions,
-		escrowAmount: escrowAmount,
+		EscrowAmount: escrowAmount,
 	}, nil
 }
 
@@ -301,7 +316,7 @@ func (s *Service) CreatePayout(user *models.User, amount float64, account *model
 		return fmt.Errorf("the user dont have that balance")
 	}
 
-	payoutAmount := int64(amount / 100)
+	payoutAmount := int64(amount * 100)
 	tx := s.db.Begin()
 
 	defer func() {
@@ -331,7 +346,7 @@ func (s *Service) CreatePayout(user *models.User, amount float64, account *model
 		Method:      stripe.String("standard"),
 	}
 
-	params.IdempotencyKey = stripe.String("payout-" + user.ID + "-" + fmt.Sprint(time.Now().Unix()))
+	params.IdempotencyKey = stripe.String("payout-" + user.ID + "-" + uuid.NewString())
 	stripePayout, err := payout.New(params)
 
 	if err != nil {

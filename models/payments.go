@@ -206,6 +206,9 @@ type PaymentTransactionV2 struct {
 
 	StripeEventID string `gorm:"not null" json:"stripe_event_id"`
 
+	JobPostID string  `json:"job_post_id"`
+	JobPost   JobPost `gorm:"foreignKey:JobPostID;constraint:OnDelete:CASCADE"`
+
 	FromUserID string `gorm:"index;not null" json:"from_user_id"`
 	ToUserID   string `gorm:"index;not null" json:"to_user_id"`
 

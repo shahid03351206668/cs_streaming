@@ -397,7 +397,7 @@ func (s *PaymentService) WriteAuditLog(entry AuditLogEntry) {
 
 func MakeContractPaymentFromCharge(proposal *models.Proposal, event *stripe.Event, charge *stripe.Charge) (*models.PaymentTransaction, error) {
 	settings, _ := GetSystemSettings()
-	totalAmount := charge.Amount
+	totalAmount := charge.Amount / 100
 	freelancerCommissionPct := settings.FreelancerCommissionPercentage
 	clientCommissionPct := settings.ClientCommissionPercentage
 	appFee := settings.ApplicationFeeAmount

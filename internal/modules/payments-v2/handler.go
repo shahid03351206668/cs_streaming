@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"tasksy/config"
+	"tasksy/lib"
 	"tasksy/models"
 
 	"github.com/gin-gonic/gin"
@@ -42,7 +43,7 @@ func (h *Handler) HandleUserWallet(c *gin.Context) {
 		"data": map[string]any{
 			"balance":       wallet.Balance,
 			"transactions":  wallet.Transactions,
-			"escrow_amount": wallet.escrowAmount,
+			"escrow_amount": wallet.EscrowAmount,
 		},
 	})
 }
@@ -159,16 +160,16 @@ func (h *Handler) GetProposalPaymentDetails(c *gin.Context) {
 		return
 	}
 
-	bidAmount := int64(proposal.BidAmount)
-	appFees := settings.AppFee
-	commissionPct := int64(settings.ClientCommission)
+	bidAmount := lib.Float(proposal.BidAmount)
+	appFees := lib.Float(settings.AppFee)
+	commissionPct := lib.Float(settings.ClientCommission)
 
-	commissionAmount := int64(0)
+	commissionAmount := lib.Float(0)
 	if commissionPct > 0 {
 		commissionAmount = bidAmount / 100.0 * commissionPct
 	}
 
-	discountAmount := int64(0)
+	discountAmount := lib.Float(0)
 	referralCode := ""
 	// var discountPct float64
 	// var userReferral models.ReferralUsage
@@ -229,18 +230,18 @@ func (h *Handler) GetJobPostPaymentDetails(c *gin.Context) {
 		return
 	}
 
-	budgetAmount := int64(jobPost.Budget * 100)
-	appFees := settings.AppFee
-	commissionPct := settings.ClientCommission
+	budgetAmount := lib.Float(jobPost.Budget)
+	appFees := lib.Float(settings.AppFee)
+	commissionPct := lib.Float(settings.ClientCommission)
 
-	commissionAmount := int64(0)
+	commissionAmount := 0.00
 	if commissionPct > 0 {
-		commissionAmount = int64(float64(budgetAmount) / 100.0 * commissionPct)
+		commissionAmount = budgetAmount / 100.0 * commissionPct
 	}
 
-	// discountAmount := int64(0)
 	referralCode := ""
 	var discountPct float64
+	// discountAmount := int64(0)
 
 	// var userReferral models.ReferralUsage
 	// if err := h.service.db.Preload("ReferralCode").
