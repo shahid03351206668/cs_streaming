@@ -20,6 +20,7 @@ import (
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/webhook"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -328,6 +329,43 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 		"certifications": userCertifications,
 		"portfolios":     userPortfolios,
 		"reviews":        res.Reviews, // now correctly the formatted slice
+	})
+}
+
+func (h *Handler) ResetUserPassword(c *gin.Context) {
+	var data struct {
+		PhoneNumber string `json:"phone_number"`
+		Password    string `json:"password"`
+	}
+
+	var user models.User
+	if err := h.service.db.Where("phone_number = ? ", data.PhoneNumber).Find(&user).Error; err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "error",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(data.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "Failed to hash password",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if err := h.service.db.Model(user).Update("password", string(hashedPassword)).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "Failed to update password",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
 	})
 }
 
