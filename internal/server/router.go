@@ -5,6 +5,7 @@ import (
 	"tasksy/controllers"
 	"tasksy/internal/modules/chat"
 	"tasksy/internal/modules/dispute"
+	"tasksy/internal/modules/email"
 	"tasksy/internal/modules/job"
 	"tasksy/internal/modules/notifications"
 	"tasksy/internal/modules/payments"
@@ -18,10 +19,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
-func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient) *gin.Engine { //nolint:funlen
+func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient, redisClient *redis.Client) *gin.Engine { //nolint:funlen
 	router := gin.Default()
 	router.Static("/media", "./media")
 
@@ -29,6 +31,8 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	notifService := notifications.NewService(db, fcmClient)
 	notifHandler := notifications.NewHandler(notifService)
 	controllers.SetNotificationService(notifService)
+	emailService := email.NewService(db, redisClient)
+	controllers.SetEmailService(emailService)
 
 	redisOpt := asynq.RedisClientOpt{
 		Addr: appConfig.Redis.Addr,
@@ -48,15 +52,27 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	})
 
 	router.Use(middleware.LoggerMiddleware())
-	testingRoutes := router.Group("/test")
-
-	testingHandler := paymentsv2.NewHandler(appConfig, paymentsv2.NewService(db))
-	testingRoutes.POST("webhooks/stripe/payment", testingHandler.HandleStripeWebhook)
-
 	router.GET("/ping", func(c *gin.Context) {
 		settings, _ := payments.GetSystemSettings()
 		c.JSON(200, gin.H{"message": "pong", "settings": settings})
 	})
+
+	emailHandler := email.NewHandler(emailService)
+	emailAdmin := router.Group("/api/v1/admin/email-accounts")
+	{
+		emailAdmin.GET("", emailHandler.ListEmailAccounts)
+		emailAdmin.POST("", emailHandler.CreateEmailAccount)
+		emailAdmin.PUT("/:id", emailHandler.UpdateEmailAccount)
+		emailAdmin.DELETE("/:id", emailHandler.DeleteEmailAccount)
+		emailAdmin.PUT("/:id/default", emailHandler.SetDefaultEmailAccount)
+	}
+	emailTemplateAdmin := router.Group("/api/v1/admin/email-templates")
+	{
+		emailTemplateAdmin.GET("", emailHandler.ListEmailTemplates)
+		emailTemplateAdmin.POST("", emailHandler.CreateEmailTemplate)
+		emailTemplateAdmin.PUT("/:id", emailHandler.UpdateEmailTemplate)
+		emailTemplateAdmin.DELETE("/:id", emailHandler.DeleteEmailTemplate)
+	}
 
 	userService := user.NewService(db, appConfig, s3Client)
 	userHandler := user.NewHandler(userService)
@@ -78,6 +94,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 
 	paymentService := paymentsv2.NewService(db)
 	paymentHandler := paymentsv2.NewHandler(appConfig, paymentService)
+	paymentHandler.SetEmailService(emailService)
 
 	router.POST("/api/v1/webhooks/stripe/payment", paymentHandler.HandleStripeWebhook)
 
@@ -97,7 +114,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient)
 	// 	// paymentProtected.GET("/transactions/my", paymentHandler.GetUserPaymentTransactions)
 	// }
 
-	// Wallet / withdrawal routes (authenticated)
 	walletRoutes := router.Group("/api/v1/wallet")
 	walletRoutes.Use(middleware.AuthMiddleware())
 	{

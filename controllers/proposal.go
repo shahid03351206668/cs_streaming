@@ -12,6 +12,8 @@ import (
 	"gorm.io/gorm"
 )
 
+
+
 func CreateProposal(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
@@ -54,7 +56,6 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 
-	// Validate job post status
 	if jobPost.Status != models.JobStatusOpen {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
@@ -63,7 +64,6 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 
-	// Prevent job creator from bidding on their own job
 	if jobPost.CreatedByID == user.ID {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
@@ -101,7 +101,6 @@ func CreateProposal(c *gin.Context) {
 		Status:       models.ProposalStatusPending,
 	}
 
-	// Start transaction
 	tx := db.DB.Begin()
 
 	if err := tx.Create(&proposal).Error; err != nil {
@@ -156,14 +155,21 @@ func CreateProposal(c *gin.Context) {
 		"data":    proposal,
 	})
 
-	if notificationService != nil {
-		go func(p models.Proposal, actor models.User) {
-			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-			defer cancel()
+	go func(p models.Proposal, actor models.User) {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		if notificationService != nil {
 			_ = notificationService.NotifyProposalSent(ctx, actor.ID, p.JobPost.Title, p.ID, p.JobPostID)
 			_ = notificationService.NotifyProposalReceived(ctx, p.JobPost.CreatedByID, p.JobPost.Title, p.ID, p.JobPostID)
-		}(proposal, user)
-	}
+		}
+		if emailService != nil && p.JobPost.CreatedBy.Email != "" {
+			_ = emailService.SendTemplatedEmail("proposal_received", p.JobPost.CreatedBy.Email, map[string]string{
+				"first_name":      p.JobPost.CreatedBy.FirstName,
+				"freelancer_name": actor.FirstName + " " + actor.LastName,
+				"job_title":       p.JobPost.Title,
+			})
+		}
+	}(proposal, user)
 }
 
 func UpdateProposal(c *gin.Context) {
@@ -566,7 +572,7 @@ func ManageProposalDecision(c *gin.Context) {
 	DB := db.DB
 	targetStatus := body.Status
 	var proposal models.Proposal
-	if err := DB.Preload("JobPost").First(&proposal, "id = ?", proposalID).Error; err != nil {
+	if err := DB.Preload("JobPost").Preload("Freelancer").First(&proposal, "id = ?", proposalID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Proposal not found"})
 		return
 	}
@@ -587,13 +593,19 @@ func ManageProposalDecision(c *gin.Context) {
 			return
 		}
 
-		if notificationService != nil {
-			go func(p models.Proposal) {
-				ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-				defer cancel()
+		go func(p models.Proposal) {
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel()
+			if notificationService != nil {
 				_ = notificationService.NotifyProposalDecision(ctx, p.FreelancerID, models.ProposalStatusRejected, p.ID, p.JobPostID)
-			}(proposal)
-		}
+			}
+			if emailService != nil && p.Freelancer.Email != "" {
+				_ = emailService.SendTemplatedEmail("proposal_rejected", p.Freelancer.Email, map[string]string{
+					"first_name": p.Freelancer.FirstName,
+					"job_title":  p.JobPost.Title,
+				})
+			}
+		}(proposal)
 
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Proposal rejected",
@@ -648,13 +660,19 @@ func ManageProposalDecision(c *gin.Context) {
 			return
 		}
 
-		if notificationService != nil {
-			go func(p models.Proposal) {
-				ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-				defer cancel()
+		go func(p models.Proposal) {
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel()
+			if notificationService != nil {
 				_ = notificationService.NotifyProposalDecision(ctx, p.FreelancerID, models.ProposalStatusAccepted, p.ID, p.JobPostID)
-			}(proposal)
-		}
+			}
+			if emailService != nil && p.Freelancer.Email != "" {
+				_ = emailService.SendTemplatedEmail("proposal_accepted", p.Freelancer.Email, map[string]string{
+					"first_name": p.Freelancer.FirstName,
+					"job_title":  p.JobPost.Title,
+				})
+			}
+		}(proposal)
 
 		c.JSON(http.StatusOK, gin.H{
 			"message": "Proposal accepted and contract created",

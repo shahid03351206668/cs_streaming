@@ -99,7 +99,8 @@ func ApplyMigrations() error {
 
 		&models.DeviceToken{},
 		&models.Role{},
-
+		&models.EmailAccount{},
+		&models.EmailTemplate{},
 		&models.Category{},
 		&models.PaymentTransactionV2{},
 		&models.EscrowTransaction{},

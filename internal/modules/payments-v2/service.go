@@ -182,7 +182,7 @@ func (s *Service) GetUserBalance(user *models.User) (float64, error) {
 	}
 
 	if err := s.db.Model(&models.PayoutTransaction{}).
-		Where("user_id = ? AND status = ?", user.ID, models.PayoutSuccess).
+		Where("user_id = ? AND status = ?", user.ID, models.PayoutCompleted).
 		Select("COALESCE(SUM(amount::numeric), 0)").
 		Scan(&paidout).Error; err != nil {
 
@@ -370,4 +370,56 @@ func (s *Service) CreatePayout(user *models.User, amount float64, account *model
 
 	tx.Commit()
 	return nil
+}
+
+func (s *Service) UpdatePayoutStatus(stripePayoutID string, status string) error {
+	return s.UpdatePayoutStatusWithReason(stripePayoutID, status, "")
+}
+
+func (s *Service) UpdatePayoutStatusWithReason(stripePayoutID, status, failureReason string) error {
+	tx := s.db.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	var payoutTx models.PayoutTransaction
+	if err := tx.Where("stripe_payout_id = ?", stripePayoutID).First(&payoutTx).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("payout not found: %w", err)
+	}
+
+	if isTerminalStatus(payoutTx.Status) {
+		tx.Rollback()
+		return nil
+	}
+
+	updates := map[string]interface{}{
+		"status":     status,
+		"updated_at": time.Now(),
+	}
+	if failureReason != "" {
+		updates["failure_reason"] = failureReason
+	}
+
+	if err := tx.Model(&payoutTx).Updates(updates).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to update payout status: %w", err)
+	}
+
+	if status == models.PayoutCompleted {
+		// if err := s.deductWalletBalance(tx, payoutTx.UserID, payoutTx.Amount); err != nil {
+		// 	tx.Rollback()
+		// 	return fmt.Errorf("failed to deduct wallet balance: %w", err)
+		// }
+	}
+
+	return tx.Commit().Error
+}
+
+func isTerminalStatus(status string) bool {
+	return status == models.PayoutCompleted ||
+		status == models.PayoutFailed ||
+		status == models.PayoutCanceled
 }

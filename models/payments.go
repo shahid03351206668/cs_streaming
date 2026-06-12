@@ -77,9 +77,10 @@ func (PaymentTransaction) TableName() string {
 }
 
 const (
-	PayoutPending = "pending"
-	PayoutSuccess = "success"
-	PayoutFailed  = "failed"
+	PayoutPending   = "pending"
+	PayoutCompleted = "completed"
+	PayoutFailed    = "failed"
+	PayoutCanceled  = "canceled"
 )
 
 type PayoutTransaction struct {
@@ -93,9 +94,10 @@ type PayoutTransaction struct {
 	BankAccountID  *string          `gorm:"index" json:"bank_account_id,omitempty"`
 	BankAccount    *UserBankAccount `gorm:"foreignKey:BankAccountID" json:"bank_account,omitempty"`
 
-	Amount   decimal.Decimal `gorm:"default:0" json:"amount"`
-	Currency string          `gorm:"type:varchar(3);default:'gbp'" json:"currency"`
-	Status   string          `gorm:"index;not null;default:'pending'" json:"status"`
+	Amount        decimal.Decimal `gorm:"default:0" json:"amount"`
+	Currency      string          `gorm:"type:varchar(3);default:'gbp'" json:"currency"`
+	Status        string          `gorm:"index;not null;default:'pending'" json:"status"`
+	FailureReason string          `gorm:"type:text" json:"failure_reason,omitempty"`
 }
 
 type UserBankAccount struct {
@@ -256,7 +258,6 @@ type EscrowTransaction struct {
 
 type UserAccountDetails struct {
 	BaseModel
-
 	UserID        string `gorm:"index;not null" json:"user_id"`
 	User          User   `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user"`
 	BankName      string `json:"bank_name"`

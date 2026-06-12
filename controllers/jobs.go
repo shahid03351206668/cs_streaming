@@ -914,16 +914,39 @@ func CompleteContract(c *gin.Context) {
 
 		if notificationService != nil {
 			if ctr.ClientCompleted && ctr.FreelancerCompleted {
-				// Both done — notify both parties
 				_ = notificationService.NotifyJobCompleted(ctx, ctr.ClientID, jobTitle, ctr.ID, ctr.JobPostID)
 				_ = notificationService.NotifyJobCompleted(ctx, ctr.FreelancerID, jobTitle, ctr.ID, ctr.JobPostID)
 			} else {
-				// Only one party confirmed — notify the other to also confirm
 				otherPartyID := ctr.FreelancerID
 				if actorID == ctr.FreelancerID {
 					otherPartyID = ctr.ClientID
 				}
 				_ = notificationService.NotifyAwaitingCompletion(ctx, otherPartyID, jobTitle, ctr.ID, ctr.JobPostID)
+			}
+		}
+
+		if emailService != nil && ctr.ClientCompleted && ctr.FreelancerCompleted {
+			var client, freelancer models.User
+			dbConn.Select("email, first_name, last_name").First(&client, "id = ?", ctr.ClientID)
+			dbConn.Select("email, first_name, last_name").First(&freelancer, "id = ?", ctr.FreelancerID)
+
+			if client.Email != "" {
+				_ = emailService.SendTemplatedEmail("job_completed_client", client.Email, map[string]string{
+					"first_name":      client.FirstName,
+					"job_title":       jobTitle,
+					"freelancer_name": freelancer.FirstName + " " + freelancer.LastName,
+				})
+			}
+			if freelancer.Email != "" {
+				_ = emailService.SendTemplatedEmail("job_completed_freelancer", freelancer.Email, map[string]string{
+					"first_name":  freelancer.FirstName,
+					"job_title":   jobTitle,
+					"client_name": client.FirstName + " " + client.LastName,
+				})
+				_ = emailService.SendTemplatedEmail("payment_released", freelancer.Email, map[string]string{
+					"first_name": freelancer.FirstName,
+					"job_title":  jobTitle,
+				})
 			}
 		}
 

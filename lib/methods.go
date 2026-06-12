@@ -1,10 +1,26 @@
 package lib
 
 import (
+	"bytes"
+	"fmt"
+	"html/template"
 	"strconv"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 )
+
+var TEMPLATE_FUNCTIONS_MAP template.FuncMap = template.FuncMap{
+	"default": func(def, val any) any {
+		if val == nil || val == "" {
+			return def
+		}
+		return val
+	},
+	"upper": strings.ToUpper,
+	"lower": strings.ToLower,
+	"trim":  strings.TrimSpace,
+}
 
 func MakePassword(value string) string {
 	hashed, err := bcrypt.GenerateFromPassword([]byte(value), bcrypt.DefaultCost)
@@ -49,4 +65,19 @@ func Float(v any) float64 {
 	default:
 		return 0.0
 	}
+}
+
+func RenderTemplate(tmpl string, context map[string]any) (string, error) {
+	t, err := template.New("email").Funcs(TEMPLATE_FUNCTIONS_MAP).Parse(tmpl)
+
+	if err != nil {
+		return "", fmt.Errorf("template parse error: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, context); err != nil {
+		return "", fmt.Errorf("template render error: %w", err)
+	}
+
+	return buf.String(), nil
 }

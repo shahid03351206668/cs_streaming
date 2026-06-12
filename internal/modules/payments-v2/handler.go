@@ -1,22 +1,26 @@
 package paymentsv2
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"tasksy/config"
+	emailpkg "tasksy/internal/modules/email"
 	"tasksy/lib"
 	"tasksy/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/webhook"
 	// "golang.org/x/text/cases"
 	// "gorm.io/gorm"
 )
 
 type Handler struct {
-	config  *config.Config
-	service *Service
+	config   *config.Config
+	service  *Service
+	emailSvc *emailpkg.Service
 }
 
 func NewHandler(config *config.Config, service *Service) *Handler {
@@ -24,6 +28,10 @@ func NewHandler(config *config.Config, service *Service) *Handler {
 		config:  config,
 		service: service,
 	}
+}
+
+func (h *Handler) SetEmailService(svc *emailpkg.Service) {
+	h.emailSvc = svc
 }
 
 func (h *Handler) HandleUserWallet(c *gin.Context) {
@@ -106,9 +114,90 @@ func (h *Handler) HandleStripeWebhook(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"message": "succeed"})
+
+	case "payout.paid":
+		h.handlePayoutPaid(c, event)
+	case "payout.failed":
+		h.handlePayoutFailed(c, event)
+	case "payout.canceled":
+		h.handlePayoutCanceled(c, event)
+
 	default:
 		c.JSON(http.StatusContinue, gin.H{"message": "received", "info": fmt.Sprintf("unhandled event type %s", event.Type)})
 	}
+}
+
+func (h *Handler) handlePayoutPaid(c *gin.Context, event stripe.Event) {
+	var stripePayout stripe.Payout
+	if err := json.Unmarshal(event.Data.Raw, &stripePayout); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to parse payout"})
+		return
+	}
+
+	if err := h.service.UpdatePayoutStatus(stripePayout.ID, models.PayoutCompleted); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if h.emailSvc != nil {
+		var payoutTx models.PayoutTransaction
+		if err := h.service.db.Preload("User").Where("stripe_payout_id = ?", stripePayout.ID).First(&payoutTx).Error; err == nil && payoutTx.User.Email != "" {
+			_ = h.emailSvc.SendTemplatedEmail("payout_completed", payoutTx.User.Email, map[string]string{
+				"first_name": payoutTx.User.FirstName,
+				"amount":     payoutTx.Amount.String(),
+				"currency":   payoutTx.Currency,
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+func (h *Handler) handlePayoutFailed(c *gin.Context, event stripe.Event) {
+	var stripePayout stripe.Payout
+	if err := json.Unmarshal(event.Data.Raw, &stripePayout); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to parse payout"})
+		return
+	}
+
+	failureReason := ""
+	if stripePayout.FailureMessage != "" {
+		failureReason = stripePayout.FailureMessage
+	}
+
+	if err := h.service.UpdatePayoutStatusWithReason(stripePayout.ID, models.PayoutFailed, failureReason); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if h.emailSvc != nil {
+		var payoutTx models.PayoutTransaction
+		if err := h.service.db.Preload("User").Where("stripe_payout_id = ?", stripePayout.ID).First(&payoutTx).Error; err == nil && payoutTx.User.Email != "" {
+			_ = h.emailSvc.SendTemplatedEmail("payout_failed", payoutTx.User.Email, map[string]string{
+				"first_name":     payoutTx.User.FirstName,
+				"amount":         payoutTx.Amount.String(),
+				"currency":       payoutTx.Currency,
+				"failure_reason": failureReason,
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+func (h *Handler) handlePayoutCanceled(c *gin.Context, event stripe.Event) {
+	var stripePayout stripe.Payout
+	if err := json.Unmarshal(event.Data.Raw, &stripePayout); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to parse payout"})
+		return
+	}
+
+	if err := h.service.UpdatePayoutStatus(stripePayout.ID, models.PayoutCanceled); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 func (h *Handler) AddUserPaymentAccount(c *gin.Context) {
@@ -322,4 +411,11 @@ func (h *Handler) GetUserAccount(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": data})
+}
+
+func (h *Handler) HandleStripePayoutHook(c *gin.Context) {
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+	})
 }

@@ -7,6 +7,7 @@ import (
 	"tasksy/pkg/fcm"
 	"tasksy/pkg/logger"
 
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -14,6 +15,8 @@ func main() {
 
 	appConfig := config.LoadConfig()
 	logger.InitLogger()
+	redisClient := redis.NewClient(&redis.Options{Addr: appConfig.Redis.Addr})
+
 
 	fcmClient, err := fcm.NewFCMClient(appConfig.Firebase.CredentialsFile)
 	if err != nil {
@@ -39,7 +42,7 @@ func main() {
 		logger.Log.Info("system settings initialized")
 	}()
 
-	router := server.MakeRouter(db.DB, appConfig, fcmClient)
+	router := server.MakeRouter(db.DB, appConfig, fcmClient, redisClient)
 	address := appConfig.Server.Addr
 
 	logger.Log.Info("server starting", zap.String("address", address))

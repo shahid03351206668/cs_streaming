@@ -337,7 +337,6 @@ func (h *Handler) ResetUserPassword(c *gin.Context) {
 		PhoneNumber string `json:"phone_number"`
 		Password    string `json:"password"`
 	}
-	
 
 	if err := c.ShouldBindJSON(&data); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -365,14 +364,13 @@ func (h *Handler) ResetUserPassword(c *gin.Context) {
 		return
 	}
 
-	 if err := h.service.db.Model(&user).Update("password", string(hashedPassword)).Error; err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{
-            "message": "Failed to update password",
-            "error":   err.Error(),
-        })
-        return
-    }
-
+	if err := h.service.db.Model(&user).Update("password", string(hashedPassword)).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "Failed to update password",
+			"error":   err.Error(),
+		})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
