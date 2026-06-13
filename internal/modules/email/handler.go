@@ -3,8 +3,9 @@ package email
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"tasksy/models"
+
+	"github.com/gin-gonic/gin"
 )
 
 type Handler struct {
@@ -144,7 +145,7 @@ func (h *Handler) SetDefaultEmailAccount(c *gin.Context) {
 
 func (h *Handler) ListEmailTemplates(c *gin.Context) {
 	var templates []models.EmailTemplate
-	if err := h.service.db.Preload("EmailAccount").Find(&templates).Error; err != nil {
+	if err := h.service.db.Find(&templates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -153,10 +154,9 @@ func (h *Handler) ListEmailTemplates(c *gin.Context) {
 
 func (h *Handler) CreateEmailTemplate(c *gin.Context) {
 	var input struct {
-		Name           string  `json:"name" binding:"required"`
-		Subject        string  `json:"subject" binding:"required"`
-		Body           string  `json:"body" binding:"required"`
-		EmailAccountID *string `json:"email_account_id"`
+		Name    string `json:"name" binding:"required"`
+		Subject string `json:"subject" binding:"required"`
+		Body    string `json:"body" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -182,10 +182,9 @@ func (h *Handler) UpdateEmailTemplate(c *gin.Context) {
 	id := c.Param("id")
 
 	var input struct {
-		Name           string  `json:"name"`
-		Subject        string  `json:"subject"`
-		Body           string  `json:"body"`
-		EmailAccountID *string `json:"email_account_id"`
+		Name    string `json:"name"`
+		Subject string `json:"subject"`
+		Body    string `json:"body"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -203,10 +202,6 @@ func (h *Handler) UpdateEmailTemplate(c *gin.Context) {
 	if input.Body != "" {
 		updates["body"] = input.Body
 	}
-	if input.EmailAccountID != nil {
-		updates["email_account_id"] = input.EmailAccountID
-	}
-
 	if err := h.service.db.Model(&models.EmailTemplate{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
