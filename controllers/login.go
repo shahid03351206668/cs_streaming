@@ -2,15 +2,48 @@ package controllers
 
 import (
 	"net/http"
+	"os"
 	"tasksy/db"
 	"tasksy/lib"
 	"tasksy/models"
+	"tasksy/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/stripe/stripe-go/v84"
+	"github.com/stripe/stripe-go/v84/account"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
+// provisionStripeAccount creates a Stripe Express Connect account for a user
+// if they don't already have one. Runs fire-and-forget; never blocks login.
+func provisionStripeAccount(user models.User) {
+	if user.StripeConnectAccountID != "" {
+		return
+	}
+	go func() {
+		stripe.Key = os.Getenv("STRIPE_SECRET_KEY")
+		acc, err := account.New(&stripe.AccountParams{
+			Type:    stripe.String(string(stripe.AccountTypeExpress)),
+			Email:   stripe.String(user.Email),
+			Country: stripe.String("GB"),
+			Capabilities: &stripe.AccountCapabilitiesParams{
+				Transfers: &stripe.AccountCapabilitiesTransfersParams{
+					Requested: stripe.Bool(true),
+				},
+			},
+		})
+		if err != nil {
+			logger.Log.Error("stripe connect account creation failed at login", zap.String("user_id", user.ID), zap.Error(err))
+			return
+		}
+		if err := db.DB.Model(&models.User{}).Where("id = ?", user.ID).Update("stripe_connect_account_id", acc.ID).Error; err != nil {
+			logger.Log.Error("failed to save stripe connect account id at login", zap.String("user_id", user.ID), zap.Error(err))
+		}
+	}()
+}
 
 func LoginControllerV1(c *gin.Context) {
 	var body struct {
@@ -70,6 +103,8 @@ func LoginControllerV1(c *gin.Context) {
 		})
 		return
 	}
+
+	provisionStripeAccount(user)
 
 	tokens, err := lib.GenerateAuthTokens(user.ID, 5)
 
@@ -144,6 +179,8 @@ func LoginController(c *gin.Context) {
 		})
 		return
 	}
+
+	provisionStripeAccount(user)
 
 	tokens, err := lib.GenerateAuthTokens(user.ID, 0)
 

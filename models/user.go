@@ -34,7 +34,8 @@ type User struct {
 	Roles                  []Role `gorm:"many2many:user_roles;" json:"roles"`
 	ReferralRewardBalance  int64  `gorm:"default:0" json:"referral_reward_balance"`
 	WalletBalance          int64  `gorm:"default:0" json:"wallet_balance"`
-	StripeConnectAccountID string `gorm:"type:varchar(100)" json:"-"`
+	StripeConnectAccountID  string `gorm:"type:varchar(100)" json:"-"`
+	StripeConnectOnboarded  bool   `gorm:"default:false" json:"stripe_connect_onboarded"`
 }
 
 func (u *User) Can(slug string, db *gorm.DB) bool {

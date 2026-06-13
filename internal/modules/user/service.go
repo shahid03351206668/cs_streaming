@@ -10,6 +10,8 @@ import (
 	"tasksy/pkg/logger"
 	"time"
 
+	"github.com/stripe/stripe-go/v84"
+	"github.com/stripe/stripe-go/v84/account"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -189,6 +191,27 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader) (*models
 	if err := s.db.Create(&user).Error; err != nil {
 		return nil, err
 	}
+
+	go func() {
+		stripe.Key = s.appConfig.Stripe.SecretKey
+		acc, err := account.New(&stripe.AccountParams{
+			Type:    stripe.String(string(stripe.AccountTypeExpress)),
+			Email:   stripe.String(user.Email),
+			Country: stripe.String("GB"),
+			Capabilities: &stripe.AccountCapabilitiesParams{
+				Transfers: &stripe.AccountCapabilitiesTransfersParams{
+					Requested: stripe.Bool(true),
+				},
+			},
+		})
+		if err != nil {
+			logger.Log.Error("failed to create stripe connect account", zap.String("user_id", user.ID), zap.Error(err))
+			return
+		}
+		if err := s.db.Model(&models.User{}).Where("id = ?", user.ID).Update("stripe_connect_account_id", acc.ID).Error; err != nil {
+			logger.Log.Error("failed to save stripe connect account id", zap.String("user_id", user.ID), zap.Error(err))
+		}
+	}()
 
 	return &user, nil
 }

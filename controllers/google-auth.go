@@ -112,6 +112,8 @@ func GoogleSignInFirebaseController(c *gin.Context) {
 		}
 	}
 
+	provisionStripeAccount(user)
+
 	tokens, err := lib.GenerateAuthTokens(user.ID, 0)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
