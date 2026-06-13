@@ -218,3 +218,20 @@ func (h *Handler) DeleteEmailTemplate(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
 }
+
+func (h *Handler) SendTestEmail(c *gin.Context) {
+	var body struct {
+		To string `json:"to" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "to field is required"})
+		return
+	}
+
+	if err := h.service.SendMail("noreply@tasksy.co.uk", body.To, "Tasksy Test Email", "<p>This is a test email from <strong>Tasksy</strong>. If you received this, SMTP is working correctly.</p>"); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Test email sent to " + body.To})
+}

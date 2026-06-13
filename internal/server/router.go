@@ -73,6 +73,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		emailTemplateAdmin.PUT("/:id", emailHandler.UpdateEmailTemplate)
 		emailTemplateAdmin.DELETE("/:id", emailHandler.DeleteEmailTemplate)
 	}
+	router.Group("/api/v1/admin").POST("/email/test", emailHandler.SendTestEmail)
 
 	userService := user.NewService(db, appConfig, s3Client)
 	userHandler := user.NewHandler(userService)
