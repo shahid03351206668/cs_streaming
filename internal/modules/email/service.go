@@ -75,16 +75,37 @@ func (s *Service) InvalidateEmailAccountCache(email string) {
 	s.redis.Del(context.Background(), cacheKey)
 }
 
+// loginAuth implements AUTH LOGIN for SMTP servers (e.g. Microsoft 365)
+// that do not accept the standard AUTH PLAIN method.
+type loginAuth struct{ username, password string }
+
+func (a *loginAuth) Start(_ *smtp.ServerInfo) (string, []byte, error) {
+	return "LOGIN", nil, nil
+}
+
+func (a *loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
+	if !more {
+		return nil, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(string(fromServer))) {
+	case "username:":
+		return []byte(a.username), nil
+	case "password:":
+		return []byte(a.password), nil
+	default:
+		return nil, fmt.Errorf("unexpected SMTP challenge: %s", fromServer)
+	}
+}
+
 func (s *Service) SendMail(email, to, subject, htmlBody string) error {
 	acc, err := s.GetEmailAccount(email)
-
 	if err != nil {
 		return err
 	}
 
 	from := fmt.Sprintf("%s <%s>", acc.FromName, acc.Email)
 	addr := fmt.Sprintf("%s:%d", acc.Host, acc.Port)
-	auth := smtp.PlainAuth("", acc.Email, acc.Password, acc.Host)
+	auth := &loginAuth{username: acc.Email, password: acc.Password}
 
 	headers := fmt.Sprintf(
 		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n",
