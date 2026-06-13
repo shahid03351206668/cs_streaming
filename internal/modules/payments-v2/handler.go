@@ -122,6 +122,9 @@ func (h *Handler) HandleStripeWebhook(c *gin.Context) {
 	case "payout.canceled":
 		h.handlePayoutCanceled(c, event)
 
+	case "account.updated":
+		h.handleConnectAccountUpdated(c, event)
+
 	default:
 		c.JSON(http.StatusContinue, gin.H{"message": "received", "info": fmt.Sprintf("unhandled event type %s", event.Type)})
 	}
@@ -418,4 +421,60 @@ func (h *Handler) HandleStripePayoutHook(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 	})
+}
+
+func (h *Handler) HandleGetOnboardingLink(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	stripe.Key = h.config.Stripe.SecretKey
+
+	if user.StripeConnectAccountID == "" {
+		if err := h.service.CreateConnectAccount(&user); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+			return
+		}
+		if err := h.service.db.First(&user, "id = ?", user.ID).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+			return
+		}
+	}
+
+	url, err := h.service.GetOnboardingLink(&user, "https://tasksy.co.uk/onboarding/retry", "https://tasksy.co.uk/onboarding/complete")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": gin.H{"url": url}})
+}
+
+func (h *Handler) HandleGetOnboardingStatus(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	onboarded, accountID, err := h.service.GetConnectStatus(&user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": gin.H{
+		"onboarded":                onboarded,
+		"stripe_connect_account_id": accountID,
+	}})
+}
+
+func (h *Handler) handleConnectAccountUpdated(c *gin.Context, event stripe.Event) {
+	var acc stripe.Account
+	if err := json.Unmarshal(event.Data.Raw, &acc); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "failed to parse account event"})
+		return
+	}
+
+	if acc.DetailsSubmitted {
+		h.service.db.Model(&models.User{}).
+			Where("stripe_connect_account_id = ?", acc.ID).
+			Update("stripe_connect_onboarded", true)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success"})
 }

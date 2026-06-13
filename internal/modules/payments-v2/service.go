@@ -16,6 +16,8 @@ import (
 
 	"github.com/shopspring/decimal"
 	"github.com/stripe/stripe-go/v84"
+	"github.com/stripe/stripe-go/v84/account"
+	"github.com/stripe/stripe-go/v84/accountlink"
 	"github.com/stripe/stripe-go/v84/payout"
 
 	// "go.uber.org/zap"
@@ -422,4 +424,38 @@ func isTerminalStatus(status string) bool {
 	return status == models.PayoutCompleted ||
 		status == models.PayoutFailed ||
 		status == models.PayoutCanceled
+}
+
+func (s *Service) CreateConnectAccount(user *models.User) error {
+	acc, err := account.New(&stripe.AccountParams{
+		Type:    stripe.String(string(stripe.AccountTypeExpress)),
+		Email:   stripe.String(user.Email),
+		Country: stripe.String("GB"),
+		Capabilities: &stripe.AccountCapabilitiesParams{
+			Transfers: &stripe.AccountCapabilitiesTransfersParams{
+				Requested: stripe.Bool(true),
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create stripe connect account: %w", err)
+	}
+	return s.db.Model(user).Update("stripe_connect_account_id", acc.ID).Error
+}
+
+func (s *Service) GetOnboardingLink(user *models.User, refreshURL, returnURL string) (string, error) {
+	link, err := accountlink.New(&stripe.AccountLinkParams{
+		Account:    stripe.String(user.StripeConnectAccountID),
+		RefreshURL: stripe.String(refreshURL),
+		ReturnURL:  stripe.String(returnURL),
+		Type:       stripe.String("account_onboarding"),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create onboarding link: %w", err)
+	}
+	return link.URL, nil
+}
+
+func (s *Service) GetConnectStatus(user *models.User) (bool, string, error) {
+	return user.StripeConnectOnboarded, user.StripeConnectAccountID, nil
 }

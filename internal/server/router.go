@@ -108,6 +108,13 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		paymentRoutes.GET("/wallet", paymentHandler.HandleUserWallet)
 	}
 
+	onboardingRoutes := router.Group("/api/v1/onboarding")
+	onboardingRoutes.Use(middleware.AuthMiddleware())
+	{
+		onboardingRoutes.POST("/start", paymentHandler.HandleGetOnboardingLink)
+		onboardingRoutes.GET("/status", paymentHandler.HandleGetOnboardingStatus)
+	}
+
 	// Authenticated payment routes
 	// paymentProtected := router.Group("/api/v1/payments")
 	// paymentProtected.Use(middleware.AuthMiddleware())
