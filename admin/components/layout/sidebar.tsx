@@ -16,6 +16,7 @@ import {
   Building2,
   ShieldAlert,
   BookOpen,
+  Mail,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ const navItems = [
   { title: "Ledger",       href: "/dashboard/ledger",       icon: BookOpen },
   { title: "Disputes",     href: "/dashboard/disputes",     icon: ShieldAlert },
   { title: "Banks",        href: "/dashboard/banks",        icon: Building2 },
+  { title: "Email",        href: "/dashboard/email",        icon: Mail },
   { title: "Settings",     href: "/dashboard/settings",     icon: Settings },
 ];
 

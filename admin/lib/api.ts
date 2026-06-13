@@ -398,3 +398,76 @@ export const adminGetDispute = (id: string) =>
 
 export const adminResolveDispute = (id: string, resolution: string) =>
   api.put<{ message: string; data: Dispute }>(`/api/v1/admin/disputes/${id}/resolve`, { resolution });
+
+// Email Accounts
+export interface EmailAccount {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  email: string;
+  from_name: string;
+  is_active: boolean;
+  is_default: boolean;
+}
+
+export interface EmailAccountParams {
+  name: string;
+  host: string;
+  port: number;
+  email: string;
+  password: string;
+  from_name: string;
+  is_default?: boolean;
+}
+
+export interface EmailAccountUpdateParams {
+  name?: string;
+  host?: string;
+  port?: number;
+  username?: string;
+  password?: string;
+  from_name?: string;
+  is_active?: boolean;
+}
+
+export const listEmailAccounts = () =>
+  api.get<EmailAccount[]>("/api/v1/admin/email-accounts");
+
+export const createEmailAccount = (data: EmailAccountParams) =>
+  api.post<EmailAccount>("/api/v1/admin/email-accounts", data);
+
+export const updateEmailAccount = (id: string, data: EmailAccountUpdateParams) =>
+  api.put("/api/v1/admin/email-accounts/" + id, data);
+
+export const deleteEmailAccount = (id: string) =>
+  api.delete("/api/v1/admin/email-accounts/" + id);
+
+export const setDefaultEmailAccount = (id: string) =>
+  api.put("/api/v1/admin/email-accounts/" + id + "/default");
+
+// Email Templates
+export interface EmailTemplate {
+  id: string;
+  name: string;
+  subject: string;
+  body: string;
+}
+
+export interface EmailTemplateParams {
+  name: string;
+  subject: string;
+  body: string;
+}
+
+export const listEmailTemplates = () =>
+  api.get<EmailTemplate[]>("/api/v1/admin/email-templates");
+
+export const createEmailTemplate = (data: EmailTemplateParams) =>
+  api.post<EmailTemplate>("/api/v1/admin/email-templates", data);
+
+export const updateEmailTemplate = (id: string, data: Partial<EmailTemplateParams>) =>
+  api.put("/api/v1/admin/email-templates/" + id, data);
+
+export const deleteEmailTemplate = (id: string) =>
+  api.delete("/api/v1/admin/email-templates/" + id);
