@@ -39,8 +39,7 @@ func (h *Handler) HandleStripeUserAccount(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&RequestData); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "error",
-			"error":   err.Error(),
+                    			"error":   err.Error(),
 			"data": "request body",
 		})
 		return

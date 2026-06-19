@@ -424,6 +424,9 @@ func (s *Service) SyncUserToStripe(user *models.User) error {
 		Email:   stripe.String(user.Email),
 		Country: stripe.String("GB"),
 		Capabilities: &stripe.AccountCapabilitiesParams{
+			CardPayments: &stripe.AccountCapabilitiesCardPaymentsParams{
+				Requested: stripe.Bool(true),
+			},
 			Transfers: &stripe.AccountCapabilitiesTransfersParams{
 				Requested: stripe.Bool(true),
 			},
