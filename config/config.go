@@ -69,9 +69,6 @@ func LoadConfig() *Config {
 	port := getEnv("SERVER_PORT", "5000")
 	dbURI := getEnv("DB_URI", "")
 
-	// fmt.Println("host, port")
-	// fmt.Println(host, port)
-
 	if dbURI == "" {
 		log.Println("Warning: DB_URI is not set")
 	}

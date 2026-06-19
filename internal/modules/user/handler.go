@@ -33,9 +33,40 @@ func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
 }
 
-// UpdateUserFeedPreferences saves the authenticated user's category preferences.
-// Body: {"categories": [{"id": "uuid", "name": "Design"}]}
-// Passing an empty array clears all preferences.
+func (h *Handler) HandleStripeUserAccount(c *gin.Context) {
+	var RequestData struct {
+		Email string `json:"email" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&RequestData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "error",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	var User models.User
+	if err := h.service.db.Where("email = ?", RequestData.Email).First(&User).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "error",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	if err := h.service.SyncUserToStripe(&User); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "error",
+			"error":   err.Error(),
+		})
+		return
+
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+	})
+}
+
 func (h *Handler) UpdateUserFeedPreferences(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
@@ -449,15 +480,12 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 		}
 	}
 
-	// Create a referral code for the new user automatically
 	var userReferralCode *models.ReferralCode
 	code, err := generateUserReferralCode(8)
 	if err == nil {
-		// Try to create the referral code with retries in case of collision
 		for i := 0; i < 3; i++ {
 			var existingCode models.ReferralCode
 			if err := h.service.db.Where("UPPER(code) = ?", code).First(&existingCode).Error; err != nil {
-				// Code doesn't exist, we can use it
 				newCode := models.ReferralCode{
 					Code:               code,
 					OwnerID:            user.ID,
@@ -473,7 +501,6 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 					break
 				}
 			}
-			// Generate a new code if collision occurred
 			code, _ = generateUserReferralCode(8)
 		}
 	}

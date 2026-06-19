@@ -414,3 +414,27 @@ func (s *Service) RedeemCode(tx *gorm.DB, code string, UserID string) error {
 
 	return tx.Model(&refCode).UpdateColumn("current_uses", gorm.Expr("current_uses + ?", 1)).Error
 }
+
+func (s *Service) SyncUserToStripe(user *models.User) error {
+
+	stripe.Key = s.appConfig.Stripe.SecretKey
+
+	acc, err := account.New(&stripe.AccountParams{
+		Type:    stripe.String(string(stripe.AccountTypeExpress)),
+		Email:   stripe.String(user.Email),
+		Country: stripe.String("GB"),
+		Capabilities: &stripe.AccountCapabilitiesParams{
+			Transfers: &stripe.AccountCapabilitiesTransfersParams{
+				Requested: stripe.Bool(true),
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if err := s.db.Model(&models.User{}).Where("id = ?", user.ID).Update("stripe_connect_account_id", acc.ID).Error; err != nil {
+		return err
+	}
+
+	return nil
+}
