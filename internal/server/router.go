@@ -240,7 +240,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 
 	authRoutes := router.Group("/api/auth")
 	{
-		
+
 		authRoutes.POST("/user/stripe/connect", userHandler.HandleStripeUserAccount)
 		authRoutes.POST("/reset-password", userHandler.ResetUserPassword)
 		authRoutes.POST("/register", userHandler.RegisterUser)

@@ -41,6 +41,7 @@ func (h *Handler) HandleStripeUserAccount(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
 			"error":   err.Error(),
+			"data": "request body",
 		})
 		return
 	}
@@ -50,6 +51,7 @@ func (h *Handler) HandleStripeUserAccount(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
 			"error":   err.Error(),
+			"data": "user call",
 		})
 		return
 	}
