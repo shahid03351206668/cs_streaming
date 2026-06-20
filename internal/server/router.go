@@ -126,6 +126,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	{
 		v3Routes.POST("/intent", paymentV3Handler.HandleCreatePaymentIntent)
 		v3Routes.POST("/:id/refund", paymentV3Handler.HandleRefund)
+		v3Routes.GET("/transactions", paymentV3Handler.HandleListTransactions)
 	}
 
 	v3Escrow := router.Group("/api/v3/escrow")
