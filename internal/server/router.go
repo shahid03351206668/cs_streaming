@@ -10,6 +10,7 @@ import (
 	"tasksy/internal/modules/notifications"
 	"tasksy/internal/modules/payments"
 	paymentsv2 "tasksy/internal/modules/payments-v2"
+	paymentsv3 "tasksy/internal/modules/payments-v3"
 	"tasksy/internal/modules/promotions"
 	"tasksy/internal/modules/referrals"
 	"tasksy/internal/modules/user"
@@ -113,6 +114,30 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	{
 		onboardingRoutes.POST("/start", paymentHandler.HandleGetOnboardingLink)
 		onboardingRoutes.GET("/status", paymentHandler.HandleGetOnboardingStatus)
+	}
+
+	paymentV3Service := paymentsv3.NewService(db)
+	paymentV3Handler := paymentsv3.NewHandler(appConfig, paymentV3Service)
+
+	router.POST("/api/v3/webhooks/stripe/payment", paymentV3Handler.HandleStripeWebhookV3)
+
+	v3Routes := router.Group("/api/v3/payments")
+	v3Routes.Use(middleware.AuthMiddleware())
+	{
+		v3Routes.POST("/intent", paymentV3Handler.HandleCreatePaymentIntent)
+		v3Routes.POST("/:id/refund", paymentV3Handler.HandleRefund)
+	}
+
+	v3Escrow := router.Group("/api/v3/escrow")
+	v3Escrow.Use(middleware.AuthMiddleware())
+	{
+		v3Escrow.POST("/:id/release", paymentV3Handler.HandleReleaseEscrow)
+	}
+
+	v3Wallet := router.Group("/api/v3/wallet")
+	v3Wallet.Use(middleware.AuthMiddleware())
+	{
+		v3Wallet.GET("", paymentV3Handler.HandleGetWallet)
 	}
 
 	// Authenticated payment routes

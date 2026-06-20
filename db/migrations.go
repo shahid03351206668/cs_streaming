@@ -104,6 +104,8 @@ func ApplyMigrations() error {
 		&models.Category{},
 		&models.PaymentTransactionV2{},
 		&models.EscrowTransaction{},
+		&models.PaymentTransactionV3{},
+		&models.EscrowTransactionV3{},
 		&models.JobPostVideo{},
 		&models.JobMedia{},
 		&models.Proposal{},
