@@ -135,6 +135,10 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		v3Escrow.POST("/:id/release", paymentV3Handler.HandleReleaseEscrow)
 	}
 
+	router.GET("/api/v3/admin/payments/transactions", paymentV3Handler.HandleAdminListTransactions)
+	router.GET("/api/v3/admin/payments/transactions/:id", paymentV3Handler.HandleAdminGetTransaction)
+	router.GET("/api/v3/admin/payments/stats", paymentV3Handler.HandleAdminPaymentStats)
+
 	v3Wallet := router.Group("/api/v3/wallet")
 	v3Wallet.Use(middleware.AuthMiddleware())
 	{

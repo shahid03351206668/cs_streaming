@@ -2,6 +2,7 @@ package paymentsv3
 
 import (
 	"net/http"
+	"strconv"
 	"tasksy/config"
 	"tasksy/models"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/refund"
+	"gorm.io/gorm"
 )
 
 type Handler struct {
@@ -184,5 +186,189 @@ func (h *Handler) HandleListTransactions(c *gin.Context) {
 			"received_count":      len(received),
 		},
 		"transactions": transactions,
+	})
+}
+
+func (h *Handler) HandleAdminListTransactions(c *gin.Context) {
+	page := 1
+	limit := 20
+	if p, err := strconv.Atoi(c.Query("page")); err == nil && p > 0 {
+		page = p
+	}
+	if l, err := strconv.Atoi(c.Query("limit")); err == nil && l > 0 && l <= 100 {
+		limit = l
+	}
+
+	status := c.Query("status")
+	fromDate := c.Query("from_date")
+	toDate := c.Query("to_date")
+	search := c.Query("search")
+
+	query := h.service.db.Model(&models.PaymentTransactionV3{})
+
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if fromDate != "" {
+		if t, err := time.Parse("2006-01-02", fromDate); err == nil {
+			query = query.Where("created_at >= ?", t)
+		}
+	}
+	if toDate != "" {
+		if t, err := time.Parse("2006-01-02", toDate); err == nil {
+			query = query.Where("created_at <= ?", t.Add(24*time.Hour))
+		}
+	}
+	if search != "" {
+		pattern := "%" + search + "%"
+		query = query.Where("id ILIKE ? OR contract_id ILIKE ? OR stripe_payment_intent_id ILIKE ?", pattern, pattern, pattern)
+	}
+
+	var total int64
+	query.Count(&total)
+
+	offset := (page - 1) * limit
+	var transactions []models.PaymentTransactionV3
+	query.
+		Preload("FromUser").
+		Preload("ToUser").
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&transactions)
+
+	totalPages := int((total + int64(limit) - 1) / int64(limit))
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data":    transactions,
+		"meta": gin.H{
+			"total":       total,
+			"page":        page,
+			"limit":       limit,
+			"total_pages": totalPages,
+		},
+	})
+}
+
+func (h *Handler) HandleAdminGetTransaction(c *gin.Context) {
+	id := c.Param("id")
+
+	var transaction models.PaymentTransactionV3
+	if err := h.service.db.Preload("FromUser").Preload("ToUser").
+		First(&transaction, "id = ?", id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": "transaction not found"})
+		return
+	}
+
+	var escrow models.EscrowTransactionV3
+	h.service.db.Where("payment_transaction_id = ?", transaction.ID).First(&escrow)
+
+	var contract models.Contract
+	var jobPost models.JobPost
+	var proposalCount int64
+	var proposal models.Proposal
+
+	if transaction.ContractID != "" {
+		h.service.db.First(&contract, "id = ?", transaction.ContractID)
+		if contract.JobPostID != "" {
+			h.service.db.First(&jobPost, "id = ?", contract.JobPostID)
+			h.service.db.Model(&models.Proposal{}).Where("job_post_id = ?", contract.JobPostID).Count(&proposalCount)
+		}
+		if contract.ProposalID != "" {
+			h.service.db.First(&proposal, "id = ?", contract.ProposalID)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data": gin.H{
+			"transaction": transaction,
+			"escrow":      escrow,
+			"contract": gin.H{
+				"id":                   contract.ID,
+				"title":                contract.Title,
+				"status":               contract.Status,
+				"total_amount":         contract.TotalAmount,
+				"client_completed":     contract.ClientCompleted,
+				"freelancer_completed": contract.FreelancerCompleted,
+				"start_date":           contract.StartDate,
+				"end_date":             contract.EndDate,
+			},
+			"job_post": gin.H{
+				"id":          jobPost.ID,
+				"title":       jobPost.Title,
+				"status":      jobPost.Status,
+				"budget":      jobPost.Budget,
+				"open_budget": jobPost.OpenBudget,
+				"posted_at":   jobPost.CreatedAt,
+			},
+			"proposal": gin.H{
+				"id":         proposal.ID,
+				"status":     proposal.Status,
+				"bid_amount": proposal.BidAmount,
+				"duration":   proposal.Duration,
+			},
+			"total_proposals": proposalCount,
+		},
+	})
+}
+
+func (h *Handler) HandleAdminPaymentStats(c *gin.Context) {
+	days := 30
+	if d, err := strconv.Atoi(c.Query("days")); err == nil && d > 0 && d <= 365 {
+		days = d
+	}
+	since := time.Now().AddDate(0, 0, -days)
+
+	type DailyRow struct {
+		Date        string  `json:"date"`
+		GrossVolume float64 `json:"gross_volume"`
+		PlatformFee float64 `json:"platform_fee"`
+		Count       int64   `json:"count"`
+	}
+
+	var daily []DailyRow
+	var query *gorm.DB = h.service.db.Model(&models.PaymentTransactionV3{})
+	query.
+		Select("TO_CHAR(created_at, 'YYYY-MM-DD') as date, COALESCE(SUM(gross_amount::numeric), 0) as gross_volume, COALESCE(SUM(platform_fee::numeric), 0) as platform_fee, COUNT(*) as count").
+		Where("created_at >= ?", since).
+		Group("TO_CHAR(created_at, 'YYYY-MM-DD')").
+		Order("date ASC").
+		Scan(&daily)
+
+	type StatusRow struct {
+		Status string `json:"status"`
+		Count  int64  `json:"count"`
+	}
+	var statusBreakdown []StatusRow
+	h.service.db.Model(&models.PaymentTransactionV3{}).
+		Select("status, COUNT(*) as count").
+		Where("created_at >= ?", since).
+		Group("status").
+		Scan(&statusBreakdown)
+
+	var totalVolume, totalFees, totalNet float64
+	h.service.db.Model(&models.PaymentTransactionV3{}).
+		Where("created_at >= ?", since).
+		Select("COALESCE(SUM(gross_amount::numeric), 0)").Scan(&totalVolume)
+	h.service.db.Model(&models.PaymentTransactionV3{}).
+		Where("created_at >= ?", since).
+		Select("COALESCE(SUM(platform_fee::numeric), 0)").Scan(&totalFees)
+	h.service.db.Model(&models.PaymentTransactionV3{}).
+		Where("created_at >= ?", since).
+		Select("COALESCE(SUM(net_amount::numeric), 0)").Scan(&totalNet)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data": gin.H{
+			"daily":            daily,
+			"status_breakdown": statusBreakdown,
+			"summary": gin.H{
+				"total_volume": totalVolume,
+				"total_fees":   totalFees,
+				"total_net":    totalNet,
+			},
+		},
 	})
 }

@@ -182,6 +182,118 @@ export const getTransactions = (filters: TransactionFilters = {}) => {
 export const getTransactionById = (id: string) =>
   api.get<{ message: string; data: PaymentTransaction }>(`/api/v1/payments/transactions/${id}`);
 
+// Transactions V3 (Stripe Connect Express escrow flow)
+export interface PaymentTransactionV3 {
+  id: string;
+  created_at: string;
+  stripe_payment_intent_id: string;
+  stripe_charge_id: string;
+  from_user_id: string;
+  to_user_id: string;
+  from_user: TransactionUser;
+  to_user: TransactionUser;
+  contract_id: string;
+  // shopspring/decimal serializes as a quoted JSON string, not a number — parseFloat before use.
+  gross_amount: string;
+  platform_fee: string;
+  net_amount: string;
+  currency: string;
+  status: string; // held | released | refunded
+  flow_version: string;
+}
+
+export interface TransactionV3Filters {
+  page?: number;
+  limit?: number;
+  status?: string;
+  from_date?: string;
+  to_date?: string;
+  search?: string;
+}
+
+export const getTransactionsV3 = (filters: TransactionV3Filters = {}) => {
+  const params = new URLSearchParams();
+  if (filters.page)      params.set("page",      String(filters.page));
+  if (filters.limit)     params.set("limit",     String(filters.limit));
+  if (filters.status)    params.set("status",    filters.status);
+  if (filters.from_date) params.set("from_date", filters.from_date);
+  if (filters.to_date)   params.set("to_date",   filters.to_date);
+  if (filters.search)    params.set("search",    filters.search);
+  return api.get<{ message: string; data: PaymentTransactionV3[]; meta: PaginatedMeta }>(
+    `/api/v3/admin/payments/transactions?${params.toString()}`
+  );
+};
+
+export interface PaymentTransactionV3Detail {
+  transaction: PaymentTransactionV3;
+  escrow: {
+    id: string;
+    amount: string;
+    currency: string;
+    status: string;
+    stripe_transfer_id: string;
+    held_at: string;
+    released_at: string | null;
+  };
+  contract: {
+    id: string;
+    title: string;
+    status: string;
+    total_amount: number;
+    client_completed: boolean;
+    freelancer_completed: boolean;
+    start_date: string;
+    end_date: string;
+  };
+  job_post: {
+    id: string;
+    title: string;
+    status: string;
+    budget: number;
+    open_budget: boolean;
+    posted_at: string;
+  };
+  proposal: {
+    id: string;
+    status: string;
+    bid_amount: number;
+    duration: number;
+  };
+  total_proposals: number;
+}
+
+export const getTransactionV3ById = (id: string) =>
+  api.get<{ message: string; data: PaymentTransactionV3Detail }>(
+    `/api/v3/admin/payments/transactions/${id}`
+  );
+
+export interface PaymentV3DailyStat {
+  date: string;
+  gross_volume: number;
+  platform_fee: number;
+  count: number;
+}
+
+export interface PaymentV3StatusStat {
+  status: string;
+  count: number;
+}
+
+export interface PaymentV3Stats {
+  daily: PaymentV3DailyStat[];
+  status_breakdown: PaymentV3StatusStat[];
+  summary: {
+    total_volume: number;
+    total_fees: number;
+    total_net: number;
+  };
+}
+
+export const getPaymentV3Stats = (days = 30) =>
+  api.get<{ message: string; data: PaymentV3Stats }>(
+    `/api/v3/admin/payments/stats?days=${days}`
+  );
+
 // Categories
 export const getCategories = () =>
   api.get("/api/v1/category/list");
