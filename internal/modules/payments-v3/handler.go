@@ -328,7 +328,7 @@ func (h *Handler) HandleAdminPaymentStats(c *gin.Context) {
 		Count       int64   `json:"count"`
 	}
 
-	var daily []DailyRow
+	daily := make([]DailyRow, 0)
 	var query *gorm.DB = h.service.db.Model(&models.PaymentTransactionV3{})
 	query.
 		Select("TO_CHAR(created_at, 'YYYY-MM-DD') as date, COALESCE(SUM(gross_amount::numeric), 0) as gross_volume, COALESCE(SUM(platform_fee::numeric), 0) as platform_fee, COUNT(*) as count").
@@ -341,7 +341,7 @@ func (h *Handler) HandleAdminPaymentStats(c *gin.Context) {
 		Status string `json:"status"`
 		Count  int64  `json:"count"`
 	}
-	var statusBreakdown []StatusRow
+	statusBreakdown := make([]StatusRow, 0)
 	h.service.db.Model(&models.PaymentTransactionV3{}).
 		Select("status, COUNT(*) as count").
 		Where("created_at >= ?", since).
