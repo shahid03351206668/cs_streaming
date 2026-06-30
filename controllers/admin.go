@@ -62,29 +62,66 @@ func ListRecords(c *gin.Context) {
 
 func AdminUserListController(c *gin.Context) {
 	type UserResponse struct {
-		ID          string `json:"id"`
-		FirstName   string `json:"first_name"`
-		LastName    string `json:"last_name"`
-		Email       string `json:"email"`
-		PhoneNumber string `json:"phone_number"`
-		CreatedAt   string `json:"created_at"`
-		UpdatedAt   string `json:"updated_at"`
-		Disabled    bool   `json:"disabled"`
+		ID            string `json:"id"`
+		FirstName     string `json:"first_name"`
+		LastName      string `json:"last_name"`
+		Email         string `json:"email"`
+		PhoneNumber   string `json:"phone_number"`
+		CreatedAt     string `json:"created_at"`
+		UpdatedAt     string `json:"updated_at"`
+		Disabled      bool   `json:"disabled"`
+		EmailVerified bool   `json:"email_verified"`
+		PhoneVerified bool   `json:"phone_verified"`
 	}
-
-	users := []UserResponse{}
 
 	limit, err := strconv.ParseInt(c.Query("limit"), 10, 64)
-	if err != nil {
+	if err != nil || limit <= 0 {
 		limit = 20
 	}
-
-	offset, err := strconv.ParseInt(c.Query("page"), 10, 64)
-	if err != nil {
-		offset = 0
+	page, err := strconv.ParseInt(c.Query("page"), 10, 64)
+	if err != nil || page < 0 {
+		page = 0
 	}
 
-	if err := db.DB.Model(models.User{}).Find(&users).Limit(int(limit)).Offset(int(offset)).Error; err != nil {
+	query := db.DB.Model(&models.User{})
+
+	if status := c.Query("status"); status == "active" {
+		query = query.Where("disabled = ?", false)
+	} else if status == "disabled" {
+		query = query.Where("disabled = ?", true)
+	}
+	if emailVerified := c.Query("email_verified"); emailVerified != "" {
+		query = query.Where("email_verified = ?", emailVerified == "true")
+	}
+	if phoneVerified := c.Query("phone_verified"); phoneVerified != "" {
+		query = query.Where("phone_verified = ?", phoneVerified == "true")
+	}
+	if fromDate := c.Query("from_date"); fromDate != "" {
+		if t, err := time.Parse("2006-01-02", fromDate); err == nil {
+			query = query.Where("created_at >= ?", t)
+		}
+	}
+	if toDate := c.Query("to_date"); toDate != "" {
+		if t, err := time.Parse("2006-01-02", toDate); err == nil {
+			query = query.Where("created_at <= ?", t.Add(24*time.Hour))
+		}
+	}
+	if search := c.Query("search"); search != "" {
+		pattern := "%" + search + "%"
+		query = query.Where(
+			"first_name ILIKE ? OR last_name ILIKE ? OR email ILIKE ? OR phone_number ILIKE ?",
+			pattern, pattern, pattern, pattern,
+		)
+	}
+
+	var total int64
+	query.Count(&total)
+
+	users := []UserResponse{}
+	if err := query.
+		Limit(int(limit)).Offset(int(page * limit)).
+		Order("created_at DESC").
+		Find(&users).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   err.Error(),
 			"message": "error",
@@ -92,8 +129,19 @@ func AdminUserListController(c *gin.Context) {
 		return
 	}
 
+	totalPages := int64(0)
+	if limit > 0 {
+		totalPages = (total + limit - 1) / limit
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"data": users,
+		"meta": gin.H{
+			"total":       total,
+			"page":        page,
+			"limit":       limit,
+			"total_pages": totalPages,
+		},
 	})
 }
 
@@ -523,8 +571,43 @@ func AdminListJobsController(c *gin.Context) {
 		page = 0
 	}
 
+	query := db.DB.Model(&models.JobPost{})
+
+	if status := c.Query("status"); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if categoryID := c.Query("category_id"); categoryID != "" {
+		query = query.Where("category_id = ?", categoryID)
+	}
+	if openBudget := c.Query("open_budget"); openBudget != "" {
+		query = query.Where("open_budget = ?", openBudget == "true")
+	}
+	if minBudget := c.Query("min_budget"); minBudget != "" {
+		query = query.Where("budget >= ?", minBudget)
+	}
+	if maxBudget := c.Query("max_budget"); maxBudget != "" {
+		query = query.Where("budget <= ?", maxBudget)
+	}
+	if fromDate := c.Query("from_date"); fromDate != "" {
+		if t, err := time.Parse("2006-01-02", fromDate); err == nil {
+			query = query.Where("created_at >= ?", t)
+		}
+	}
+	if toDate := c.Query("to_date"); toDate != "" {
+		if t, err := time.Parse("2006-01-02", toDate); err == nil {
+			query = query.Where("created_at <= ?", t.Add(24*time.Hour))
+		}
+	}
+	if search := c.Query("search"); search != "" {
+		pattern := "%" + search + "%"
+		query = query.Where("title ILIKE ? OR address ILIKE ?", pattern, pattern)
+	}
+
+	var total int64
+	query.Count(&total)
+
 	var jobs []JobResponse
-	if err := db.DB.Model(&models.JobPost{}).
+	if err := query.
 		Select("id", "title", "description", "budget", "open_budget", "status", "address", "created_by_id", "category_id", "created_at", "updated_at").
 		Limit(int(limit)).Offset(int(page * limit)).
 		Order("created_at DESC").
@@ -533,12 +616,24 @@ func AdminListJobsController(c *gin.Context) {
 		return
 	}
 
-	var total int64
-	db.DB.Model(&models.JobPost{}).Count(&total)
+	if jobs == nil {
+		jobs = make([]JobResponse, 0)
+	}
+
+	totalPages := int64(0)
+	if limit > 0 {
+		totalPages = (total + limit - 1) / limit
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  jobs,
 		"total": total,
+		"meta": gin.H{
+			"total":       total,
+			"page":        page,
+			"limit":       limit,
+			"total_pages": totalPages,
+		},
 	})
 }
 

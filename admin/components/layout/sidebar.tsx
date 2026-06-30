@@ -15,7 +15,6 @@ import {
   FolderOpen,
   Building2,
   ShieldAlert,
-  BookOpen,
   Mail,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -29,7 +28,6 @@ const navItems = [
   { title: "Promotions",   href: "/dashboard/promotions",   icon: Tag },
   { title: "Referrals",    href: "/dashboard/referrals",    icon: GitBranch },
   { title: "Transactions", href: "/dashboard/transactions", icon: CreditCard },
-  { title: "Ledger",       href: "/dashboard/ledger",       icon: BookOpen },
   { title: "Disputes",     href: "/dashboard/disputes",     icon: ShieldAlert },
   { title: "Banks",        href: "/dashboard/banks",        icon: Building2 },
   { title: "Email",        href: "/dashboard/email",        icon: Mail },

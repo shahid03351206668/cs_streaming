@@ -27,7 +27,9 @@ import {
   Pencil,
   Plus,
   Save,
+  Search,
   Trash2,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -169,6 +171,20 @@ function SortableRow({ category, index, onEdit, onDelete }: RowProps) {
 export default function CategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Filters
+  const [search, setSearch] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const hasFilters = Boolean(search || fromDate || toDate);
+  const filteredCategories = categories.filter((c) => {
+    const matchSearch = c.name.toLowerCase().includes(search.toLowerCase());
+    const created = c.created_at ? new Date(c.created_at) : null;
+    const matchFrom = !fromDate || (created && created >= new Date(fromDate));
+    const matchTo = !toDate || (created && created <= new Date(toDate + "T23:59:59"));
+    return matchSearch && matchFrom && matchTo;
+  });
+  const clearFilters = () => { setSearch(""); setFromDate(""); setToDate(""); };
 
   // Drag state
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -323,32 +339,73 @@ export default function CategoriesPage() {
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
-          <div>
-            <CardTitle className="text-base">All Categories</CardTitle>
-            <CardDescription>
-              {loading
-                ? "Loading…"
-                : `${categories.length} categor${categories.length !== 1 ? "ies" : "y"}`}
-            </CardDescription>
+        <CardHeader className="space-y-3 pb-3">
+          <div className="flex flex-row items-start justify-between space-y-0">
+            <div>
+              <CardTitle className="text-base">All Categories</CardTitle>
+              <CardDescription>
+                {loading
+                  ? "Loading…"
+                  : `${filteredCategories.length} of ${categories.length} categor${categories.length !== 1 ? "ies" : "y"}`}
+              </CardDescription>
+            </div>
+
+            {/* Save-order button — appears when a drag has happened */}
+            {(orderDirty || savingOrder) && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={saveOrderNow}
+                disabled={savingOrder}
+                className="gap-1.5"
+              >
+                {savingOrder ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Save className="h-3.5 w-3.5" />
+                )}
+                {savingOrder ? "Saving…" : "Save order"}
+              </Button>
+            )}
           </div>
 
-          {/* Save-order button — appears when a drag has happened */}
-          {(orderDirty || savingOrder) && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={saveOrderNow}
-              disabled={savingOrder}
-              className="gap-1.5"
-            >
-              {savingOrder ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Save className="h-3.5 w-3.5" />
-              )}
-              {savingOrder ? "Saving…" : "Save order"}
-            </Button>
+          {/* Filter bar */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative min-w-[200px] flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by name..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                type="date"
+                value={fromDate}
+                onChange={(e) => setFromDate(e.target.value)}
+                className="w-[150px]"
+              />
+              <span className="text-muted-foreground text-sm">–</span>
+              <Input
+                type="date"
+                value={toDate}
+                onChange={(e) => setToDate(e.target.value)}
+                className="w-[150px]"
+              />
+            </div>
+            {hasFilters && (
+              <Button variant="outline" onClick={clearFilters} className="gap-1">
+                <X className="h-4 w-4" />
+                Clear
+              </Button>
+            )}
+          </div>
+          {hasFilters && (
+            <p className="text-xs text-muted-foreground">
+              Drag-to-reorder is disabled while a filter is active — clear filters to reorder.
+            </p>
           )}
         </CardHeader>
 
@@ -368,6 +425,47 @@ export default function CategoriesPage() {
                 Create first category
               </Button>
             </div>
+          ) : filteredCategories.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <Search className="mb-3 h-10 w-10 text-muted-foreground" />
+              <p className="text-muted-foreground">No categories match your filters.</p>
+            </div>
+          ) : hasFilters ? (
+            <>
+              {/* Column labels */}
+              <div className="mb-1.5 flex items-center gap-3 px-4 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <span className="flex-1">Name</span>
+                <span className="hidden sm:block">Created</span>
+                <span className="w-20 text-right">Actions</span>
+              </div>
+              <div className="space-y-1.5">
+                {filteredCategories.map((cat) => (
+                  <div
+                    key={cat.id}
+                    className="flex items-center gap-3 rounded-md border bg-card px-4 py-3 shadow-sm"
+                  >
+                    <span className="flex-1 font-medium">{cat.name}</span>
+                    <span className="hidden text-xs text-muted-foreground sm:block">
+                      {cat.created_at ? new Date(cat.created_at).toLocaleDateString() : "—"}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(cat)} aria-label="Edit">
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-red-500 hover:bg-red-50 hover:text-red-600"
+                        onClick={() => openDelete(cat)}
+                        aria-label="Delete"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           ) : (
             <>
               {/* Column labels */}
