@@ -112,7 +112,7 @@ func GoogleSignInFirebaseController(c *gin.Context) {
 		}
 	}
 
-	provisionStripeAccount(user)
+	provisionStripeAccount(user, c.ClientIP())
 
 	tokens, err := lib.GenerateAuthTokens(user.ID, 0)
 	if err != nil {

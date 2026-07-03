@@ -134,7 +134,7 @@ type UserData struct {
 	PhoneNumber string `form:"phone_number"`
 }
 
-func (s *Service) CreateUser(data UserData, file *multipart.FileHeader) (*models.User, error) {
+func (s *Service) CreateUser(data UserData, file *multipart.FileHeader, clientIP string) (*models.User, error) {
 
 	var existingUser models.User
 	if data.Email != "" {
@@ -194,11 +194,29 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader) (*models
 
 	go func() {
 		stripe.Key = s.appConfig.Stripe.SecretKey
+		now := time.Now().Unix()
+		ip := clientIP
+		if ip == "" {
+			ip = "127.0.0.1"
+		}
 		acc, err := account.New(&stripe.AccountParams{
 			Type:         stripe.String(string(stripe.AccountTypeCustom)),
 			Email:        stripe.String(user.Email),
 			Country:      stripe.String("GB"),
 			BusinessType: stripe.String("individual"),
+			BusinessProfile: &stripe.AccountBusinessProfileParams{
+				URL: stripe.String("https://tasksy.co.uk"),
+				MCC: stripe.String("7389"),
+			},
+			Individual: &stripe.PersonParams{
+				FirstName: stripe.String(user.FirstName),
+				LastName:  stripe.String(user.LastName),
+				Email:     stripe.String(user.Email),
+			},
+			TOSAcceptance: &stripe.AccountTOSAcceptanceParams{
+				Date: stripe.Int64(now),
+				IP:   stripe.String(ip),
+			},
 			Capabilities: &stripe.AccountCapabilitiesParams{
 				CardPayments: &stripe.AccountCapabilitiesCardPaymentsParams{
 					Requested: stripe.Bool(true),
@@ -423,12 +441,29 @@ func (s *Service) SyncUserToStripe(user *models.User) error {
 
 	stripe.Key = s.appConfig.Stripe.SecretKey
 
+	now := time.Now().Unix()
 	acc, err := account.New(&stripe.AccountParams{
 		Type:         stripe.String(string(stripe.AccountTypeCustom)),
 		Email:        stripe.String(user.Email),
 		Country:      stripe.String("GB"),
 		BusinessType: stripe.String("individual"),
+		BusinessProfile: &stripe.AccountBusinessProfileParams{
+			URL: stripe.String("https://tasksy.co.uk"),
+			MCC: stripe.String("7389"),
+		},
+		Individual: &stripe.PersonParams{
+			FirstName: stripe.String(user.FirstName),
+			LastName:  stripe.String(user.LastName),
+			Email:     stripe.String(user.Email),
+		},
+		TOSAcceptance: &stripe.AccountTOSAcceptanceParams{
+			Date: stripe.Int64(now),
+			IP:   stripe.String("127.0.0.1"),
+		},
 		Capabilities: &stripe.AccountCapabilitiesParams{
+			CardPayments: &stripe.AccountCapabilitiesCardPaymentsParams{
+				Requested: stripe.Bool(true),
+			},
 			Transfers: &stripe.AccountCapabilitiesTransfersParams{
 				Requested: stripe.Bool(true),
 			},

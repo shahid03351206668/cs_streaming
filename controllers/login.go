@@ -3,6 +3,7 @@ package controllers
 import (
 	"net/http"
 	"os"
+	"time"
 	"tasksy/db"
 	"tasksy/lib"
 	"tasksy/models"
@@ -17,17 +18,35 @@ import (
 	"gorm.io/gorm"
 )
 
-func provisionStripeAccount(user models.User) {
+func provisionStripeAccount(user models.User, clientIP string) {
 	if user.StripeConnectAccountID != "" {
 		return
 	}
 	go func() {
 		stripe.Key = os.Getenv("STRIPE_SECRET_KEY")
+		now := time.Now().Unix()
+		ip := clientIP
+		if ip == "" {
+			ip = "127.0.0.1"
+		}
 		acc, err := account.New(&stripe.AccountParams{
 			Type:         stripe.String(string(stripe.AccountTypeCustom)),
 			Email:        stripe.String(user.Email),
 			Country:      stripe.String("GB"),
 			BusinessType: stripe.String("individual"),
+			BusinessProfile: &stripe.AccountBusinessProfileParams{
+				URL: stripe.String("https://tasksy.co.uk"),
+				MCC: stripe.String("7389"),
+			},
+			Individual: &stripe.PersonParams{
+				FirstName: stripe.String(user.FirstName),
+				LastName:  stripe.String(user.LastName),
+				Email:     stripe.String(user.Email),
+			},
+			TOSAcceptance: &stripe.AccountTOSAcceptanceParams{
+				Date: stripe.Int64(now),
+				IP:   stripe.String(ip),
+			},
 			Capabilities: &stripe.AccountCapabilitiesParams{
 				CardPayments: &stripe.AccountCapabilitiesCardPaymentsParams{
 					Requested: stripe.Bool(true),
@@ -106,7 +125,7 @@ func LoginControllerV1(c *gin.Context) {
 		return
 	}
 
-	provisionStripeAccount(user)
+	provisionStripeAccount(user, c.ClientIP())
 
 	tokens, err := lib.GenerateAuthTokens(user.ID, 5)
 
@@ -182,7 +201,7 @@ func LoginController(c *gin.Context) {
 		return
 	}
 
-	provisionStripeAccount(user)
+	provisionStripeAccount(user, c.ClientIP())
 
 	tokens, err := lib.GenerateAuthTokens(user.ID, 0)
 

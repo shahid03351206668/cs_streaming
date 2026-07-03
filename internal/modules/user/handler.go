@@ -424,7 +424,7 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 	}
 
 	file, _ := c.FormFile("image")
-	user, err := h.service.CreateUser(data.UserData, file)
+	user, err := h.service.CreateUser(data.UserData, file, c.ClientIP())
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
