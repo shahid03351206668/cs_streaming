@@ -145,7 +145,12 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		v3Wallet.GET("", paymentV3Handler.HandleGetWallet)
 	}
 
-	// Authenticated payment routes
+	v3Bank := router.Group("/api/v3/bank-account")
+	v3Bank.Use(middleware.AuthMiddleware())
+	{
+		v3Bank.POST("", paymentV3Handler.HandleAddBankAccount)
+	}
+
 	// paymentProtected := router.Group("/api/v1/payments")
 	// paymentProtected.Use(middleware.AuthMiddleware())
 	// {
@@ -205,17 +210,14 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	// Promotional offer routes (public list)
 	router.GET("/api/v1/promotions", promotionHandler.ListActiveOffers)
 
-	// Promotional offer routes (authenticated)
 	promoProtected := router.Group("/api/v1/promotions")
 	promoProtected.Use(middleware.AuthMiddleware())
 	{
 		promoProtected.GET("/my-eligibility", promotionHandler.CheckMyEligibility)
 	}
 
-	// Admin: users, jobs, settings, banks
 	router.GET("/api/v1/admin/settings", controllers.GetSystemSettings)
 	adminRoutes := router.Group("/api/v1/admin")
-	// admin routes securuty middleware removed temporarly
 	// adminRoutes.Use(middleware.AuthMiddleware())
 	{
 		adminRoutes.GET("/users", controllers.AdminUserListController)

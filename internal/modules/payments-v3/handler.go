@@ -64,6 +64,30 @@ func (h *Handler) HandleCreatePaymentIntent(c *gin.Context) {
 	})
 }
 
+func (h *Handler) HandleAddBankAccount(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	var body struct {
+		AccountHolderName string `json:"account_holder_name" binding:"required"`
+		SortCode          string `json:"sort_code" binding:"required"`
+		AccountNumber     string `json:"account_number" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	stripe.Key = h.config.Stripe.SecretKey
+
+	if err := h.service.AddBankAccount(&user, body.AccountHolderName, body.SortCode, body.AccountNumber); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success"})
+}
+
 func (h *Handler) HandleReleaseEscrow(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 	escrowID := c.Param("id")

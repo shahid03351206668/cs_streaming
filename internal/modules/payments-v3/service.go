@@ -11,7 +11,9 @@ import (
 
 	"github.com/shopspring/decimal"
 	"github.com/stripe/stripe-go/v84"
+	"github.com/stripe/stripe-go/v84/bankaccount"
 	"github.com/stripe/stripe-go/v84/paymentintent"
+	"github.com/stripe/stripe-go/v84/token"
 	"github.com/stripe/stripe-go/v84/transfer"
 	"gorm.io/gorm"
 )
@@ -57,8 +59,8 @@ func (s *Service) GetSystemSettings() (*SystemSetting, error) {
 }
 
 func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposalID string, amount float64) (*stripe.PaymentIntent, error) {
-	if !freelancer.StripeConnectOnboarded {
-		return nil, errors.New("freelancer has not completed stripe onboarding")
+	if freelancer.StripeConnectAccountID == "" {
+		return nil, errors.New("freelancer does not have a stripe account")
 	}
 
 	settings, err := s.GetSystemSettings()
@@ -87,6 +89,37 @@ func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposalI
 	params.IdempotencyKey = stripe.String("v3-intent-" + proposalID)
 
 	return paymentintent.New(params)
+}
+
+func (s *Service) AddBankAccount(user *models.User, accountHolderName, sortCode, accountNumber string) error {
+	if user.StripeConnectAccountID == "" {
+		return errors.New("stripe account not provisioned for this user")
+	}
+
+	tok, err := token.New(&stripe.TokenParams{
+		BankAccount: &stripe.BankAccountParams{
+			Country:             stripe.String("GB"),
+			Currency:            stripe.String("gbp"),
+			AccountHolderName:   stripe.String(accountHolderName),
+			AccountHolderType:   stripe.String("individual"),
+			RoutingNumber:       stripe.String(sortCode),
+			AccountNumber:       stripe.String(accountNumber),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to tokenize bank account: %w", err)
+	}
+
+	_, err = bankaccount.New(&stripe.BankAccountParams{
+		Params:  stripe.Params{},
+		Account: stripe.String(user.StripeConnectAccountID),
+		Token:   stripe.String(tok.ID),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to attach bank account: %w", err)
+	}
+
+	return s.db.Model(&models.User{}).Where("id = ?", user.ID).Update("stripe_connect_onboarded", true).Error
 }
 
 func (s *Service) ReleaseEscrow(escrowID string, requestingUserID string) error {

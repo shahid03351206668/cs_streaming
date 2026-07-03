@@ -195,9 +195,13 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader) (*models
 	go func() {
 		stripe.Key = s.appConfig.Stripe.SecretKey
 		acc, err := account.New(&stripe.AccountParams{
-			Type:    stripe.String(string(stripe.AccountTypeExpress)),
-			Email:   stripe.String(user.Email),
-			Country: stripe.String("GB"),
+			Type:         stripe.String(string(stripe.AccountTypeCustom)),
+			Email:        stripe.String(user.Email),
+			Country:      stripe.String("GB"),
+			BusinessType: stripe.String("individual"),
+			TOSAcceptance: &stripe.AccountTOSAcceptanceParams{
+				ServiceAgreement: stripe.String("recipient"),
+			},
 			Capabilities: &stripe.AccountCapabilitiesParams{
 				Transfers: &stripe.AccountCapabilitiesTransfersParams{
 					Requested: stripe.Bool(true),
@@ -420,13 +424,14 @@ func (s *Service) SyncUserToStripe(user *models.User) error {
 	stripe.Key = s.appConfig.Stripe.SecretKey
 
 	acc, err := account.New(&stripe.AccountParams{
-		Type:    stripe.String(string(stripe.AccountTypeExpress)),
-		Email:   stripe.String(user.Email),
-		Country: stripe.String("GB"),
+		Type:         stripe.String(string(stripe.AccountTypeCustom)),
+		Email:        stripe.String(user.Email),
+		Country:      stripe.String("GB"),
+		BusinessType: stripe.String("individual"),
+		TOSAcceptance: &stripe.AccountTOSAcceptanceParams{
+			ServiceAgreement: stripe.String("recipient"),
+		},
 		Capabilities: &stripe.AccountCapabilitiesParams{
-			CardPayments: &stripe.AccountCapabilitiesCardPaymentsParams{
-				Requested: stripe.Bool(true),
-			},
 			Transfers: &stripe.AccountCapabilitiesTransfersParams{
 				Requested: stripe.Bool(true),
 			},

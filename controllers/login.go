@@ -17,8 +17,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// provisionStripeAccount creates a Stripe Express Connect account for a user
-// if they don't already have one. Runs fire-and-forget; never blocks login.
 func provisionStripeAccount(user models.User) {
 	if user.StripeConnectAccountID != "" {
 		return
@@ -26,9 +24,13 @@ func provisionStripeAccount(user models.User) {
 	go func() {
 		stripe.Key = os.Getenv("STRIPE_SECRET_KEY")
 		acc, err := account.New(&stripe.AccountParams{
-			Type:    stripe.String(string(stripe.AccountTypeExpress)),
-			Email:   stripe.String(user.Email),
-			Country: stripe.String("GB"),
+			Type:         stripe.String(string(stripe.AccountTypeCustom)),
+			Email:        stripe.String(user.Email),
+			Country:      stripe.String("GB"),
+			BusinessType: stripe.String("individual"),
+			TOSAcceptance: &stripe.AccountTOSAcceptanceParams{
+				ServiceAgreement: stripe.String("recipient"),
+			},
 			Capabilities: &stripe.AccountCapabilitiesParams{
 				Transfers: &stripe.AccountCapabilitiesTransfersParams{
 					Requested: stripe.Bool(true),
