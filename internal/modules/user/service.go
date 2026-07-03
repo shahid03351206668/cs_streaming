@@ -200,6 +200,9 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader) (*models
 			Country:      stripe.String("GB"),
 			BusinessType: stripe.String("individual"),
 			Capabilities: &stripe.AccountCapabilitiesParams{
+				CardPayments: &stripe.AccountCapabilitiesCardPaymentsParams{
+					Requested: stripe.Bool(true),
+				},
 				Transfers: &stripe.AccountCapabilitiesTransfersParams{
 					Requested: stripe.Bool(true),
 				},
