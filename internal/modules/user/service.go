@@ -199,9 +199,6 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader) (*models
 			Email:        stripe.String(user.Email),
 			Country:      stripe.String("GB"),
 			BusinessType: stripe.String("individual"),
-			TOSAcceptance: &stripe.AccountTOSAcceptanceParams{
-				ServiceAgreement: stripe.String("recipient"),
-			},
 			Capabilities: &stripe.AccountCapabilitiesParams{
 				Transfers: &stripe.AccountCapabilitiesTransfersParams{
 					Requested: stripe.Bool(true),
@@ -428,9 +425,6 @@ func (s *Service) SyncUserToStripe(user *models.User) error {
 		Email:        stripe.String(user.Email),
 		Country:      stripe.String("GB"),
 		BusinessType: stripe.String("individual"),
-		TOSAcceptance: &stripe.AccountTOSAcceptanceParams{
-			ServiceAgreement: stripe.String("recipient"),
-		},
 		Capabilities: &stripe.AccountCapabilitiesParams{
 			Transfers: &stripe.AccountCapabilitiesTransfersParams{
 				Requested: stripe.Bool(true),
