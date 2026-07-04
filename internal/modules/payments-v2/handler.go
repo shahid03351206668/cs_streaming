@@ -458,7 +458,7 @@ func (h *Handler) HandleGetOnboardingStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": gin.H{
-		"onboarded":                onboarded,
+		"onboarded":                 onboarded,
 		"stripe_connect_account_id": accountID,
 	}})
 }
