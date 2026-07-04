@@ -918,3 +918,67 @@ func (h *Handler) DeleteCertification(c *gin.Context) {
 		"results": "certification deleted",
 	})
 }
+
+// ── Address handlers ──
+
+func (h *Handler) AddAddress(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	var body models.UserAddress
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	addr, err := h.service.AddAddress(&user, body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": "success", "data": addr})
+}
+
+func (h *Handler) UpdateAddress(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	addressID := c.Param("id")
+
+	var body models.UserAddress
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	addr, err := h.service.UpdateAddress(&user, addressID, body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": addr})
+}
+
+func (h *Handler) DeleteAddress(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	addressID := c.Param("id")
+
+	if err := h.service.DeleteAddress(&user, addressID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success"})
+}
+
+func (h *Handler) GetAddresses(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	addresses, err := h.service.GetAddresses(&user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": addresses})
+}
+

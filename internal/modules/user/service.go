@@ -478,3 +478,96 @@ func (s *Service) SyncUserToStripe(user *models.User) error {
 
 	return nil
 }
+
+func (s *Service) AddAddress(user *models.User, addr models.UserAddress) (*models.UserAddress, error) {
+	addr.UserID = user.ID
+
+	tx := s.db.Begin()
+	if addr.IsDefault {
+		if err := tx.Model(&models.UserAddress{}).Where("user_id = ?", user.ID).Update("is_default", false).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+	if err := tx.Create(&addr).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+
+	s.syncAddressToStripe(user, &addr)
+	return &addr, nil
+}
+
+func (s *Service) UpdateAddress(user *models.User, addressID string, addr models.UserAddress) (*models.UserAddress, error) {
+	var existing models.UserAddress
+	if err := s.db.First(&existing, "id = ? AND user_id = ?", addressID, user.ID).Error; err != nil {
+		return nil, errors.New("address not found")
+	}
+
+	tx := s.db.Begin()
+	if addr.IsDefault {
+		if err := tx.Model(&models.UserAddress{}).Where("user_id = ? AND id != ?", user.ID, addressID).Update("is_default", false).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+	if err := tx.Model(&existing).Updates(map[string]any{
+		"line1":       addr.Line1,
+		"line2":       addr.Line2,
+		"city":        addr.City,
+		"state":       addr.State,
+		"postal_code": addr.PostalCode,
+		"country":     addr.Country,
+		"is_default":  addr.IsDefault,
+	}).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+
+	s.syncAddressToStripe(user, &existing)
+	return &existing, nil
+}
+
+func (s *Service) DeleteAddress(user *models.User, addressID string) error {
+	result := s.db.Where("id = ? AND user_id = ?", addressID, user.ID).Delete(&models.UserAddress{})
+	if result.RowsAffected == 0 {
+		return errors.New("address not found")
+	}
+	return result.Error
+}
+
+func (s *Service) GetAddresses(user *models.User) ([]models.UserAddress, error) {
+	var addresses []models.UserAddress
+	err := s.db.Where("user_id = ?", user.ID).Order("is_default DESC, created_at DESC").Find(&addresses).Error
+	return addresses, err
+}
+
+func (s *Service) syncAddressToStripe(user *models.User, addr *models.UserAddress) {
+	if user.StripeConnectAccountID == "" {
+		return
+	}
+	go func() {
+		stripe.Key = s.appConfig.Stripe.SecretKey
+		_, err := account.Update(user.StripeConnectAccountID, &stripe.AccountParams{
+			Individual: &stripe.PersonParams{
+				Address: &stripe.AddressParams{
+					Line1:      stripe.String(addr.Line1),
+					Line2:      stripe.String(addr.Line2),
+					City:       stripe.String(addr.City),
+					State:      stripe.String(addr.State),
+					PostalCode: stripe.String(addr.PostalCode),
+					Country:    stripe.String(addr.Country),
+				},
+			},
+		})
+		if err != nil {
+			logger.Log.Error("failed to sync address to stripe", zap.String("user_id", user.ID), zap.Error(err))
+		}
+	}()
+}

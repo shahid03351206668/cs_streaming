@@ -106,6 +106,7 @@ func ApplyMigrations() error {
 		&models.EscrowTransaction{},
 		&models.PaymentTransactionV3{},
 		&models.EscrowTransactionV3{},
+		&models.UserAddress{},
 		&models.JobPostVideo{},
 		&models.JobMedia{},
 		&models.Proposal{},

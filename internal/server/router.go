@@ -323,6 +323,10 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 				protected.PUT("portfolio", userHandler.UpdatePortfolio)
 				protected.POST("/portfolio", userHandler.AddPortfolio)
 				protected.DELETE("/portfolio", userHandler.DeletePortfolio)
+				protected.GET("/addresses", userHandler.GetAddresses)
+				protected.POST("/addresses", userHandler.AddAddress)
+				protected.PUT("/addresses/:id", userHandler.UpdateAddress)
+				protected.DELETE("/addresses/:id", userHandler.DeleteAddress)
 			}
 		}
 

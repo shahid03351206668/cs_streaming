@@ -74,16 +74,14 @@ func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposalI
 	}
 
 	params := &stripe.PaymentIntentParams{
-		Amount:               stripe.Int64(int64(amount * 100)),
-		Currency:             stripe.String(string(stripe.CurrencyUSD)),
-		ApplicationFeeAmount: stripe.Int64(int64(platformFee * 100)),
-		TransferData: &stripe.PaymentIntentTransferDataParams{
-			Destination: stripe.String(freelancer.StripeConnectAccountID),
-		},
+		Amount:   stripe.Int64(int64(amount * 100)),
+		Currency: stripe.String(string(stripe.CurrencyGBP)),
 		Metadata: map[string]string{
-			"proposal_id":  proposalID,
-			"from_user_id": client.ID,
-			"to_user_id":   freelancer.ID,
+			"proposal_id":              proposalID,
+			"from_user_id":             client.ID,
+			"to_user_id":               freelancer.ID,
+			"freelancer_connect_id":    freelancer.StripeConnectAccountID,
+			"platform_fee_amount":      fmt.Sprintf("%d", int64(platformFee*100)),
 		},
 	}
 	params.IdempotencyKey = stripe.String("v3-intent-" + proposalID)
