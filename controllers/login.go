@@ -36,7 +36,7 @@ func provisionStripeAccount(user models.User, clientIP string) {
 			BusinessType: stripe.String("individual"),
 			BusinessProfile: &stripe.AccountBusinessProfileParams{
 				URL: stripe.String("https://tasksy.co.uk"),
-				MCC: stripe.String("7389"),
+				MCC: stripe.String("7372"),
 			},
 			Individual: &stripe.PersonParams{
 				FirstName: stripe.String(user.FirstName),

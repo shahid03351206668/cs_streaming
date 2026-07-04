@@ -206,7 +206,7 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader, clientIP
 			BusinessType: stripe.String("individual"),
 			BusinessProfile: &stripe.AccountBusinessProfileParams{
 				URL: stripe.String("https://tasksy.co.uk"),
-				MCC: stripe.String("7389"),
+				MCC: stripe.String("7372"),
 			},
 			Individual: &stripe.PersonParams{
 				FirstName: stripe.String(user.FirstName),
@@ -449,7 +449,7 @@ func (s *Service) SyncUserToStripe(user *models.User) error {
 		BusinessType: stripe.String("individual"),
 		BusinessProfile: &stripe.AccountBusinessProfileParams{
 			URL: stripe.String("https://tasksy.co.uk"),
-			MCC: stripe.String("7389"),
+			MCC: stripe.String("7372"),
 		},
 		Individual: &stripe.PersonParams{
 			FirstName: stripe.String(user.FirstName),
