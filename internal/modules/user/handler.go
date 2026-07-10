@@ -39,8 +39,8 @@ func (h *Handler) HandleStripeUserAccount(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&RequestData); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-                    			"error":   err.Error(),
-			"data": "request body",
+			"error": err.Error(),
+			"data":  "request body",
 		})
 		return
 	}
@@ -50,7 +50,7 @@ func (h *Handler) HandleStripeUserAccount(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
 			"error":   err.Error(),
-			"data": "user call",
+			"data":    "user call",
 		})
 		return
 	}
@@ -941,7 +941,7 @@ func (h *Handler) AddAddress(c *gin.Context) {
 
 func (h *Handler) UpdateAddress(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
-	addressID := c.Param("id")
+	addressID := c.Param("addr-id")
 
 	var body models.UserAddress
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -960,7 +960,7 @@ func (h *Handler) UpdateAddress(c *gin.Context) {
 
 func (h *Handler) DeleteAddress(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
-	addressID := c.Param("id")
+	addressID := c.Param("addr-id")
 
 	if err := h.service.DeleteAddress(&user, addressID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
@@ -981,4 +981,3 @@ func (h *Handler) GetAddresses(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": addresses})
 }
-
