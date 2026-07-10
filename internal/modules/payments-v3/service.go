@@ -9,6 +9,7 @@ import (
 
 	"tasksy/models"
 
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/bankaccount"
@@ -89,8 +90,8 @@ func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposalI
 			"platform_fee_amount":   fmt.Sprintf("%d", int64(platformFee*100)),
 		},
 	}
-	params.IdempotencyKey = stripe.String("v3-intent-" + proposalID)
 
+	params.IdempotencyKey = stripe.String("v3-intent-" + proposalID + uuid.NewString() + time.Now().String())
 	return paymentintent.New(params)
 }
 
