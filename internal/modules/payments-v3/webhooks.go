@@ -34,7 +34,7 @@ func (h *Handler) HandleStripeWebhookV3(c *gin.Context) {
 		}
 		c.JSON(http.StatusOK, gin.H{"message": "succeed"})
 
-	case "transfer.paid":
+	case "transfer.created":
 		if err := h.service.handleTransferPaidV3(&event); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
 			return
@@ -43,6 +43,13 @@ func (h *Handler) HandleStripeWebhookV3(c *gin.Context) {
 
 	case "charge.refunded":
 		if err := h.service.handleChargeRefundedV3(&event); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+
+	case "account.updated":
+		if err := h.service.handleAccountUpdatedV3(&event); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
 			return
 		}

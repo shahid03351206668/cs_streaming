@@ -96,30 +96,24 @@ func ApplyMigrations() error {
 		&models.Permission{},
 		&models.JobPost{},
 		&models.JobPostLocation{},
-
 		&models.DeviceToken{},
 		&models.Role{},
 		&models.EmailAccount{},
 		&models.EmailTemplate{},
 		&models.Category{},
-		&models.PaymentTransactionV2{},
-		&models.EscrowTransaction{},
 		&models.PaymentTransactionV3{},
 		&models.EscrowTransactionV3{},
 		&models.UserAddress{},
-		&models.JobPostVideo{},
 		&models.JobMedia{},
 		&models.Proposal{},
 		&models.ProposalAttachment{},
 		&models.Review{},
 		&models.Contract{},
-		&models.PaymentTransaction{},
 		&models.ChatConversation{},
 		&models.ChatMessage{},
 		&models.ChatAttachment{},
 		&models.ChatParticipant{},
 		&models.File{},
-		&models.UserAccountDetails{},
 		&models.Certification{},
 		&models.ReferralCode{},
 		&models.ReferralUsage{},
@@ -127,17 +121,9 @@ func ApplyMigrations() error {
 		&models.NotificationPreferenceCategory{},
 		&models.PromotionalOffer{},
 		&models.UserBankAccount{},
-		&models.PayoutTransaction{},
 		&models.Bank{},
 		&models.Dispute{},
-		&models.PaymentAuditLog{},
-
 		&models.UserFeedPreferences{},
-
-		// Double-entry ledger
-		&models.Account{},
-		&models.LedgerTransaction{},
-		&models.GLEntry{},
 	}
 
 	if err := DB.AutoMigrate(modelsToMigrate...); err != nil {

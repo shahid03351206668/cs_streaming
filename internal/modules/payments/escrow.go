@@ -117,15 +117,6 @@ func (s *PaymentService) CaptureEscrow(contractID string) error {
 
 	_, err := paymentintent.Capture(contract.EscrowPaymentIntentID, nil)
 	if err != nil {
-		s.WriteAuditLog(AuditLogEntry{
-			Action:     "escrow_capture_failed",
-			EntityType: "contract",
-			EntityID:   contractID,
-			UserID:     contract.FreelancerID,
-			Amount:     contract.EscrowAmount,
-			Status:     "failed",
-			Details:    map[string]interface{}{"error": err.Error()},
-		})
 		return fmt.Errorf("failed to capture payment: %w", err)
 	}
 

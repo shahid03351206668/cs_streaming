@@ -20,7 +20,7 @@ import (
 )
 
 type SystemSetting struct {
-	AppFee               int64
+	AppFee               float64
 	ClientCommission     float64
 	FreelancerCommission float64
 }
@@ -48,14 +48,16 @@ func NewService(db *gorm.DB) *Service {
 }
 
 func (s *Service) GetSystemSettings() (*SystemSetting, error) {
-	var data models.SystemSettings
-	if err := s.db.First(&data).Error; err != nil {
+	var settings models.SystemSettings
+
+	if err := s.db.First(&settings).Error; err != nil {
 		return nil, err
 	}
+
 	return &SystemSetting{
-		AppFee:               data.ApplicationFeeAmount,
-		FreelancerCommission: data.FreelancerCommissionPercentage,
-		ClientCommission:     data.ClientCommissionPercentage,
+		AppFee:               settings.ApplicationFeeAmount,
+		FreelancerCommission: settings.FreelancerCommissionPercentage,
+		ClientCommission:     settings.ClientCommissionPercentage,
 	}, nil
 }
 
@@ -69,25 +71,31 @@ func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposalI
 		return nil, fmt.Errorf("failed to load system settings: %w", err)
 	}
 
-	platformFee := 0.0
+	clientFeeAmt := 0.0
 	if settings.ClientCommission > 0 {
-		platformFee = amount * (settings.ClientCommission / 100)
+		clientFeeAmt = amount * (settings.ClientCommission / 100)
 	}
+
+	freelancerFeeAmt := 0.0
+	if settings.FreelancerCommission > 0 {
+		freelancerFeeAmt = amount * (settings.FreelancerCommission / 100)
+	}
+
+	totalPlatformFee := clientFeeAmt + freelancerFeeAmt
+	freelancerNet := amount - clientFeeAmt - freelancerFeeAmt
 
 	params := &stripe.PaymentIntentParams{
 		Amount:   stripe.Int64(int64(amount * 100)),
 		Currency: stripe.String(string(stripe.CurrencyGBP)),
-		TransferData: &stripe.PaymentIntentTransferDataParams{
-			Destination: stripe.String(freelancer.StripeConnectAccountID),
-		},
-
-		ApplicationFeeAmount: stripe.Int64(int64(platformFee * 100)),
 		Metadata: map[string]string{
 			"proposal_id":           proposalID,
 			"from_user_id":          client.ID,
 			"to_user_id":            freelancer.ID,
 			"freelancer_connect_id": freelancer.StripeConnectAccountID,
-			"platform_fee_amount":   fmt.Sprintf("%d", int64(platformFee*100)),
+			"client_fee_amount":     fmt.Sprintf("%d", int64(clientFeeAmt*100)),
+			"freelancer_fee_amount": fmt.Sprintf("%d", int64(freelancerFeeAmt*100)),
+			"platform_fee_amount":   fmt.Sprintf("%d", int64(totalPlatformFee*100)),
+			"freelancer_net_amount": fmt.Sprintf("%d", int64(freelancerNet*100)),
 		},
 	}
 
@@ -95,12 +103,8 @@ func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposalI
 	return paymentintent.New(params)
 }
 
-func (s *Service) AddBankAccount(user *models.User, accountHolderName, sortCode, accountNumber string) error {
-	if user.StripeConnectAccountID == "" {
-		return errors.New("stripe account not provisioned for this user")
-	}
-
-	tok, err := token.New(&stripe.TokenParams{
+func (s *Service) tokenizeBankAccount(accountHolderName, sortCode, accountNumber string) (*stripe.Token, error) {
+	return token.New(&stripe.TokenParams{
 		BankAccount: &stripe.BankAccountParams{
 			Country:           stripe.String("GB"),
 			Currency:          stripe.String("gbp"),
@@ -110,20 +114,92 @@ func (s *Service) AddBankAccount(user *models.User, accountHolderName, sortCode,
 			AccountNumber:     stripe.String(accountNumber),
 		},
 	})
-	if err != nil {
-		return fmt.Errorf("failed to tokenize bank account: %w", err)
+}
+
+func (s *Service) AddBankAccount(user *models.User, accountHolderName, sortCode, accountNumber string) (*models.UserBankAccount, error) {
+	if user.StripeConnectAccountID == "" {
+		return nil, errors.New("stripe account not provisioned for this user")
 	}
 
-	_, err = bankaccount.New(&stripe.BankAccountParams{
-		Params:  stripe.Params{},
+	tok, err := s.tokenizeBankAccount(accountHolderName, sortCode, accountNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to tokenize bank account: %w", err)
+	}
+
+	ba, err := bankaccount.New(&stripe.BankAccountParams{
 		Account: stripe.String(user.StripeConnectAccountID),
 		Token:   stripe.String(tok.ID),
 	})
 	if err != nil {
-		return fmt.Errorf("failed to attach bank account: %w", err)
+		return nil, fmt.Errorf("failed to attach bank account: %w", err)
 	}
 
-	return s.db.Model(&models.User{}).Where("id = ?", user.ID).Update("stripe_connect_onboarded", true).Error
+	var count int64
+	s.db.Model(&models.UserBankAccount{}).Where("user_id = ?", user.ID).Count(&count)
+
+	record := models.UserBankAccount{
+		UserID:                 user.ID,
+		StripeConnectAccountID: user.StripeConnectAccountID,
+		StripeBankAccountID:    ba.ID,
+		AccountHolderName:      accountHolderName,
+		SortCode:               sortCode,
+		AccountNumberLast4:     ba.Last4,
+		BankName:               ba.BankName,
+		Currency:               string(ba.Currency),
+		IsDefault:              count == 0,
+	}
+
+	if err := s.db.Create(&record).Error; err != nil {
+		return nil, fmt.Errorf("failed to save bank account: %w", err)
+	}
+
+	s.db.Model(&models.User{}).Where("id = ?", user.ID).Update("stripe_connect_onboarded", true)
+	return &record, nil
+}
+
+func (s *Service) UpdateBankAccount(user *models.User, bankAccountID, accountHolderName, sortCode, accountNumber string) (*models.UserBankAccount, error) {
+	var existing models.UserBankAccount
+	if err := s.db.First(&existing, "id = ? AND user_id = ?", bankAccountID, user.ID).Error; err != nil {
+		return nil, errors.New("bank account not found")
+	}
+
+	if _, err := bankaccount.Del(existing.StripeBankAccountID, &stripe.BankAccountParams{
+		Account: stripe.String(user.StripeConnectAccountID),
+	}); err != nil {
+		return nil, fmt.Errorf("failed to remove old bank account from stripe: %w", err)
+	}
+
+	tok, err := s.tokenizeBankAccount(accountHolderName, sortCode, accountNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to tokenize bank account: %w", err)
+	}
+
+	ba, err := bankaccount.New(&stripe.BankAccountParams{
+		Account: stripe.String(user.StripeConnectAccountID),
+		Token:   stripe.String(tok.ID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to attach new bank account: %w", err)
+	}
+
+	if err := s.db.Model(&existing).Updates(map[string]any{
+		"stripe_bank_account_id": ba.ID,
+		"account_holder_name":    accountHolderName,
+		"sort_code":              sortCode,
+		"account_number_last4":   ba.Last4,
+		"bank_name":              ba.BankName,
+	}).Error; err != nil {
+		return nil, err
+	}
+
+	s.db.First(&existing, "id = ?", bankAccountID)
+	return &existing, nil
+}
+
+func (s *Service) GetBankAccounts(user *models.User) ([]models.UserBankAccount, error) {
+	var accounts []models.UserBankAccount
+	err := s.db.Where("user_id = ?", user.ID).Order("is_default DESC, created_at DESC").Find(&accounts).Error
+	return accounts, err
 }
 
 func (s *Service) ReleaseEscrow(escrowID string, requestingUserID string) error {
@@ -295,12 +371,17 @@ func (s *Service) handleChargeSucceededV3(event *stripe.Event) error {
 	}
 
 	grossAmount := decimal.NewFromInt(charge.Amount).Div(decimal.NewFromInt(100))
-	platformFeePct := decimal.NewFromFloat(settings.ClientCommission)
-	platformFee := decimal.Zero
-	if platformFeePct.IsPositive() {
-		platformFee = grossAmount.Mul(platformFeePct).Div(decimal.NewFromInt(100))
+
+	clientFee := decimal.Zero
+	if settings.ClientCommission > 0 {
+		clientFee = grossAmount.Mul(decimal.NewFromFloat(settings.ClientCommission)).Div(decimal.NewFromInt(100))
 	}
-	netAmount := grossAmount.Sub(platformFee)
+	freelancerFee := decimal.Zero
+	if settings.FreelancerCommission > 0 {
+		freelancerFee = grossAmount.Mul(decimal.NewFromFloat(settings.FreelancerCommission)).Div(decimal.NewFromInt(100))
+	}
+	platformFee := clientFee.Add(freelancerFee)
+	netAmount := grossAmount.Sub(clientFee).Sub(freelancerFee)
 
 	tx := s.db.Begin()
 	defer func() {
@@ -309,14 +390,21 @@ func (s *Service) handleChargeSucceededV3(event *stripe.Event) error {
 		}
 	}()
 
+	stripePaymentIntentID := ""
+	if charge.PaymentIntent != nil {
+		stripePaymentIntentID = charge.PaymentIntent.ID
+	}
+
 	transaction := models.PaymentTransactionV3{
-		StripePaymentIntentID: charge.PaymentIntent.ID,
+		StripePaymentIntentID: stripePaymentIntentID,
 		StripeChargeID:        charge.ID,
 		StripeEventID:         event.ID,
 		FromUserID:            fromUserID,
 		ToUserID:              toUserID,
 		ContractID:            contract.ID,
 		GrossAmount:           grossAmount,
+		ClientFee:             clientFee,
+		FreelancerFee:         freelancerFee,
 		PlatformFee:           platformFee,
 		NetAmount:             netAmount,
 		Currency:              string(charge.Currency),
@@ -367,6 +455,26 @@ func (s *Service) handleTransferPaidV3(event *stripe.Event) error {
 		"status":      "released",
 		"released_at": &now,
 	}).Error
+}
+
+func (s *Service) handleAccountUpdatedV3(event *stripe.Event) error {
+	var acc stripe.Account
+	if err := json.Unmarshal(event.Data.Raw, &acc); err != nil {
+		return fmt.Errorf("failed to parse account.updated payload: %w", err)
+	}
+
+	// Only flip onboarded when account has no outstanding requirements and is not restricted.
+	reqs := acc.Requirements
+	if !acc.DetailsSubmitted ||
+		(reqs != nil && len(reqs.CurrentlyDue) > 0) ||
+		(reqs != nil && len(reqs.EventuallyDue) > 0) ||
+		(reqs != nil && reqs.DisabledReason != "") {
+		return nil
+	}
+
+	return s.db.Model(&models.User{}).
+		Where("stripe_connect_account_id = ?", acc.ID).
+		Update("stripe_connect_onboarded", true).Error
 }
 
 func (s *Service) handleChargeRefundedV3(event *stripe.Event) error {

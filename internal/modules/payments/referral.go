@@ -3,13 +3,10 @@ package payments
 import (
 	"crypto/rand"
 	"errors"
-	"fmt"
 	"math/big"
 	"strings"
 	"tasksy/models"
 	"time"
-
-	"gorm.io/gorm"
 )
 
 // ReferralCodeResponse represents a referral code in API responses
@@ -250,52 +247,19 @@ func (s *PaymentService) CalculateReferralDiscount(userID string, amount int64) 
 }
 
 // MarkReferralAsQualified marks a referral as qualified after first transaction.
-// Instead of directly updating a balance column, it creates double-entry ledger
-// entries: Debit Marketing, Credit Referrer Wallet.
 func (s *PaymentService) MarkReferralAsQualified(usage *models.ReferralUsage, transactionID string, discountApplied int64) error {
 	now := time.Now()
 	settings, _ := GetSystemSettings()
 	reward := settings.ReferralRewardAmount
 
-	ledger := NewLedgerService(s.db)
-
-	// Get system marketing account and referrer wallet account
-	marketingAcct, err := ledger.GetSystemAccount(models.AccountTypeMarketing)
-	if err != nil {
-		return fmt.Errorf("referral: marketing account not found: %w", err)
-	}
-	referrerWallet, err := ledger.GetOrCreateUserAccount(usage.ReferrerID)
-	if err != nil {
-		return fmt.Errorf("referral: failed to get referrer wallet: %w", err)
-	}
-
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		// Update referral usage record
-		if err := tx.Model(&models.ReferralUsage{}).Where("id = ?", usage.ID).Updates(map[string]interface{}{
-			"is_qualified":         true,
-			"qualified_at":         now,
-			"status":               models.ReferralStatusQualified,
-			"first_transaction_id": transactionID,
-			"discount_applied":     discountApplied,
-			"reward_amount":        reward,
-		}).Error; err != nil {
-			return err
-		}
-
-		// Create double-entry ledger transaction:
-		// Debit Marketing (negative) + Credit Referrer Wallet (positive)
-		ledgerInTx := NewLedgerService(tx)
-		_, err := ledgerInTx.CreateLedgerTransaction(
-			models.LedgerTxReferralReward,
-			transactionID,
-			fmt.Sprintf("Referral reward for referrer %s (code usage %s)", usage.ReferrerID, usage.ReferralCodeID),
-			[]EntryInput{
-				{AccountID: marketingAcct.ID, Amount: -reward, Category: "referral_reward"},
-				{AccountID: referrerWallet.ID, Amount: reward, Category: "referral_reward"},
-			},
-		)
-		return err
-	})
+	return s.db.Model(&models.ReferralUsage{}).Where("id = ?", usage.ID).Updates(map[string]interface{}{
+		"is_qualified":         true,
+		"qualified_at":         now,
+		"status":               models.ReferralStatusQualified,
+		"first_transaction_id": transactionID,
+		"discount_applied":     discountApplied,
+		"reward_amount":        reward,
+	}).Error
 }
 
 // GetReferralCodeByOwner gets all referral codes for an owner

@@ -21,12 +21,14 @@ type PaymentTransactionV3 struct {
 	ContractID string   `gorm:"index;not null" json:"contract_id"`
 	Contract   Contract `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"contract"`
 
-	GrossAmount decimal.Decimal `gorm:"default:0" json:"gross_amount"`
-	PlatformFee decimal.Decimal `gorm:"default:0" json:"platform_fee"`
-	NetAmount   decimal.Decimal `gorm:"default:0" json:"net_amount"`
-	Currency    string          `gorm:"default:usd" json:"currency"`
-	Status      string          `gorm:"default:held" json:"status"`
-	FlowVersion string          `gorm:"default:v3" json:"flow_version"`
+	GrossAmount    decimal.Decimal `gorm:"default:0" json:"gross_amount"`
+	ClientFee      decimal.Decimal `gorm:"default:0" json:"client_fee"`      // % charged to client
+	FreelancerFee  decimal.Decimal `gorm:"default:0" json:"freelancer_fee"`  // % charged to freelancer
+	PlatformFee    decimal.Decimal `gorm:"default:0" json:"platform_fee"`    // ClientFee + FreelancerFee
+	NetAmount      decimal.Decimal `gorm:"default:0" json:"net_amount"`      // freelancer payout = GrossAmount - ClientFee - FreelancerFee
+	Currency       string          `gorm:"default:usd" json:"currency"`
+	Status         string          `gorm:"default:held" json:"status"`
+	FlowVersion    string          `gorm:"default:v3" json:"flow_version"`
 }
 
 func (PaymentTransactionV3) TableName() string {

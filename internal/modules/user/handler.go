@@ -246,7 +246,7 @@ func (h *Handler) GetSystemSettings(c *gin.Context) {
 	type Response struct {
 		ClientCommissionPercentage     float64 `json:"client_commission_percentage"`
 		FreelancerCommissionPercentage float64 `json:"freelancer_commission_percentage"`
-		ApplicationFeeAmount           int64   `json:"application_fee_amount"`
+		ApplicationFeeAmount           float64 `json:"application_fee_amount"`
 		AppFeePercentage               float64 `json:"app_fee_percentage"`
 		ReferralDiscountPercentage     float64 `json:"referral_discount_percentage"`
 		ReferralRewardAmount           int64   `json:"referral_reward_amount"`
@@ -345,12 +345,16 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 
 	var userCertifications []UserCertification
 	for _, i := range certifications {
+		expirationDate := ""
+		if i.ExpirationDate != nil {
+			expirationDate = i.ExpirationDate.Format("2006-01-02")
+		}
 		userCertifications = append(userCertifications, UserCertification{
 			ID:             i.ID,
 			Name:           i.Name,
 			IssuingOrg:     i.IssuingOrg,
 			IssueDate:      i.IssueDate.Format("2006-01-02"),
-			ExpirationDate: i.ExpirationDate.Format("2006-01-02"),
+			ExpirationDate: expirationDate,
 			MediaURL:       i.ImageURL,
 		})
 	}
@@ -589,6 +593,11 @@ func (h *Handler) StripeIdentityWebhookHandler(c *gin.Context) {
 	}
 
 	event, err := webhook.ConstructEvent(body, c.GetHeader("Stripe-Signature"), endpointSecret)
+	if err != nil {
+		logger.Log.Error("Stripe Identity webhook signature verification failed", zap.Error(err))
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid webhook signature"})
+		return
+	}
 
 	switch event.Type {
 	case "identity.verification_session.verified":
@@ -618,7 +627,7 @@ func (h *Handler) StripeIdentityWebhookHandler(c *gin.Context) {
 				})
 				return
 			}
-			result := h.service.db.Select("id = ?", user.ID).Update("identity_verified", true)
+			result := h.service.db.Model(&models.User{}).Where("id = ?", user.ID).Update("identity_verified", true)
 
 			if result.Error != nil {
 				logger.Log.Error("Database update failed", zap.Error(result.Error))
@@ -826,12 +835,16 @@ func (h *Handler) GetCertifications(c *gin.Context) {
 	var results []UserCertification
 
 	for _, i := range data {
+		expirationDate := ""
+		if i.ExpirationDate != nil {
+			expirationDate = i.ExpirationDate.Format("2006-01-02")
+		}
 		results = append(results, UserCertification{
 			ID:             i.ID,
 			Name:           i.Name,
 			IssuingOrg:     i.IssuingOrg,
 			IssueDate:      i.IssueDate.Format("2006-01-02"),
-			ExpirationDate: i.ExpirationDate.Format("2006-01-02"),
+			ExpirationDate: expirationDate,
 			MediaURL:       i.ImageURL,
 		})
 	}
@@ -980,4 +993,167 @@ func (h *Handler) GetAddresses(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": addresses})
+}
+
+func (h *Handler) VerifyUser(c *gin.Context) {
+	var body struct {
+		PhoneNumber string `json:"phone_number"`
+		Email       string `json:"email"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "Provide a valid JSON object", "error": err.Error()})
+		return
+	}
+	if body.Email == "" && body.PhoneNumber == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "Please provide either email or phone_number"})
+		return
+	}
+
+	user, err := h.service.LookupUserByContact(body.Email, body.PhoneNumber)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "User not found", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "User verified",
+		"user": gin.H{
+			"id":           user.ID,
+			"email":        user.Email,
+			"phone_number": user.PhoneNumber,
+		},
+	})
+}
+
+func (h *Handler) GetAuthProfile(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	user.Password = ""
+
+	reviews, err := h.service.GetProfileReviews(&user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "Failed to fetch reviews"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "user": user, "reviews": reviews})
+}
+
+func (h *Handler) ChangePassword(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	var body struct {
+		NewPassword     string `json:"new_password" binding:"required,min=6"`
+		CurrentPassword string `json:"current_password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Please provide a valid body"})
+		return
+	}
+
+	if err := h.service.ChangePassword(&user, body.CurrentPassword, body.NewPassword); err != nil {
+		if err.Error() == "current password is incorrect" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "Failed to update password", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Password updated successfully"})
+}
+
+func (h *Handler) VerifyUserCredential(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	var body struct {
+		PhoneNumber string `json:"phone_number"`
+		Email       string `json:"email"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+	if body.Email == "" && body.PhoneNumber == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "email or phone number is required"})
+		return
+	}
+
+	if err := h.service.VerifyCredential(&user, body.Email, body.PhoneNumber); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "verification successful"})
+}
+
+func (h *Handler) UpdateProfile(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	var body struct {
+		FirstName   string     `form:"first_name"`
+		Verified    string     `form:"verified"`
+		LastName    string     `form:"last_name"`
+		PhoneNumber string     `form:"phone_number"`
+		DateOfBirth *time.Time `form:"dob"`
+		Email       string     `form:"email"`
+	}
+	if err := c.ShouldBind(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "message": "Please provide valid profile data"})
+		return
+	}
+
+	photoFile, _ := c.FormFile("profile_photo")
+
+	data := UpdateProfileData{
+		FirstName:   body.FirstName,
+		LastName:    body.LastName,
+		PhoneNumber: body.PhoneNumber,
+		Email:       body.Email,
+		DateOfBirth: body.DateOfBirth,
+		Verified:    body.Verified,
+	}
+
+	updated, err := h.service.UpdateProfile(&user, data, photoFile)
+	if err != nil {
+		if errors.Is(err, ErrPhoneAlreadyTaken) || errors.Is(err, ErrEmailAlreadyTaken) {
+			c.JSON(http.StatusConflict, gin.H{"message": "error", "error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to update profile"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Profile updated successfully",
+		"user": gin.H{
+			"id":            updated.ID,
+			"first_name":    updated.FirstName,
+			"last_name":     updated.LastName,
+			"email":         updated.Email,
+			"phone_number":  updated.PhoneNumber,
+			"profile_photo": updated.ProfilePhoto,
+		},
+	})
+}
+
+func (h *Handler) AddBankAccount(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	var body struct {
+		AccountHolderName string `json:"account_holder_name" binding:"required"`
+		SortCode          string `json:"sort_code" binding:"required"`
+		AccountNumber     string `json:"account_number" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	if err := h.service.AddBankAccount(&user, body.AccountHolderName, body.SortCode, body.AccountNumber); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success"})
 }

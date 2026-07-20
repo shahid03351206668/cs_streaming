@@ -9,115 +9,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GetPaymentGateways returns available payment gateways
 func (s *PaymentHandler) GetPaymentGateways(c *gin.Context) {
-	gateways := []string{"Stripe", "PayPal"} // Add more as needed
+	gateways := []string{"Stripe", "PayPal"}
 	c.JSON(http.StatusOK, gin.H{
 		"message":  "success",
 		"gateways": gateways,
-	})
-}
-
-func (s *PaymentHandler) GetPaymentTransactions(c *gin.Context) {
-	var params TransactionListParams
-	if err := c.ShouldBindQuery(&params); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "error",
-			"error":   "Invalid query parameters: " + err.Error(),
-		})
-		return
-	}
-
-	transactions, total, err := s.service.GetPaymentTransactions(params)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": "error",
-			"error":   "Failed to fetch transactions: " + err.Error(),
-		})
-		return
-	}
-
-	limit := params.Limit
-	if limit <= 0 {
-		limit = 20
-	}
-	totalPages := (total + int64(limit) - 1) / int64(limit)
-	if total == 0 {
-		totalPages = 0
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "success",
-		"data":    transactions,
-		"meta": gin.H{
-			"total":       total,
-			"page":        params.Page,
-			"limit":       limit,
-			"total_pages": totalPages,
-		},
-	})
-}
-
-func (s *PaymentHandler) GetPaymentTransactionByID(c *gin.Context) {
-	id := c.Param("id")
-	if id == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "error",
-			"error":   "Transaction ID is required",
-		})
-		return
-	}
-
-	transaction, err := s.service.GetPaymentTransactionByID(id)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"message": "error",
-			"error":   "Transaction not found",
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "success",
-		"data":    transaction,
-	})
-}
-
-func (s *PaymentHandler) GetUserPaymentTransactions(c *gin.Context) {
-	user := c.MustGet("user").(models.User)
-	userID := user.ID
-
-	var params TransactionListParams
-	if err := c.ShouldBindQuery(&params); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "error",
-			"error":   "Invalid query parameters: " + err.Error(),
-		})
-		return
-	}
-
-	params.UserID = userID
-	transactions, total, err := s.service.GetPaymentTransactions(params)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": "error",
-			"error":   "Failed to fetch transactions: " + err.Error(),
-		})
-		return
-	}
-	if params.Limit == 0 {
-		params.Limit = 10
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "success",
-		"data":    transactions,
-		"meta": gin.H{
-			"total":       total,
-			"page":        params.Page,
-			"limit":       params.Limit,
-			"total_pages": (total + int64(params.Limit) - 1) / int64(params.Limit),
-		},
 	})
 }
 
@@ -144,7 +40,6 @@ func (s *PaymentHandler) GetProposalPaymentDetails(c *gin.Context) {
 
 	discountAmount := int64(0)
 	referralCode := ""
-
 	var discountPct float64 = 0
 	var userReferral models.ReferralUsage
 
@@ -167,84 +62,29 @@ func (s *PaymentHandler) GetProposalPaymentDetails(c *gin.Context) {
 	finalCommission := commissionAmount - discountAmount
 	grandTotal := bidAmount + finalCommission + appFees
 
-	// Helper to convert cents to dollars
 	toDollars := func(cents int64) float64 {
 		return float64(cents) / 100.0
 	}
 
-	response := gin.H{
-		"proposal_id": proposal.ID,
-		"currency":    "gbp",
-		"bid_amount":  toDollars(bidAmount),
-		"commission": gin.H{
-			"original_amount":  toDollars(commissionAmount),
-			"percentage":       commissionPct,
-			"discount_applied": toDollars(discountAmount),
-			"final_amount":     toDollars(finalCommission),
-		},
-		"app_fees": toDollars(appFees),
-		"referral": gin.H{
-			"code":       referralCode,
-			"percentage": discountPct,
-			"saved":      toDollars(discountAmount),
-		},
-		"grand_total": toDollars(grandTotal),
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
-		"data":    response,
-	})
-}
-
-// GetPaymentAuditLogs handles GET /api/v1/admin/payments/audit-logs
-func (s *PaymentHandler) GetPaymentAuditLogs(c *gin.Context) {
-	var logs []models.PaymentAuditLog
-	var total int64
-
-	query := s.service.db.Model(&models.PaymentAuditLog{})
-
-	if action := c.Query("action"); action != "" {
-		query = query.Where("action = ?", action)
-	}
-	if entityType := c.Query("entity_type"); entityType != "" {
-		query = query.Where("entity_type = ?", entityType)
-	}
-	if entityID := c.Query("entity_id"); entityID != "" {
-		query = query.Where("entity_id = ?", entityID)
-	}
-	if userID := c.Query("user_id"); userID != "" {
-		query = query.Where("user_id = ?", userID)
-	}
-
-	query.Count(&total)
-
-	page := 1
-	limit := 50
-	if p := c.Query("page"); p != "" {
-		if v, err := parseIntParam(p); err == nil && v > 0 {
-			page = v
-		}
-	}
-	if l := c.Query("limit"); l != "" {
-		if v, err := parseIntParam(l); err == nil && v > 0 && v <= 100 {
-			limit = v
-		}
-	}
-
-	offset := (page - 1) * limit
-	if err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&logs).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "success",
-		"data":    logs,
-		"meta": gin.H{
-			"total": total,
-			"page":  page,
-			"limit": limit,
+		"data": gin.H{
+			"proposal_id": proposal.ID,
+			"currency":    "gbp",
+			"bid_amount":  toDollars(bidAmount),
+			"commission": gin.H{
+				"original_amount":  toDollars(commissionAmount),
+				"percentage":       commissionPct,
+				"discount_applied": toDollars(discountAmount),
+				"final_amount":     toDollars(finalCommission),
+			},
+			"app_fees": toDollars(appFees),
+			"referral": gin.H{
+				"code":       referralCode,
+				"percentage": discountPct,
+				"saved":      toDollars(discountAmount),
+			},
+			"grand_total": toDollars(grandTotal),
 		},
 	})
 }
@@ -267,7 +107,6 @@ func (s *PaymentHandler) GetJobPostPaymentDetails(c *gin.Context) {
 
 	settings, _ := GetSystemSettings()
 
-	// Base amount from job budget
 	budgetAmount := int64(jobPost.Budget * 100)
 	appFees := int64(settings.ApplicationFeeAmount)
 	commissionPct := float64(settings.FreelancerCommissionPercentage)
@@ -301,50 +140,47 @@ func (s *PaymentHandler) GetJobPostPaymentDetails(c *gin.Context) {
 	finalCommission := commissionAmount - discountAmount
 	grandTotal := budgetAmount + finalCommission + appFees
 
-	// Helper to convert cents to dollars
 	toDollars := func(cents int64) float64 {
 		return float64(cents) / 100.0
 	}
 
-	response := gin.H{
-		"job_post_id": jobPost.ID,
-		"currency":    "gbp",
-		"open_budget": jobPost.OpenBudget,
-		"budget": gin.H{
-			"amount":  toDollars(budgetAmount),
-			"is_open": jobPost.OpenBudget,
-			"description": func() string {
-				if jobPost.OpenBudget {
-					return "Budget is flexible, final amount may vary"
-				}
-				return "Fixed budget"
-			}(),
-		},
-		"commission": gin.H{
-			"original_amount":  toDollars(commissionAmount),
-			"percentage":       commissionPct,
-			"discount_applied": toDollars(discountAmount),
-			"final_amount":     toDollars(finalCommission),
-		},
-		"app_fees": toDollars(appFees),
-		"referral": gin.H{
-			"code":       referralCode,
-			"percentage": discountPct,
-			"saved":      toDollars(discountAmount),
-		},
-		"grand_total": toDollars(grandTotal),
-		"summary": gin.H{
-			"budget":         toDollars(budgetAmount),
-			"commission":     toDollars(finalCommission),
-			"app_fees":       toDollars(appFees),
-			"total_fees":     toDollars(finalCommission + appFees),
-			"discount_saved": toDollars(discountAmount),
-			"amount_due":     toDollars(grandTotal),
-		},
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
-		"data":    response,
+		"data": gin.H{
+			"job_post_id": jobPost.ID,
+			"currency":    "gbp",
+			"open_budget": jobPost.OpenBudget,
+			"budget": gin.H{
+				"amount":  toDollars(budgetAmount),
+				"is_open": jobPost.OpenBudget,
+				"description": func() string {
+					if jobPost.OpenBudget {
+						return "Budget is flexible, final amount may vary"
+					}
+					return "Fixed budget"
+				}(),
+			},
+			"commission": gin.H{
+				"original_amount":  toDollars(commissionAmount),
+				"percentage":       commissionPct,
+				"discount_applied": toDollars(discountAmount),
+				"final_amount":     toDollars(finalCommission),
+			},
+			"app_fees": toDollars(appFees),
+			"referral": gin.H{
+				"code":       referralCode,
+				"percentage": discountPct,
+				"saved":      toDollars(discountAmount),
+			},
+			"grand_total": toDollars(grandTotal),
+			"summary": gin.H{
+				"budget":         toDollars(budgetAmount),
+				"commission":     toDollars(finalCommission),
+				"app_fees":       toDollars(appFees),
+				"total_fees":     toDollars(finalCommission + appFees),
+				"discount_saved": toDollars(discountAmount),
+				"amount_due":     toDollars(grandTotal),
+			},
+		},
 	})
 }

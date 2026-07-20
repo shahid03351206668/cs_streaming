@@ -12,8 +12,6 @@ import (
 	"gorm.io/gorm"
 )
 
-
-
 func CreateProposal(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
@@ -415,7 +413,6 @@ func DeleteProposal(c *gin.Context) {
 	})
 }
 
-// GetProposal - Get single proposal details
 func GetProposal(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
@@ -428,7 +425,6 @@ func GetProposal(c *gin.Context) {
 		return
 	}
 
-	// Find proposal
 	proposal := models.Proposal{}
 	if err := db.DB.Preload("JobPost").
 		Preload("JobPost.CreatedBy").
@@ -450,7 +446,6 @@ func GetProposal(c *gin.Context) {
 		return
 	}
 
-	// Check authorization - only freelancer or job owner can view
 	if proposal.FreelancerID != user.ID && proposal.JobPost.CreatedByID != user.ID {
 		c.JSON(http.StatusForbidden, gin.H{
 			"message": "error",
@@ -459,9 +454,29 @@ func GetProposal(c *gin.Context) {
 		return
 	}
 
+	var settings models.SystemSettings
+	db.DB.First(&settings)
+
+	bidAmount := proposal.BidAmount
+	commissionPct := settings.ClientCommissionPercentage
+	commissionAmount := 0.0
+	if commissionPct > 0 {
+		commissionAmount = bidAmount * commissionPct / 100.0
+	}
+	appFees := settings.ApplicationFeeAmount
+	grandTotal := bidAmount + commissionAmount + appFees
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"data":    proposal,
+		"payment_summary": gin.H{
+			"currency":          "gbp",
+			"bid_amount":        bidAmount,
+			"commission_pct":    commissionPct,
+			"commission_amount": commissionAmount,
+			"app_fees":          appFees,
+			"grand_total":       grandTotal,
+		},
 	})
 }
 

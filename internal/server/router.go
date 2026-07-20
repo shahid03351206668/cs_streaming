@@ -9,7 +9,6 @@ import (
 	"tasksy/internal/modules/job"
 	"tasksy/internal/modules/notifications"
 	"tasksy/internal/modules/payments"
-	paymentsv2 "tasksy/internal/modules/payments-v2"
 	paymentsv3 "tasksy/internal/modules/payments-v3"
 	"tasksy/internal/modules/promotions"
 	"tasksy/internal/modules/referrals"
@@ -26,6 +25,7 @@ import (
 
 func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient, redisClient *redis.Client) *gin.Engine { //nolint:funlen
 	router := gin.Default()
+
 	router.Static("/media", "./media")
 
 	s3Client := aws_services.NewS3Client(appConfig)
@@ -81,40 +81,17 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	jobPostService := job.NewService(db, s3Client, queueClient, notifService)
 	jobPostHandler := job.NewHandler(jobPostService)
 
-	ledgerService := payments.NewLedgerService(db)
-	ledgerService.EnsureSystemAccounts()
-	ledgerHandler := payments.NewLedgerHandler(ledgerService, db)
+	// ledgerService := payments.NewLedgerService(db)
+	// ledgerService.EnsureSystemAccounts()
+	// ledgerHandler := payments.NewLedgerHandler(ledgerService, db)
 
-	payoutService := payments.NewPayoutService(db, &appConfig.Stripe, ledgerService)
+	// payoutService := payments.NewPayoutService(db, &appConfig.Stripe, ledgerService)
 
 	promotionService := promotions.NewService(db)
 	promotionHandler := promotions.NewHandler(promotionService)
 
 	disputeService := dispute.NewService(db, notifService, s3Client)
 	disputeHandler := dispute.NewHandler(disputeService)
-	// http://localhost:5679/api/v1/webhooks/stripe/payment
-
-	paymentService := paymentsv2.NewService(db)
-	paymentHandler := paymentsv2.NewHandler(appConfig, paymentService)
-	paymentHandler.SetEmailService(emailService)
-
-	router.POST("/api/v1/webhooks/stripe/payment", paymentHandler.HandleStripeWebhook)
-
-	paymentRoutes := router.Group("/api/v1/payments")
-	paymentRoutes.Use(middleware.AuthMiddleware())
-	{
-		paymentRoutes.POST("/add/user-account", paymentHandler.AddUserPaymentAccount)
-		paymentRoutes.GET("/get/user-account", paymentHandler.GetUserAccount)
-		paymentRoutes.POST("/payout/create", paymentHandler.HandleCreatePayout)
-		paymentRoutes.GET("/wallet", paymentHandler.HandleUserWallet)
-	}
-
-	onboardingRoutes := router.Group("/api/v1/onboarding")
-	onboardingRoutes.Use(middleware.AuthMiddleware())
-	{
-		onboardingRoutes.POST("/start", paymentHandler.HandleGetOnboardingLink)
-		onboardingRoutes.GET("/status", paymentHandler.HandleGetOnboardingStatus)
-	}
 
 	paymentV3Service := paymentsv3.NewService(db)
 	paymentV3Handler := paymentsv3.NewHandler(appConfig, paymentV3Service)
@@ -148,7 +125,9 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	v3Bank := router.Group("/api/v3/bank-account")
 	v3Bank.Use(middleware.AuthMiddleware())
 	{
+		v3Bank.GET("", paymentV3Handler.HandleGetBankAccounts)
 		v3Bank.POST("", paymentV3Handler.HandleAddBankAccount)
+		v3Bank.PUT("/:id", paymentV3Handler.HandleUpdateBankAccount)
 	}
 
 	// paymentProtected := router.Group("/api/v1/payments")
@@ -157,17 +136,17 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	// 	// paymentProtected.GET("/transactions/my", paymentHandler.GetUserPaymentTransactions)
 	// }
 
-	walletRoutes := router.Group("/api/v1/wallet")
-	walletRoutes.Use(middleware.AuthMiddleware())
-	{
-		walletRoutes.GET("/balance", payoutService.GetWalletBalance)
-		// walletRoutes.POST("/withdraw", payoutService.RequestPayout)
-		// walletRoutes.GET("/withdrawals", payoutService.GetPayoutHistory)
-		walletRoutes.GET("/bank-accounts", payoutService.ListBankAccounts)
-		walletRoutes.POST("/bank-accounts", payoutService.AddBankAccount)
-		walletRoutes.PUT("/bank-accounts/:id/default", payoutService.SetDefaultBankAccount)
-		walletRoutes.DELETE("/bank-accounts/:id", payoutService.DeleteBankAccount)
-	}
+	// walletRoutes := router.Group("/api/v1/wallet")
+	// walletRoutes.Use(middleware.AuthMiddleware())
+	// {
+	// 	walletRoutes.GET("/balance", payoutService.GetWalletBalance)
+	// 	// walletRoutes.POST("/withdraw", payoutService.RequestPayout)
+	// 	// walletRoutes.GET("/withdrawals", payoutService.GetPayoutHistory)
+	// 	walletRoutes.GET("/bank-accounts", payoutService.ListBankAccounts)
+	// 	walletRoutes.POST("/bank-accounts", payoutService.AddBankAccount)
+	// 	// walletRoutes.PUT("/bank-accounts/:id/default", payoutService.SetDefaultBankAccount)
+	// 	// walletRoutes.DELETE("/bank-accounts/:id", payoutService.DeleteBankAccount)
+	// }
 
 	referralHandler := referrals.NewHandler(referrals.NewService(db))
 
@@ -197,17 +176,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		referralAdmin.GET("/usages", referralHandler.GetAllReferralUsages)
 	}
 
-	// Escrow routes (authenticated)
-	// escrowRoutes := router.Group("/api/v1/escrow")
-	// escrowRoutes.Use(middleware.AuthMiddleware())
-	// {
-	// 	escrowRoutes.POST("/contracts/:id/deposit", paymentHandler.InitiateEscrowDeposit)
-	// 	escrowRoutes.GET("/contracts/:id/status", paymentHandler.GetEscrowStatus)
-	// 	escrowRoutes.POST("/contracts/:id/refund", paymentHandler.RefundEscrow)
-	// 	escrowRoutes.GET("/contracts/:id/summary", paymentHandler.GetPaymentSummaryWithPromotion)
-	// }
-
-	// Promotional offer routes (public list)
 	router.GET("/api/v1/promotions", promotionHandler.ListActiveOffers)
 
 	promoProtected := router.Group("/api/v1/promotions")
@@ -229,11 +197,9 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		adminRoutes.GET("/jobs/:id", controllers.AdminGetJobDetailController)
 		adminRoutes.PUT("/jobs/:id", controllers.AdminUpdateJobController)
 
-		adminRoutes.GET("/payouts", payoutService.AdminListPayouts)
-		// adminRoutes.GET("/payments/audit-logs", paymentHandler.GetPaymentAuditLogs)
-
-		adminRoutes.GET("/ledger", ledgerHandler.GetAdminLedgerReport)
-		adminRoutes.GET("/ledger/accounts/:id/balance", ledgerHandler.GetAccountBalanceHandler)
+		// adminRoutes.GET("/payouts", payoutService.AdminListPayouts)
+		// adminRoutes.GET("/ledger", ledgerHandler.GetAdminLedgerReport)
+		// adminRoutes.GET("/ledger/accounts/:id/balance", ledgerHandler.GetAccountBalanceHandler)
 
 		adminRoutes.PUT("/settings", controllers.UpdateSystemSettings)
 		adminRoutes.GET("/banks", controllers.AdminListBanks)
@@ -242,7 +208,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		adminRoutes.DELETE("/banks/:id", controllers.AdminDeleteBank)
 	}
 
-	// Dispute routes (authenticated users)
 	disputeRoutes := router.Group("/api/v1/disputes")
 	disputeRoutes.Use(middleware.AuthMiddleware())
 	{
@@ -251,7 +216,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		disputeRoutes.GET("/:id", disputeHandler.GetDispute)
 	}
 
-	// Dispute admin routes
 	disputeAdmin := router.Group("/api/v1/admin/disputes")
 	disputeAdmin.Use(middleware.AuthMiddleware())
 	{
@@ -278,7 +242,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		authRoutes.POST("/register", userHandler.RegisterUser)
 		authRoutes.POST("/login", controllers.LoginController)
 		authRoutes.POST("/user/auth-token", controllers.GetUserAuthToken)
-		authRoutes.POST("/verify-user", controllers.VerifyUser)
+		authRoutes.POST("/verify-user", userHandler.VerifyUser)
 		authRoutes.POST("/refresh", controllers.RefreshTokenController)
 		authRoutes.POST("/google-auth", controllers.GoogleSignInFirebaseController)
 	}
@@ -287,7 +251,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	proposalRoutes.Use(middleware.AuthMiddleware())
 	{
 		proposalRoutes.POST("/:id/decision", controllers.ManageProposalDecision)
-		proposalRoutes.GET("/:id/payment-summary", paymentHandler.GetProposalPaymentDetails)
+		proposalRoutes.GET("/:id/payment-summary", paymentV3Handler.GetProposalPaymentDetails)
 	}
 
 	jobRoutes := router.Group("/api/job")
@@ -304,7 +268,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	}
 
 	router.GET("/api/v1/get/system-settings", userHandler.GetSystemSettings)
-
 	publicRoutes := router.Group("/api/v1")
 	{
 		userGroup := publicRoutes.Group("/user/:id")
@@ -327,6 +290,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 				protected.POST("/addresses", userHandler.AddAddress)
 				protected.PUT("/addresses/:addr-id", userHandler.UpdateAddress)
 				protected.DELETE("/addresses/:addr-id", userHandler.DeleteAddress)
+				protected.POST("/bank-account", userHandler.AddBankAccount)
 			}
 		}
 
@@ -344,12 +308,12 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	protected := router.Group("/")
 	protected.Use(middleware.AuthMiddleware())
 	{
-		protected.GET("/api/jobs/:id/payment-details", paymentHandler.GetJobPostPaymentDetails)
-		protected.GET("/api/user/profile", controllers.GetProfile)
+		protected.GET("/api/jobs/:id/payment-details", paymentV3Handler.GetJobPaymentDetails)
+		protected.GET("/api/user/profile", userHandler.GetAuthProfile)
 		protected.POST("/api/user/device-token", userHandler.SaveDeviceToken)
-		protected.POST("/api/user/verify-credentials", controllers.VerifyUserCredential)
-		protected.POST("/api/user/update", controllers.UpdateProfile)
-		protected.POST("/api/user/change-password", controllers.ChangePassword)
+		protected.POST("/api/user/verify-credentials", userHandler.VerifyUserCredential)
+		protected.POST("/api/user/update", userHandler.UpdateProfile)
+		protected.POST("/api/user/change-password", userHandler.ChangePassword)
 		protected.GET("/api/v1/notifications/preferences", notifHandler.GetPreferences)
 		protected.PUT("/api/v1/notifications/preferences", notifHandler.UpsertPreferences)
 

@@ -172,7 +172,7 @@ func (s *PayoutService) DeleteBankAccount(c *gin.Context) {
 	baID := c.Param("id")
 
 	result := s.db.Where("id = ? AND user_id = ?", baID, user.ID).
-		Delete(&models.UserAccountDetails{})
+		Delete(&models.UserBankAccount{})
 
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{

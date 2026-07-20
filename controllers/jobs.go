@@ -762,7 +762,7 @@ func atanApprox(y, x float64) float64 {
 	return atan
 }
 
-const completionRadiusMeters = 500.0 // client must be within 500m of job site
+const completionRadiusMeters = 500.0
 
 func CompleteContract(c *gin.Context) {
 	dbConn := db.DB
@@ -773,7 +773,7 @@ func CompleteContract(c *gin.Context) {
 		Latitude  *float64 `json:"latitude"`
 		Longitude *float64 `json:"longitude"`
 	}
-	// Best-effort bind — location is only required for the client
+
 	_ = c.ShouldBindJSON(&body)
 
 	tx := dbConn.Begin()
@@ -817,7 +817,6 @@ func CompleteContract(c *gin.Context) {
 		return
 	}
 
-	// Double-check: block if any open disputes exist even if contract status was manually changed
 	var openDisputeCount int64
 	if err := tx.Model(&models.Dispute{}).
 		Where("contract_id = ? AND status = ?", contractID, models.DisputeStatusOpen).
@@ -836,13 +835,11 @@ func CompleteContract(c *gin.Context) {
 		return
 	}
 
-	// Location verification: only required for the client (job poster)
 	if isFreelancer {
 		var jobLocation models.JobPostLocation
 		locationErr := dbConn.Where("job_post_id = ?", contract.JobPostID).First(&jobLocation).Error
 
 		if locationErr == nil && (jobLocation.Latitude != 0 || jobLocation.Longitude != 0) {
-			// Job has location data — require client's current coordinates
 			if body.Latitude == nil || body.Longitude == nil {
 				tx.Rollback()
 				c.JSON(http.StatusBadRequest, gin.H{

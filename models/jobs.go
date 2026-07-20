@@ -64,23 +64,6 @@ type JobMedia struct {
 	FileSize  int64   `gorm:"type:bigint" json:"file_size"`
 }
 
-type JobPostVideo struct {
-	BaseModel
-
-	JobMediaID string `gorm:"type:string;not null;uniqueIndex;constraint:OnDelete:CASCADE" json:"job_media_id"`
-	JobMedia   JobMedia
-
-	VideoURL     string `gorm:"type:varchar(500);not null" json:"video_url"`
-	ThumbnailURL string `gorm:"type:varchar(500);not null" json:"thumbnail_url"`
-
-	FileName string `gorm:"type:varchar(255);not null" json:"file_name"`
-	FileSize int64  `gorm:"type:bigint;not null" json:"file_size"`
-
-	Width  int `gorm:"not null" json:"width"`
-	Height int `gorm:"not null" json:"height"`
-
-	S3ObjectKey string `gorm:"type:varchar(255);not null" json:"s3_object_key"`
-}
 
 type JobPostLocation struct {
 	JobPostID  string  `gorm:"type:string;not null" json:"job_post_id"`

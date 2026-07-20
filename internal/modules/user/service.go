@@ -2,7 +2,11 @@ package user
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"mime/multipart"
+	"os"
+	"path/filepath"
 	"strings"
 	"tasksy/config"
 	"tasksy/models"
@@ -12,10 +16,26 @@ import (
 
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/account"
+	"github.com/stripe/stripe-go/v84/bankaccount"
+	"github.com/stripe/stripe-go/v84/token"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
+var (
+	ErrPhoneAlreadyTaken = errors.New("phone number already taken")
+	ErrEmailAlreadyTaken = errors.New("email already taken")
+)
+
+type UpdateProfileData struct {
+	FirstName   string
+	LastName    string
+	PhoneNumber string
+	Email       string
+	DateOfBirth *time.Time
+	Verified    string
+}
 
 type Service struct {
 	db        *gorm.DB
@@ -568,6 +588,236 @@ func (s *Service) syncAddressToStripe(user *models.User, addr *models.UserAddres
 		})
 		if err != nil {
 			logger.Log.Error("failed to sync address to stripe", zap.String("user_id", user.ID), zap.Error(err))
+		}
+	}()
+}
+
+func (s *Service) AddBankAccount(user *models.User, accountHolderName, sortCode, accountNumber string) error {
+	if user.StripeConnectAccountID == "" {
+		return errors.New("stripe account not provisioned for this user")
+	}
+
+	stripe.Key = s.appConfig.Stripe.SecretKey
+
+	tok, err := token.New(&stripe.TokenParams{
+		BankAccount: &stripe.BankAccountParams{
+			Country:           stripe.String("GB"),
+			Currency:          stripe.String("gbp"),
+			AccountHolderName: stripe.String(accountHolderName),
+			AccountHolderType: stripe.String("individual"),
+			RoutingNumber:     stripe.String(sortCode),
+			AccountNumber:     stripe.String(accountNumber),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to tokenize bank account: %w", err)
+	}
+
+	_, err = bankaccount.New(&stripe.BankAccountParams{
+		Account: stripe.String(user.StripeConnectAccountID),
+		Token:   stripe.String(tok.ID),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to attach bank account: %w", err)
+	}
+
+	return s.db.Model(&models.User{}).Where("id = ?", user.ID).Update("stripe_connect_onboarded", true).Error
+}
+
+func (s *Service) LookupUserByContact(email, phone string) (*models.User, error) {
+	query := s.db
+	if email != "" {
+		query = query.Where("email = ?", email)
+	}
+	if phone != "" {
+		query = query.Where("phone_number = ?", phone)
+	}
+	var user models.User
+	if err := query.First(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (s *Service) GetProfileReviews(user *models.User) ([]models.Review, error) {
+	var reviews []models.Review
+	err := s.db.Where("target_id = ?", user.ID).
+		Preload("Reviewer").
+		Preload("Contract").
+		Order("created_at DESC").
+		Find(&reviews).Error
+	return reviews, err
+}
+
+func (s *Service) ChangePassword(user *models.User, currentPassword, newPassword string) error {
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(currentPassword)); err != nil {
+		return errors.New("current password is incorrect")
+	}
+	hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	return s.db.Model(user).Update("password", string(hashed)).Error
+}
+
+func (s *Service) VerifyCredential(user *models.User, email, phone string) error {
+	if email != "" {
+		if user.Email != email {
+			return errors.New("email does not match user profile")
+		}
+		var existing models.User
+		if s.db.Where("email = ?", email).Where("id != ?", user.ID).First(&existing).Error == nil {
+			return errors.New("email already taken by another user")
+		}
+		if err := s.db.Model(user).Update("email_verified", true).Error; err != nil {
+			return err
+		}
+	}
+	if phone != "" {
+		if user.PhoneNumber != phone {
+			return errors.New("phone number does not match user profile")
+		}
+		var existing models.User
+		if s.db.Where("phone_number = ?", phone).Where("id != ?", user.ID).First(&existing).Error == nil {
+			return errors.New("phone number already taken by another user")
+		}
+		if err := s.db.Model(user).Update("phone_verified", true).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) UpdateProfile(user *models.User, data UpdateProfileData, photoFile *multipart.FileHeader) (*models.User, error) {
+	updates := make(map[string]interface{})
+
+	if data.FirstName != "" {
+		updates["first_name"] = data.FirstName
+	}
+	if data.LastName != "" {
+		updates["last_name"] = data.LastName
+	}
+	if data.DateOfBirth != nil {
+		updates["dob"] = data.DateOfBirth
+	}
+	if data.Verified == "true" {
+		updates["identity_verified"] = true
+	}
+
+	if data.PhoneNumber != "" {
+		var existing models.User
+		result := s.db.Where("phone_number = ?", data.PhoneNumber).Where("id != ?", user.ID).First(&existing)
+		if result.Error == nil {
+			return nil, ErrPhoneAlreadyTaken
+		} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, result.Error
+		}
+		updates["phone_number"] = data.PhoneNumber
+		updates["phone_verified"] = false
+	}
+
+	if data.Email != "" {
+		var existing models.User
+		result := s.db.Where("email = ?", data.Email).Where("id != ?", user.ID).First(&existing)
+		if result.Error == nil {
+			return nil, ErrEmailAlreadyTaken
+		} else if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, result.Error
+		}
+		updates["email"] = data.Email
+		updates["email_verified"] = false
+	}
+
+	if photoFile != nil {
+		allowedTypes := map[string]bool{
+			"image/jpeg": true, "image/jpg": true,
+			"image/png": true, "image/gif": true, "image/webp": true,
+		}
+		contentType := photoFile.Header.Get("Content-Type")
+		if !allowedTypes[contentType] {
+			return nil, errors.New("invalid file type, only images are allowed")
+		}
+		if photoFile.Size > 5*1024*1024 {
+			return nil, errors.New("file size too large, maximum 5MB allowed")
+		}
+
+		profilePhotoPath := filepath.Join("media/", "profiles")
+		if err := os.MkdirAll(profilePhotoPath, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create profile photo directory: %w", err)
+		}
+
+		if user.ProfilePhoto != "" {
+			if _, err := os.Stat(user.ProfilePhoto); err == nil {
+				os.Remove(user.ProfilePhoto)
+			}
+		}
+
+		ext := filepath.Ext(photoFile.Filename)
+		fileName := fmt.Sprintf("profile_%s_%d%s", user.ID, time.Now().UnixNano(), ext)
+		filePath := filepath.Join(profilePhotoPath, fileName)
+
+		src, err := photoFile.Open()
+		if err != nil {
+			return nil, fmt.Errorf("failed to open uploaded file: %w", err)
+		}
+		defer src.Close()
+
+		dst, err := os.Create(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create destination file: %w", err)
+		}
+		defer dst.Close()
+
+		if _, err = io.Copy(dst, src); err != nil {
+			os.Remove(filePath)
+			return nil, fmt.Errorf("failed to save profile photo: %w", err)
+		}
+
+		updates["profile_photo"] = filePath
+	}
+
+	if len(updates) == 0 {
+		return nil, errors.New("no fields to update")
+	}
+
+	if err := s.db.Model(user).Updates(updates).Error; err != nil {
+		if photoPath, ok := updates["profile_photo"].(string); ok {
+			os.Remove(photoPath)
+		}
+		return nil, err
+	}
+
+	var updated models.User
+	if err := s.db.Where("id = ?", user.ID).First(&updated).Error; err != nil {
+		return nil, err
+	}
+
+	s.syncProfileToStripe(updated)
+	return &updated, nil
+}
+
+func (s *Service) syncProfileToStripe(user models.User) {
+	if user.StripeConnectAccountID == "" {
+		return
+	}
+	go func() {
+		stripe.Key = s.appConfig.Stripe.SecretKey
+		params := &stripe.AccountParams{
+			Individual: &stripe.PersonParams{
+				FirstName: stripe.String(user.FirstName),
+				LastName:  stripe.String(user.LastName),
+				Email:     stripe.String(user.Email),
+			},
+		}
+		if user.DateOfBirth != nil {
+			params.Individual.DOB = &stripe.PersonDOBParams{
+				Day:   stripe.Int64(int64(user.DateOfBirth.Day())),
+				Month: stripe.Int64(int64(user.DateOfBirth.Month())),
+				Year:  stripe.Int64(int64(user.DateOfBirth.Year())),
+			}
+		}
+		if _, err := account.Update(user.StripeConnectAccountID, params); err != nil {
+			logger.Log.Error("failed to sync profile to stripe", zap.String("user_id", user.ID), zap.Error(err))
 		}
 	}()
 }

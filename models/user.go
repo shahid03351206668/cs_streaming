@@ -20,9 +20,10 @@ type Role struct {
 
 type User struct {
 	BaseModel
-	FirstName              string `gorm:"column:first_name" json:"first_name"`
-	LastName               string `gorm:"column:last_name" json:"last_name"`
-	Email                  string `gorm:"column:email" json:"email"`
+	FirstName              string     `gorm:"column:first_name" json:"first_name"`
+	LastName               string     `gorm:"column:last_name" json:"last_name"`
+	Email                  string     `gorm:"column:email" json:"email"`
+	DateOfBirth            *time.Time `gorm:"column:dob" json:"dob"`
 	Password               string
 	Disabled               bool   `gorm:"default:false;column:disabled" json:"disabled"`
 	PhoneNumber            string `gorm:"column:phone_number" json:"phone_number"`

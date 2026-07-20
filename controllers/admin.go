@@ -311,70 +311,6 @@ func AdminUserWalletController(c *gin.Context) {
 		return
 	}
 
-	type TxRow struct {
-		ID                         string    `json:"id"`
-		TransactionDate            time.Time `json:"transaction_date"`
-		FromUserID                 string    `json:"from_user_id"`
-		ToUserID                   string    `json:"to_user_id"`
-		ReferenceType              string    `json:"reference_type"`
-		ReferenceID                string    `json:"reference_id"`
-		Amount                     int64     `json:"amount"`
-		NetAmount                  int64     `json:"net_amount"`
-		DiscountAmount             int64     `json:"discount_amount"`
-		ReferralDiscountAmount     int64     `json:"referral_discount_amount"`
-		AppFeeAmount               int64     `json:"app_fee_amount"`
-		ClientCommissionAmount     int64     `json:"client_commission_amount"`
-		FreelancerCommissionAmount int64     `json:"freelancer_commission_amount"`
-		ReferralRewardAmount       int64     `json:"referral_reward_amount"`
-		PaymentMethod              string    `json:"payment_method"`
-		Currency                   string    `json:"currency"`
-		Status                     string    `json:"status"`
-		Direction                  string    `json:"direction"` // "paid" | "received"
-	}
-
-	var transactions []TxRow
-
-	// Transactions where user paid
-	var paid []TxRow
-	db.DB.Model(&models.PaymentTransaction{}).
-		Where("from_user_id = ?", userID).
-		Select("id, transaction_date, from_user_id, to_user_id, reference_type, reference_id, amount, net_amount, discount_amount, referral_discount_amount, app_fee_amount, client_commission_amount, freelancer_commission_amount, referral_reward_amount, payment_method, currency, status").
-		Order("transaction_date DESC").
-		Find(&paid)
-	for i := range paid {
-		paid[i].Direction = "paid"
-	}
-
-	// Transactions where user earned
-	var received []TxRow
-	db.DB.Model(&models.PaymentTransaction{}).
-		Where("to_user_id = ?", userID).
-		Select("id, transaction_date, from_user_id, to_user_id, reference_type, reference_id, amount, net_amount, discount_amount, referral_discount_amount, app_fee_amount, client_commission_amount, freelancer_commission_amount, referral_reward_amount, payment_method, currency, status").
-		Order("transaction_date DESC").
-		Find(&received)
-	for i := range received {
-		received[i].Direction = "received"
-	}
-
-	transactions = append(paid, received...)
-
-	// Summary
-	var totalPaid, totalEarned, totalDiscounts, totalReferralDiscounts, totalAppFees, totalReferralRewards int64
-	for _, t := range paid {
-		if t.Status == "success" || t.Status == "completed" {
-			totalPaid += t.Amount
-			totalAppFees += t.ClientCommissionAmount
-			totalDiscounts += t.DiscountAmount
-			totalReferralDiscounts += t.ReferralDiscountAmount
-		}
-	}
-	for _, t := range received {
-		if t.Status == "success" || t.Status == "completed" {
-			totalEarned += t.NetAmount
-			totalReferralRewards += t.ReferralRewardAmount
-		}
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"user": gin.H{
 			"id":                      user.ID,
@@ -387,17 +323,17 @@ func AdminUserWalletController(c *gin.Context) {
 			"referral_reward_balance": user.ReferralRewardBalance,
 		},
 		"summary": gin.H{
-			"total_paid":               totalPaid,
-			"total_earned":             totalEarned,
-			"total_discounts":          totalDiscounts,
-			"total_referral_discounts": totalReferralDiscounts,
-			"total_app_fees_paid":      totalAppFees,
-			"total_referral_rewards":   totalReferralRewards,
-			"total_transactions":       len(transactions),
-			"paid_count":               len(paid),
-			"received_count":           len(received),
+			"total_paid":               0,
+			"total_earned":             0,
+			"total_discounts":          0,
+			"total_referral_discounts": 0,
+			"total_app_fees_paid":      0,
+			"total_referral_rewards":   0,
+			"total_transactions":       0,
+			"paid_count":               0,
+			"received_count":           0,
 		},
-		"transactions": transactions,
+		"transactions": []interface{}{},
 	})
 }
 
@@ -490,55 +426,11 @@ func AdminGetJobDetailController(c *gin.Context) {
 		Preload("Proposal").
 		First(&contract).Error == nil
 
-	var payments []models.PaymentTransaction
-	if contractFound {
-		db.DB.Where("reference_id = ? AND reference_type = ?", contract.ID, "contract").
-			Preload("FromUser").
-			Preload("ToUser").
-			Order("transaction_date DESC").
-			Find(&payments)
-	}
-
-	type PaymentRow struct {
-		ID              string    `json:"id"`
-		TransactionDate time.Time `json:"transaction_date"`
-		FromUserID      string    `json:"from_user_id"`
-		FromUserName    string    `json:"from_user_name"`
-		ToUserID        string    `json:"to_user_id"`
-		ToUserName      string    `json:"to_user_name"`
-		Amount          int64     `json:"amount"`
-		NetAmount       int64     `json:"net_amount"`
-		AppFeeAmount    int64     `json:"app_fee_amount"`
-		DiscountAmount  int64     `json:"discount_amount"`
-		Currency        string    `json:"currency"`
-		Status          string    `json:"status"`
-		PaymentMethod   string    `json:"payment_method"`
-	}
-
-	paymentRows := make([]PaymentRow, 0, len(payments))
-	for _, p := range payments {
-		paymentRows = append(paymentRows, PaymentRow{
-			ID:              p.ID,
-			TransactionDate: p.TransactionDate,
-			FromUserID:      p.FromUserID,
-			FromUserName:    p.FromUser.FirstName + " " + p.FromUser.LastName,
-			ToUserID:        p.ToUserID,
-			ToUserName:      p.ToUser.FirstName + " " + p.ToUser.LastName,
-			Amount:          p.Amount,
-			NetAmount:       p.NetAmount,
-			AppFeeAmount:    p.AppFeeAmount,
-			DiscountAmount:  p.DiscountAmount,
-			Currency:        p.Currency,
-			Status:          p.Status,
-			PaymentMethod:   p.PaymentMethod,
-		})
-	}
-
 	resp := gin.H{
 		"job":       job,
 		"location":  location,
 		"proposals": proposals,
-		"payments":  paymentRows,
+		"payments":  []interface{}{},
 	}
 	if contractFound {
 		resp["contract"] = contract
