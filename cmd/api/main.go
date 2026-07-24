@@ -18,7 +18,7 @@ func main() {
 	redisClient := redis.NewClient(&redis.Options{Addr: appConfig.Redis.Addr})
 
 
-	fcmClient, err := fcm.NewFCMClient(appConfig.Firebase.CredentialsFile)
+	fcmClient, err := fcm.NewFCMClient()
 	if err != nil {
 		logger.Log.Error("failed to initialize FCM client", zap.Error(err))
 		return

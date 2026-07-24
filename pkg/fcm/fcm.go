@@ -8,20 +8,17 @@ import (
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
 	"go.uber.org/zap"
-	"google.golang.org/api/option"
 )
 
 type FCMClient struct {
 	client *messaging.Client
 }
 
-func NewFCMClient(credentials string) (*FCMClient, error) {
+func NewFCMClient() (*FCMClient, error) {
 	ctx := context.Background()
 	config := &firebase.Config{ProjectID: "tasksy-40049"}
 
-	app, err := firebase.NewApp(ctx, config,
-		option.WithCredentialsJSON([]byte(credentials)),
-	)
+	app, err := firebase.NewApp(ctx, config)
 	if err != nil {
 		return nil, err
 	}
@@ -34,7 +31,6 @@ func NewFCMClient(credentials string) (*FCMClient, error) {
 	logger.Log.Info("FCM client initialized")
 	return &FCMClient{client: client}, nil
 }
-
 
 func (f *FCMClient) SendToDevice(ctx context.Context, token, title, body string, data map[string]string) (string, error) {
 	message := &messaging.Message{
