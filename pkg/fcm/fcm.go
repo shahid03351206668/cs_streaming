@@ -2,9 +2,6 @@ package fcm
 
 import (
 	"context"
-	"net"
-	"net/http"
-	"time"
 
 	"tasksy/pkg/logger"
 
@@ -22,23 +19,8 @@ func NewFCMClient(credentials string) (*FCMClient, error) {
 	ctx := context.Background()
 	config := &firebase.Config{ProjectID: "tasksy-40049"}
 
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).DialContext,
-			TLSHandshakeTimeout:   10 * time.Second,
-			IdleConnTimeout:       30 * time.Second,
-			ResponseHeaderTimeout: 15 * time.Second,
-			DisableKeepAlives:     false,
-			MaxIdleConnsPerHost:   4,
-		},
-	}
-
 	app, err := firebase.NewApp(ctx, config,
 		option.WithCredentialsJSON([]byte(credentials)),
-		option.WithHTTPClient(httpClient),
 	)
 	if err != nil {
 		return nil, err
