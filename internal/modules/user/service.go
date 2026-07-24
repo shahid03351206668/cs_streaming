@@ -85,6 +85,21 @@ func (s *Service) UpsertDeviceToken(userID, token, platform string) error {
 	return s.db.Create(&dt).Error
 }
 
+func (s *Service) DeleteDeviceToken(userID, token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return errors.New("token is required")
+	}
+	result := s.db.Where("token = ? AND user_id = ?", token, userID).Delete(&models.DeviceToken{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("token not found")
+	}
+	return nil
+}
+
 // service.go
 
 type UserProfileResponse struct {

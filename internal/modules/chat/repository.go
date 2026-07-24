@@ -12,7 +12,7 @@ import (
 
 type Repository interface {
 	CreateConversation(participants []string, jobID string) (*models.ChatConversation, error)
-	FindPrivateChat(userA, userB string) (*models.ChatConversation, error)
+	FindPrivateChat(userA, userB, jobID string) (*models.ChatConversation, error)
 	GetUserConversations(userID string) ([]models.ChatConversation, error)
 	SaveMessage(msg *models.ChatMessage) error
 	GetHistory(conversationID string, limit, offset int) ([]models.ChatMessage, error)
@@ -134,23 +134,6 @@ func (r *chatRepository) CreateConversation(participants []string, jobID string)
 
 	logger.Log.Info("creating conversation", zap.Strings("participants", participants), zap.String("job_id", jobID))
 
-	if len(participants) == 2 {
-		var existingID string
-
-		if err := r.db.Raw(`SELECT 
-			p1.conversation_id 
-            FROM chat_participants p1 
-            JOIN chat_participants p2 ON p1.conversation_id = p2.conversation_id 
-            WHERE p1.user_id = ? AND p2.user_id = ?
-            LIMIT 1`,
-			participants[0], participants[1]).Scan(&existingID).Error; err == nil && existingID != "" {
-			var existingChat models.ChatConversation
-			if err := r.db.First(&existingChat, "id = ?", existingID).Error; err == nil {
-				return &existingChat, nil
-			}
-		}
-	}
-
 	chat := models.ChatConversation{LastSentAt: time.Now(), JobPostID: jobID}
 
 	if err := tx.Create(&chat).Error; err != nil {
@@ -171,16 +154,16 @@ func (r *chatRepository) CreateConversation(participants []string, jobID string)
 	return &chat, tx.Commit().Error
 }
 
-func (r *chatRepository) FindPrivateChat(userA, userB string) (*models.ChatConversation, error) {
+func (r *chatRepository) FindPrivateChat(userA, userB, jobID string) (*models.ChatConversation, error) {
 	var chat models.ChatConversation
 	query := `
 		SELECT c.* FROM chat_conversation c
 		JOIN chat_participants p1 ON c.id = p1.conversation_id
 		JOIN chat_participants p2 ON c.id = p2.conversation_id
-		WHERE p1.user_id = ? AND p2.user_id = ? AND c.is_group = false
+		WHERE p1.user_id = ? AND p2.user_id = ? AND c.is_group = false AND c.job_post_id = ?
 		LIMIT 1`
 
-	if err := r.db.Raw(query, userA, userB).Scan(&chat).Error; err != nil {
+	if err := r.db.Raw(query, userA, userB, jobID).Scan(&chat).Error; err != nil {
 		return nil, err
 	}
 	if chat.ID == "" {

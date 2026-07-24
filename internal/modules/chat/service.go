@@ -114,12 +114,10 @@ func (s *chatService) uploadToS3(file io.Reader, filename, mimeType string) (str
 }
 
 func (s *chatService) InitiateChat(userA, userB, jobID string) (*models.ChatConversation, error) {
-	existing, err := s.repo.FindPrivateChat(userA, userB)
-
+	existing, err := s.repo.FindPrivateChat(userA, userB, jobID)
 	if err == nil {
 		return existing, nil
 	}
-
 	return s.repo.CreateConversation([]string{userA, userB}, jobID)
 }
 

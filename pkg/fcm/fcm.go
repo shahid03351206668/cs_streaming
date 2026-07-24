@@ -33,7 +33,7 @@ func NewFCMClient(credentials string) (*FCMClient, error) {
 	return &FCMClient{client: client}, nil
 }
 
-// SendToDevice sends a notification to a single device token
+
 func (f *FCMClient) SendToDevice(ctx context.Context, token, title, body string, data map[string]string) (string, error) {
 	message := &messaging.Message{
 		Token: token,

@@ -571,6 +571,26 @@ func (h *Handler) SaveDeviceToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success"})
 }
 
+func (h *Handler) DeleteDeviceToken(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	var req struct {
+		Token string `json:"token" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	if err := h.service.DeleteDeviceToken(user.ID, req.Token); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success"})
+}
+
 func (h *Handler) StripeIdentityWebhookHandler(c *gin.Context) {
 	const MaxRequestSize = int64(65536)
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxRequestSize)
