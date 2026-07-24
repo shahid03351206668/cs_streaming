@@ -824,6 +824,7 @@ func (s *Service) syncProfileToStripe(user models.User) {
 				FirstName: stripe.String(user.FirstName),
 				LastName:  stripe.String(user.LastName),
 				Email:     stripe.String(user.Email),
+				Phone:     stripe.String(user.PhoneNumber),
 			},
 		}
 		if user.DateOfBirth != nil {
