@@ -219,6 +219,31 @@ func (h *Handler) DeleteEmailTemplate(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
 }
 
+func (h *Handler) SendEmail(c *gin.Context) {
+	var req struct {
+		Receiver string `json:"receiver" binding:"required,email"`
+		Subject  string `json:"subject" binding:"required"`
+		Content  string `json:"content" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	acc, err := h.service.GetEmailAccount("")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "no default email account configured"})
+		return
+	}
+
+	if err := h.service.SendMail(acc.Email, req.Receiver, req.Subject, req.Content); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success"})
+}
+
 func (h *Handler) SendTestEmail(c *gin.Context) {
 	var body struct {
 		To string `json:"to" binding:"required"`

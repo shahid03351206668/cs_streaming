@@ -76,6 +76,12 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	}
 	router.Group("/api/v1/admin").POST("/email/test", emailHandler.SendTestEmail)
 
+	emailSend := router.Group("/api/v1/email")
+	// emailSend.Use(middleware.AuthMiddleware())
+	{
+		emailSend.POST("/send", emailHandler.SendEmail)
+	}
+
 	userService := user.NewService(db, appConfig, s3Client)
 	userHandler := user.NewHandler(userService)
 	jobPostService := job.NewService(db, s3Client, queueClient, notifService)
