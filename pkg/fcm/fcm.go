@@ -7,6 +7,7 @@ import (
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
+	"go.uber.org/zap"
 	"google.golang.org/api/option"
 )
 
@@ -54,7 +55,21 @@ func (f *FCMClient) SendToDevice(ctx context.Context, token, title, body string,
 		},
 	}
 
-	return f.client.Send(ctx, message)
+	msgID, err := f.client.Send(ctx, message)
+	if err != nil {
+		logger.Log.Error("FCM send failed",
+			zap.String("token", token),
+			zap.String("title", title),
+			zap.Error(err),
+		)
+	} else {
+		logger.Log.Info("FCM send success",
+			zap.String("message_id", msgID),
+			zap.String("token", token),
+			zap.String("title", title),
+		)
+	}
+	return msgID, err
 }
 
 // SendToMultiple sends a notification to multiple device tokens
