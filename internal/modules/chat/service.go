@@ -244,8 +244,6 @@ func (s *chatService) SendMessage(senderID, convID, content, msgType string, fil
 			if err != nil || len(tokens) == 0 {
 				continue
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-
 			logger.Log.Info("sending FCM push",
 				zap.String("recipient_user_id", uid),
 				zap.Int("token_count", len(tokens)),
@@ -253,15 +251,16 @@ func (s *chatService) SendMessage(senderID, convID, content, msgType string, fil
 				zap.String("job_post_id", JobPostID),
 			)
 			for _, t := range tokens {
-				if err := s.notifier.NotifyNewMessage(ctx, t, senderName, convID, JobPostID); err != nil {
+				tCtx, tCancel := context.WithTimeout(context.Background(), 15*time.Second)
+				if err := s.notifier.NotifyNewMessage(tCtx, t, senderName, convID, JobPostID); err != nil {
 					logger.Log.Error("FCM push failed",
 						zap.String("recipient_user_id", uid),
 						zap.String("token", t),
 						zap.Error(err),
 					)
 				}
+				tCancel()
 			}
-			cancel()
 		}
 	}()
 
