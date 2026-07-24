@@ -1114,7 +1114,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		Verified    string     `form:"verified"`
 		LastName    string     `form:"last_name"`
 		PhoneNumber string     `form:"phone_number"`
-		DateOfBirth *time.Time `form:"dob"`
+		DateOfBirth *time.Time `form:"dob" time_format:"2006-01-02"`
 		Email       string     `form:"email"`
 	}
 	if err := c.ShouldBind(&body); err != nil {

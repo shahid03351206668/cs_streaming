@@ -230,7 +230,7 @@ func (h *Handler) SendEmail(c *gin.Context) {
 		return
 	}
 
-	acc, err := h.service.GetEmailAccount("")
+	acc, err := h.service.GetEmailAccount("noreply@tasksy.co.uk")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "no default email account configured"})
 		return

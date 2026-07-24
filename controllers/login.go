@@ -1,9 +1,12 @@
 package controllers
 
 import (
+	"errors"
 	"net/http"
 	"os"
+	"strings"
 	"time"
+
 	"tasksy/db"
 	"tasksy/lib"
 	"tasksy/models"
@@ -18,10 +21,81 @@ import (
 	"gorm.io/gorm"
 )
 
-func provisionStripeAccount(user models.User, clientIP string) {
-	if user.StripeConnectAccountID != "" {
-		return
+func stripeIndividualParams(user models.User, addr *models.UserAddress) *stripe.PersonParams {
+	params := &stripe.PersonParams{
+		FirstName: stripe.String(user.FirstName),
+		LastName:  stripe.String(user.LastName),
+		Email:     stripe.String(user.Email),
 	}
+	if user.PhoneNumber != "" {
+		params.Phone = stripe.String(user.PhoneNumber)
+	}
+	if user.DateOfBirth != nil {
+		params.DOB = &stripe.PersonDOBParams{
+			Day:   stripe.Int64(int64(user.DateOfBirth.Day())),
+			Month: stripe.Int64(int64(user.DateOfBirth.Month())),
+			Year:  stripe.Int64(int64(user.DateOfBirth.Year())),
+		}
+	}
+	if addr != nil {
+		params.Address = &stripe.AddressParams{
+			Line1:      stripe.String(addr.Line1),
+			Line2:      stripe.String(addr.Line2),
+			City:       stripe.String(addr.City),
+			State:      stripe.String(addr.State),
+			PostalCode: stripe.String(addr.PostalCode),
+			Country:    stripe.String(addr.Country),
+		}
+	}
+	return params
+}
+
+func stripeExternalAccountParams(bank *models.UserBankAccount) *stripe.AccountExternalAccountParams {
+	if bank == nil || bank.AccountNumber == "" || bank.SortCode == "" {
+		return nil
+	}
+	currency := bank.Currency
+	if currency == "" {
+		currency = "gbp"
+	}
+	return &stripe.AccountExternalAccountParams{
+		AccountNumber:     stripe.String(bank.AccountNumber),
+		AccountHolderName: stripe.String(bank.AccountHolderName),
+		AccountHolderType: stripe.String("individual"),
+		Country:           stripe.String("GB"),
+		Currency:          stripe.String(currency),
+		RoutingNumber:     stripe.String(strings.NewReplacer("-", "", " ", "").Replace(bank.SortCode)),
+	}
+}
+
+func shouldAttachExternalAccount(user models.User, bank *models.UserBankAccount) bool {
+	if stripeExternalAccountParams(bank) == nil {
+		return false
+	}
+	return user.StripeConnectAccountID == "" || bank.StripeConnectAccountID == "" || bank.StripeConnectAccountID != user.StripeConnectAccountID
+}
+
+func loadStripeProvisioningDetails(userID string) (*models.UserAddress, *models.UserBankAccount) {
+	var addr models.UserAddress
+	var addrPtr *models.UserAddress
+	if err := db.DB.Where("user_id = ?", userID).Order("is_default DESC, created_at DESC").First(&addr).Error; err == nil {
+		addrPtr = &addr
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		logger.Log.Error("failed to load user address for stripe provisioning", zap.String("user_id", userID), zap.Error(err))
+	}
+
+	var bank models.UserBankAccount
+	var bankPtr *models.UserBankAccount
+	if err := db.DB.Where("user_id = ?", userID).Order("is_default DESC, created_at DESC").First(&bank).Error; err == nil {
+		bankPtr = &bank
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		logger.Log.Error("failed to load user bank account for stripe provisioning", zap.String("user_id", userID), zap.Error(err))
+	}
+
+	return addrPtr, bankPtr
+}
+
+func provisionStripeAccount(user models.User, clientIP string) {
 	go func() {
 		stripe.Key = os.Getenv("STRIPE_SECRET_KEY")
 		now := time.Now().Unix()
@@ -29,7 +103,9 @@ func provisionStripeAccount(user models.User, clientIP string) {
 		if ip == "" {
 			ip = "127.0.0.1"
 		}
-		acc, err := account.New(&stripe.AccountParams{
+
+		addr, bank := loadStripeProvisioningDetails(user.ID)
+		params := &stripe.AccountParams{
 			Type:         stripe.String(string(stripe.AccountTypeCustom)),
 			Email:        stripe.String(user.Email),
 			Country:      stripe.String("GB"),
@@ -38,11 +114,7 @@ func provisionStripeAccount(user models.User, clientIP string) {
 				URL: stripe.String("https://tasksy.co.uk"),
 				MCC: stripe.String("7372"),
 			},
-			Individual: &stripe.PersonParams{
-				FirstName: stripe.String(user.FirstName),
-				LastName:  stripe.String(user.LastName),
-				Email:     stripe.String(user.Email),
-			},
+			Individual: stripeIndividualParams(user, addr),
 			TOSAcceptance: &stripe.AccountTOSAcceptanceParams{
 				Date: stripe.Int64(now),
 				IP:   stripe.String(ip),
@@ -55,7 +127,22 @@ func provisionStripeAccount(user models.User, clientIP string) {
 					Requested: stripe.Bool(true),
 				},
 			},
-		})
+		}
+		if shouldAttachExternalAccount(user, bank) {
+			params.ExternalAccount = stripeExternalAccountParams(bank)
+		}
+
+		if user.StripeConnectAccountID != "" {
+			updateParams := *params
+			updateParams.Type = nil
+			updateParams.Country = nil
+			if _, err := account.Update(user.StripeConnectAccountID, &updateParams); err != nil {
+				logger.Log.Error("stripe connect account sync failed at login", zap.String("user_id", user.ID), zap.Error(err))
+			}
+			return
+		}
+
+		acc, err := account.New(params)
 		if err != nil {
 			logger.Log.Error("stripe connect account creation failed at login", zap.String("user_id", user.ID), zap.Error(err))
 			return

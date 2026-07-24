@@ -162,11 +162,12 @@ func (s *Service) GetUserProfile(id string) (*UserProfileResponse, error) {
 }
 
 type UserData struct {
-	FirstName   string `form:"first_name" binding:"required"`
-	LastName    string `form:"last_name"`
-	Email       string `form:"email"`
-	Password    string `form:"password" binding:"required,min=8"`
-	PhoneNumber string `form:"phone_number"`
+	FirstName   string     `form:"first_name" binding:"required"`
+	Dob         *time.Time `form:"dob"`
+	LastName    string     `form:"last_name"`
+	Email       string     `form:"email"`
+	Password    string     `form:"password" binding:"required,min=8"`
+	PhoneNumber string     `form:"phone_number"`
 }
 
 func (s *Service) CreateUser(data UserData, file *multipart.FileHeader, clientIP string) (*models.User, error) {
@@ -221,6 +222,7 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader, clientIP
 		PhoneNumber:   data.PhoneNumber,
 		Password:      string(hashedPassword),
 		ProfilePhoto:  imageURL,
+		DateOfBirth:   data.Dob,
 	}
 
 	if err := s.db.Create(&user).Error; err != nil {
