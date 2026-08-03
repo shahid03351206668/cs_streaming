@@ -142,6 +142,7 @@ func (s *Service) AddBankAccount(user *models.User, accountHolderName, sortCode,
 		StripeConnectAccountID: user.StripeConnectAccountID,
 		StripeBankAccountID:    ba.ID,
 		AccountHolderName:      accountHolderName,
+		AccountNumber:          accountNumber,
 		SortCode:               sortCode,
 		AccountNumberLast4:     ba.Last4,
 		BankName:               ba.BankName,
@@ -194,6 +195,32 @@ func (s *Service) UpdateBankAccount(user *models.User, bankAccountID, accountHol
 
 	s.db.First(&existing, "id = ?", bankAccountID)
 	return &existing, nil
+}
+
+func (s *Service) DeleteBankAccount(user *models.User, bankAccountID string) error {
+	var existing models.UserBankAccount
+	if err := s.db.First(&existing, "id = ? AND user_id = ?", bankAccountID, user.ID).Error; err != nil {
+		return errors.New("bank account not found")
+	}
+
+	if _, err := bankaccount.Del(existing.StripeBankAccountID, &stripe.BankAccountParams{
+		Account: stripe.String(user.StripeConnectAccountID),
+	}); err != nil {
+		return fmt.Errorf("failed to remove bank account from stripe: %w", err)
+	}
+
+	if err := s.db.Delete(&existing).Error; err != nil {
+		return fmt.Errorf("failed to delete bank account: %w", err)
+	}
+
+	if existing.IsDefault {
+		var next models.UserBankAccount
+		if err := s.db.Where("user_id = ?", user.ID).Order("created_at DESC").First(&next).Error; err == nil {
+			s.db.Model(&next).Update("is_default", true)
+		}
+	}
+
+	return nil
 }
 
 func (s *Service) GetBankAccounts(user *models.User) ([]models.UserBankAccount, error) {

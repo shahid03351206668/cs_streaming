@@ -134,6 +134,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		v3Bank.GET("", paymentV3Handler.HandleGetBankAccounts)
 		v3Bank.POST("", paymentV3Handler.HandleAddBankAccount)
 		v3Bank.PUT("/:id", paymentV3Handler.HandleUpdateBankAccount)
+		v3Bank.DELETE("/:id", paymentV3Handler.HandleDeleteBankAccount)
 	}
 
 	// paymentProtected := router.Group("/api/v1/payments")

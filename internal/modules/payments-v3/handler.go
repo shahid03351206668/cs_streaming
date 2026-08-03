@@ -119,6 +119,24 @@ func (h *Handler) HandleUpdateBankAccount(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": record})
 }
 
+func (h *Handler) HandleDeleteBankAccount(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	bankAccountID := c.Param("id")
+
+	stripe.Key = h.config.Stripe.SecretKey
+
+	if err := h.service.DeleteBankAccount(&user, bankAccountID); err != nil {
+		if err.Error() == "bank account not found" {
+			c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success"})
+}
+
 func (h *Handler) HandleGetBankAccounts(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
