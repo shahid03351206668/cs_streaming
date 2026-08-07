@@ -105,7 +105,6 @@ func (h *Handler) HandleUpdateBankAccount(c *gin.Context) {
 	}
 
 	stripe.Key = h.config.Stripe.SecretKey
-
 	record, err := h.service.UpdateBankAccount(&user, bankAccountID, body.AccountHolderName, body.SortCode, body.AccountNumber)
 	if err != nil {
 		if err.Error() == "bank account not found" {

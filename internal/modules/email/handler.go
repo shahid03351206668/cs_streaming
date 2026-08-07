@@ -74,7 +74,7 @@ func (h *Handler) UpdateEmailAccount(c *gin.Context) {
 		Name     string `json:"name"`
 		Host     string `json:"host"`
 		Port     int    `json:"port"`
-		Username string `json:"username"`
+		Email    string `json:"email"`
 		Password string `json:"password"`
 		FromName string `json:"from_name"`
 		IsActive *bool  `json:"is_active"`
@@ -95,8 +95,8 @@ func (h *Handler) UpdateEmailAccount(c *gin.Context) {
 	if input.Port != 0 {
 		updates["port"] = input.Port
 	}
-	if input.Username != "" {
-		updates["username"] = input.Username
+	if input.Email != "" {
+		updates["email"] = input.Email
 	}
 	if input.Password != "" {
 		updates["password"] = input.Password
@@ -108,12 +108,24 @@ func (h *Handler) UpdateEmailAccount(c *gin.Context) {
 		updates["is_active"] = *input.IsActive
 	}
 
+	var existing models.EmailAccount
+	if err := h.service.db.First(&existing, "id = ?", id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "email account not found"})
+		return
+	}
+
 	if err := h.service.db.Model(&models.EmailAccount{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	h.service.InvalidateEmailAccountCache(input.Username)
+	h.service.InvalidateEmailAccountCache(existing.Email)
+	if input.Email != "" && input.Email != existing.Email {
+		h.service.InvalidateEmailAccountCache(input.Email)
+	}
+	if existing.IsDefault {
+		h.service.InvalidateEmailAccountCache("")
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "updated"})
 }
 

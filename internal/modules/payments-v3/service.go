@@ -164,10 +164,11 @@ func (s *Service) UpdateBankAccount(user *models.User, bankAccountID, accountHol
 		return nil, errors.New("bank account not found")
 	}
 
-	if _, err := bankaccount.Del(existing.StripeBankAccountID, &stripe.BankAccountParams{
+	oldBA, err := bankaccount.Get(existing.StripeBankAccountID, &stripe.BankAccountParams{
 		Account: stripe.String(user.StripeConnectAccountID),
-	}); err != nil {
-		return nil, fmt.Errorf("failed to remove old bank account from stripe: %w", err)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch old bank account: %w", err)
 	}
 
 	tok, err := s.tokenizeBankAccount(accountHolderName, sortCode, accountNumber)
@@ -181,6 +182,24 @@ func (s *Service) UpdateBankAccount(user *models.User, bankAccountID, accountHol
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to attach new bank account: %w", err)
+	}
+
+	// Stripe refuses to delete an external account that is still the default
+	// for its currency, so the replacement must take over that status first.
+	if oldBA.DefaultForCurrency {
+		if _, err := bankaccount.Update(ba.ID, &stripe.BankAccountParams{
+			Account:            stripe.String(user.StripeConnectAccountID),
+			DefaultForCurrency: stripe.Bool(true),
+		}); err != nil {
+			bankaccount.Del(ba.ID, &stripe.BankAccountParams{Account: stripe.String(user.StripeConnectAccountID)})
+			return nil, fmt.Errorf("failed to set new bank account as default: %w", err)
+		}
+	}
+
+	if _, err := bankaccount.Del(existing.StripeBankAccountID, &stripe.BankAccountParams{
+		Account: stripe.String(user.StripeConnectAccountID),
+	}); err != nil {
+		return nil, fmt.Errorf("failed to remove old bank account from stripe: %w", err)
 	}
 
 	if err := s.db.Model(&existing).Updates(map[string]any{
@@ -203,6 +222,28 @@ func (s *Service) DeleteBankAccount(user *models.User, bankAccountID string) err
 		return errors.New("bank account not found")
 	}
 
+	oldBA, err := bankaccount.Get(existing.StripeBankAccountID, &stripe.BankAccountParams{
+		Account: stripe.String(user.StripeConnectAccountID),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to fetch bank account: %w", err)
+	}
+
+	var next models.UserBankAccount
+	hasNext := s.db.Where("user_id = ? AND id != ?", user.ID, bankAccountID).
+		Order("created_at DESC").First(&next).Error == nil
+
+	// Stripe refuses to delete an external account that is still the default
+	// for its currency, so another account must take over that status first.
+	if oldBA.DefaultForCurrency && hasNext {
+		if _, err := bankaccount.Update(next.StripeBankAccountID, &stripe.BankAccountParams{
+			Account:            stripe.String(user.StripeConnectAccountID),
+			DefaultForCurrency: stripe.Bool(true),
+		}); err != nil {
+			return fmt.Errorf("failed to set new default bank account: %w", err)
+		}
+	}
+
 	if _, err := bankaccount.Del(existing.StripeBankAccountID, &stripe.BankAccountParams{
 		Account: stripe.String(user.StripeConnectAccountID),
 	}); err != nil {
@@ -213,11 +254,8 @@ func (s *Service) DeleteBankAccount(user *models.User, bankAccountID string) err
 		return fmt.Errorf("failed to delete bank account: %w", err)
 	}
 
-	if existing.IsDefault {
-		var next models.UserBankAccount
-		if err := s.db.Where("user_id = ?", user.ID).Order("created_at DESC").First(&next).Error; err == nil {
-			s.db.Model(&next).Update("is_default", true)
-		}
+	if existing.IsDefault && hasNext {
+		s.db.Model(&next).Update("is_default", true)
 	}
 
 	return nil

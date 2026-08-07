@@ -2,8 +2,10 @@ package email
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/smtp"
 	"strings"
 	"time"
@@ -104,15 +106,62 @@ func (s *Service) SendMail(email, to, subject, htmlBody string) error {
 	}
 
 	from := fmt.Sprintf("%s <%s>", acc.FromName, acc.Email)
-	addr := fmt.Sprintf("%s:%d", acc.Host, acc.Port)
 	auth := &loginAuth{username: acc.Email, password: acc.Password}
 
 	headers := fmt.Sprintf(
 		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n",
 		from, to, subject,
 	)
+	msg := []byte(headers + htmlBody)
 
-	return smtp.SendMail(addr, auth, acc.Email, []string{to}, []byte(headers+htmlBody))
+	// Port 465 is implicit TLS (encrypted from the first byte) — smtp.SendMail
+	// only supports plaintext-then-STARTTLS, so it must be dialed separately.
+	if acc.Port == 465 {
+		return sendMailImplicitTLS(acc.Host, acc.Port, auth, acc.Email, to, msg)
+	}
+
+	addr := fmt.Sprintf("%s:%d", acc.Host, acc.Port)
+	return smtp.SendMail(addr, auth, acc.Email, []string{to}, msg)
+}
+
+func sendMailImplicitTLS(host string, port int, auth smtp.Auth, from, to string, msg []byte) error {
+	addr := fmt.Sprintf("%s:%d", host, port)
+
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 15 * time.Second}, "tcp", addr, &tls.Config{ServerName: host})
+	if err != nil {
+		return fmt.Errorf("tls dial: %w", err)
+	}
+
+	c, err := smtp.NewClient(conn, host)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("smtp client: %w", err)
+	}
+	defer c.Close()
+
+	if err := c.Auth(auth); err != nil {
+		return fmt.Errorf("auth: %w", err)
+	}
+	if err := c.Mail(from); err != nil {
+		return fmt.Errorf("mail from: %w", err)
+	}
+	if err := c.Rcpt(to); err != nil {
+		return fmt.Errorf("rcpt to: %w", err)
+	}
+
+	w, err := c.Data()
+	if err != nil {
+		return fmt.Errorf("data: %w", err)
+	}
+	if _, err := w.Write(msg); err != nil {
+		w.Close()
+		return fmt.Errorf("write body: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return fmt.Errorf("close body: %w", err)
+	}
+
+	return c.Quit()
 }
 
 // SendTemplatedEmail fetches a template by name, substitutes {{key}} vars, and sends from noreply@tasksy.co.uk.
