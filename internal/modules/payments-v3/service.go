@@ -184,8 +184,6 @@ func (s *Service) UpdateBankAccount(user *models.User, bankAccountID, accountHol
 		return nil, fmt.Errorf("failed to attach new bank account: %w", err)
 	}
 
-	// Stripe refuses to delete an external account that is still the default
-	// for its currency, so the replacement must take over that status first.
 	if oldBA.DefaultForCurrency {
 		if _, err := bankaccount.Update(ba.ID, &stripe.BankAccountParams{
 			Account:            stripe.String(user.StripeConnectAccountID),
@@ -205,6 +203,7 @@ func (s *Service) UpdateBankAccount(user *models.User, bankAccountID, accountHol
 	if err := s.db.Model(&existing).Updates(map[string]any{
 		"stripe_bank_account_id": ba.ID,
 		"account_holder_name":    accountHolderName,
+		"account_number":         accountNumber,
 		"sort_code":              sortCode,
 		"account_number_last4":   ba.Last4,
 		"bank_name":              ba.BankName,

@@ -1117,12 +1117,13 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		DateOfBirth *time.Time `form:"dob" time_format:"2006-01-02"`
 		Email       string     `form:"email"`
 	}
+	
 	if err := c.ShouldBind(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "message": "Please provide valid profile data"})
 		return
 	}
 
-	photoFile, _ := c.FormFile("profile_photo")
+	photoFile, _ := c.FormFile("image")
 
 	data := UpdateProfileData{
 		FirstName:   body.FirstName,

@@ -335,6 +335,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 
 		protected.GET("/api/contracts/list", controllers.GetContracts)
 		protected.POST("/api/contracts/:id/complete", controllers.CompleteContract)
+		protected.POST("/api/contracts/:id/review", controllers.AddReview)
 	}
 
 	chatRepo := chat.NewRepository(db)
