@@ -249,7 +249,7 @@ func (h *Handler) SendEmail(c *gin.Context) {
 	}
 
 	if err := h.service.SendMail(acc.Email, req.Receiver, req.Subject, req.Content); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error(), "service": "send email service"})
 		return
 	}
 

@@ -3,7 +3,6 @@ package email
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/smtp"
@@ -33,17 +32,17 @@ func NewService(db *gorm.DB, redis *redis.Client) *Service {
 }
 
 func (s *Service) GetEmailAccount(email string) (*models.EmailAccount, error) {
-	cacheKey := emailAccountCachePrefix + "default"
-	if email != "" {
-		cacheKey = emailAccountCachePrefix + email
-	}
+	// cacheKey := emailAccountCachePrefix + "default"
+	// if email != "" {
+	// 	cacheKey = emailAccountCachePrefix + email
+	// }
 
-	if cached, err := s.redis.Get(context.Background(), cacheKey).Bytes(); err == nil {
-		var acc models.EmailAccount
-		if err := json.Unmarshal(cached, &acc); err == nil {
-			return &acc, nil
-		}
-	}
+	// if cached, err := s.redis.Get(context.Background(), cacheKey).Bytes(); err == nil {
+	// 	var acc models.EmailAccount
+	// 	if err := json.Unmarshal(cached, &acc); err == nil {
+	// 		return &acc, nil
+	// 	}
+	// }
 
 	var acc models.EmailAccount
 	var dbErr error
@@ -58,11 +57,11 @@ func (s *Service) GetEmailAccount(email string) (*models.EmailAccount, error) {
 		return nil, fmt.Errorf("email account not found: %w", dbErr)
 	}
 
-	accToCache := acc
+	// accToCache := acc
 	// accToCache.Password = ""
-	if data, err := json.Marshal(accToCache); err == nil {
-		s.redis.Set(context.Background(), cacheKey, data, emailAccountCacheTTL)
-	}
+	// if data, err := json.Marshal(accToCache); err == nil {
+	// 	s.redis.Set(context.Background(), cacheKey, data, emailAccountCacheTTL)
+	// }
 
 	return &acc, nil
 }
