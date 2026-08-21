@@ -214,7 +214,7 @@ func LoginControllerV1(c *gin.Context) {
 
 	if user.Disabled {
 		c.JSON(http.StatusForbidden, gin.H{
-			"error": "This account has been disabled",
+			"error": "This account has been Deleted",
 		})
 		return
 	}
@@ -297,7 +297,7 @@ func LoginController(c *gin.Context) {
 
 	if user.Disabled {
 		c.JSON(http.StatusForbidden, gin.H{
-			"error": "This account has been disabled",
+			"error": "This account has been Deleted",
 		})
 		return
 	}
@@ -358,7 +358,7 @@ func GetUserAuthToken(c *gin.Context) {
 
 	if user.Disabled {
 		c.JSON(http.StatusForbidden, gin.H{
-			"error": "This account has been disabled",
+			"error": "This account has been Deleted",
 		})
 		return
 	}
@@ -425,7 +425,7 @@ func RefreshTokenController(c *gin.Context) {
 
 	if user.Disabled {
 		c.JSON(http.StatusForbidden, gin.H{
-			"error":   "This account has been disabled",
+			"error":   "This account has been Deleted",
 			"message": "Please login again",
 		})
 		return
