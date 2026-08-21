@@ -212,6 +212,13 @@ func LoginControllerV1(c *gin.Context) {
 		return
 	}
 
+	if user.Disabled {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "This account has been disabled",
+		})
+		return
+	}
+
 	provisionStripeAccount(user, c.ClientIP())
 
 	tokens, err := lib.GenerateAuthTokens(user.ID, 5)
@@ -288,6 +295,13 @@ func LoginController(c *gin.Context) {
 		return
 	}
 
+	if user.Disabled {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "This account has been disabled",
+		})
+		return
+	}
+
 	provisionStripeAccount(user, c.ClientIP())
 
 	tokens, err := lib.GenerateAuthTokens(user.ID, 0)
@@ -338,6 +352,13 @@ func GetUserAuthToken(c *gin.Context) {
 	if result.Error != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": "Invalid credentials",
+		})
+		return
+	}
+
+	if user.Disabled {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "This account has been disabled",
 		})
 		return
 	}
@@ -402,9 +423,9 @@ func RefreshTokenController(c *gin.Context) {
 		return
 	}
 
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":   "Invalid or expired refresh token",
+	if user.Disabled {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":   "This account has been disabled",
 			"message": "Please login again",
 		})
 		return

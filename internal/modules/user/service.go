@@ -677,6 +677,17 @@ func (s *Service) ChangePassword(user *models.User, currentPassword, newPassword
 	return s.db.Model(user).Update("password", string(hashed)).Error
 }
 
+// DeleteAccount disables the user's account rather than removing the row —
+// this preserves referential integrity with jobs, contracts, and payment
+// history while permanently blocking login.
+func (s *Service) DeleteAccount(user *models.User) error {
+	if err := s.db.Model(user).Update("disabled", true).Error; err != nil {
+		return err
+	}
+	logger.Log.Info("account disabled by self-service deletion", zap.String("user_id", user.ID))
+	return nil
+}
+
 func (s *Service) VerifyCredential(user *models.User, email, phone string) error {
 	if email != "" {
 		if user.Email != email {

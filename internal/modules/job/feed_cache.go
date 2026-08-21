@@ -118,7 +118,7 @@ func jobFeedCacheKey(params JobFeedParams) string {
 
 	// Keep the key stable and explicit.
 	return fmt.Sprintf(
-		"v1|cat=%s|q=%s|page=%d|limit=%d|lat=%s|lng=%s|radius=%.2f",
+		"v1|cat=%s|q=%s|page=%d|limit=%d|lat=%s|lng=%s|radius=%.2f|excl=%s",
 		params.Category,
 		params.SearchQuery,
 		params.Page,
@@ -126,5 +126,6 @@ func jobFeedCacheKey(params JobFeedParams) string {
 		lat,
 		lng,
 		params.RadiusKM,
+		params.ExcludeReportedByUserID,
 	)
 }

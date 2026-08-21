@@ -426,11 +426,18 @@ func AdminGetJobDetailController(c *gin.Context) {
 		Preload("Proposal").
 		First(&contract).Error == nil
 
+	var reports []models.JobReport
+	db.DB.Where("job_post_id = ?", jobID).
+		Preload("Reporter").
+		Order("created_at DESC").
+		Find(&reports)
+
 	resp := gin.H{
 		"job":       job,
 		"location":  location,
 		"proposals": proposals,
 		"payments":  []interface{}{},
+		"reports":   reports,
 	}
 	if contractFound {
 		resp["contract"] = contract
@@ -527,6 +534,87 @@ func AdminListJobsController(c *gin.Context) {
 			"total_pages": totalPages,
 		},
 	})
+}
+
+// ─── Job Reports ────────────────────────────────────────────────────────────
+
+func AdminListJobReportsController(c *gin.Context) {
+	limit, err := strconv.ParseInt(c.Query("limit"), 10, 64)
+	if err != nil || limit <= 0 {
+		limit = 20
+	}
+	page, err := strconv.ParseInt(c.Query("page"), 10, 64)
+	if err != nil || page < 0 {
+		page = 0
+	}
+
+	query := db.DB.Model(&models.JobReport{})
+
+	if status := c.Query("status"); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if jobPostID := c.Query("job_post_id"); jobPostID != "" {
+		query = query.Where("job_post_id = ?", jobPostID)
+	}
+
+	var total int64
+	query.Count(&total)
+
+	var reports []models.JobReport
+	if err := query.
+		Preload("Reporter").
+		Preload("JobPost").
+		Order("created_at DESC").
+		Limit(int(limit)).Offset(int(page * limit)).
+		Find(&reports).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "error"})
+		return
+	}
+
+	if reports == nil {
+		reports = make([]models.JobReport, 0)
+	}
+
+	totalPages := int64(0)
+	if limit > 0 {
+		totalPages = (total + limit - 1) / limit
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": reports,
+		"meta": gin.H{
+			"total":       total,
+			"page":        page,
+			"limit":       limit,
+			"total_pages": totalPages,
+		},
+	})
+}
+
+func AdminUpdateJobReportController(c *gin.Context) {
+	id := c.Param("id")
+
+	var body struct {
+		Status string `json:"status" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "message": "error"})
+		return
+	}
+
+	switch body.Status {
+	case models.JobReportStatusPending, models.JobReportStatusReviewed, models.JobReportStatusDismissed:
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status", "message": "error"})
+		return
+	}
+
+	if err := db.DB.Model(&models.JobReport{}).Where("id = ?", id).Update("status", body.Status).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "error"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success"})
 }
 
 // ─── System Settings ────────────────────────────────────────────────────────

@@ -72,6 +72,13 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		if user.Disabled {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "This account has been disabled",
+			})
+			return
+		}
+
 		c.Set("user", user)
 		c.Next()
 	}

@@ -124,6 +124,7 @@ func ApplyMigrations() error {
 		&models.Bank{},
 		&models.Dispute{},
 		&models.UserFeedPreferences{},
+		&models.JobReport{},
 	}
 
 	if err := DB.AutoMigrate(modelsToMigrate...); err != nil {

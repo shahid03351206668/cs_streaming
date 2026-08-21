@@ -112,6 +112,13 @@ func GoogleSignInFirebaseController(c *gin.Context) {
 		}
 	}
 
+	if user.Disabled {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "This account has been disabled",
+		})
+		return
+	}
+
 	provisionStripeAccount(user, c.ClientIP())
 
 	tokens, err := lib.GenerateAuthTokens(user.ID, 0)

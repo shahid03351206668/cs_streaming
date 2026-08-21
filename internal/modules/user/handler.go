@@ -1082,6 +1082,17 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Password updated successfully"})
 }
 
+func (h *Handler) DeleteAccount(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	if err := h.service.DeleteAccount(&user); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to delete account"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "account deleted"})
+}
+
 func (h *Handler) VerifyUserCredential(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 

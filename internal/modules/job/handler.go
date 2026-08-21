@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	// "tasksy/db"
-	// "tasksy/lib"
+	"tasksy/lib"
 	"tasksy/models"
 	"tasksy/pkg/logger"
 
@@ -96,14 +96,15 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 	}
 
 	params := JobFeedParams{
-		Category:             CategoryIds,
-		SearchQuery:          searchQuery,
-		Page:                 page,
-		Limit:                limit,
-		Latitude:             lat,
-		Longitude:            lng,
-		RadiusKM:             JOB_SEARCH_RADIUS,
-		PreferredCategoryIDs: preferredCategoryIDs,
+		Category:                CategoryIds,
+		SearchQuery:             searchQuery,
+		Page:                    page,
+		Limit:                   limit,
+		Latitude:                lat,
+		Longitude:               lng,
+		RadiusKM:                JOB_SEARCH_RADIUS,
+		PreferredCategoryIDs:    preferredCategoryIDs,
+		ExcludeReportedByUserID: lib.TryGetUserID(c),
 	}
 
 	jobs, count, err := h.service.GetJobFeed(params)
@@ -157,6 +158,36 @@ func (h *Handler) DeleteJobPost(c *gin.Context) {
 	default:
 		logger.Log.Error("delete job post failed", zap.String("job_id", jobID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to delete job"})
+	}
+}
+
+func (h *Handler) ReportJob(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	jobID := c.Param("id")
+
+	var body struct {
+		Reason  string `json:"reason" binding:"required"`
+		Details string `json:"details"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	report, err := h.service.ReportJob(user.ID, jobID, body.Reason, body.Details)
+	if err == nil {
+		c.JSON(http.StatusOK, gin.H{"message": "success", "data": report})
+		return
+	}
+
+	switch {
+	case errors.Is(err, ErrJobNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": err.Error()})
+	case errors.Is(err, ErrAlreadyReported):
+		c.JSON(http.StatusConflict, gin.H{"message": "error", "error": err.Error()})
+	default:
+		logger.Log.Error("report job failed", zap.String("job_id", jobID), zap.String("user_id", user.ID), zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to report job"})
 	}
 }
 

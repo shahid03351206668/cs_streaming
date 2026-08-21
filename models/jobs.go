@@ -27,6 +27,12 @@ const (
 	ProposalStatusWithdrawn   = "withdrawn"
 )
 
+const (
+	JobReportStatusPending   = "pending"
+	JobReportStatusReviewed  = "reviewed"
+	JobReportStatusDismissed = "dismissed"
+)
+
 type Category struct {
 	BaseModel
 	Name      string `gorm:"type:varchar(100);uniqueIndex;not null" json:"name"`
@@ -87,6 +93,21 @@ func (JobPost) TableName() string {
 
 func (JobMedia) TableName() string {
 	return "job_media"
+}
+
+type JobReport struct {
+	BaseModel
+	JobPostID  string  `gorm:"type:string;not null;index;uniqueIndex:idx_job_report_unique" json:"job_post_id"`
+	JobPost    JobPost `gorm:"foreignKey:JobPostID;constraint:OnDelete:CASCADE" json:"-"`
+	ReporterID string  `gorm:"type:string;not null;index;uniqueIndex:idx_job_report_unique" json:"reporter_id"`
+	Reporter   User    `gorm:"foreignKey:ReporterID;constraint:OnDelete:CASCADE" json:"reporter,omitempty"`
+	Reason     string  `gorm:"type:varchar(100);not null" json:"reason"`
+	Details    string  `gorm:"type:text" json:"details"`
+	Status     string  `gorm:"type:varchar(20);default:'pending';index" json:"status"`
+}
+
+func (JobReport) TableName() string {
+	return "job_reports"
 }
 
 type Proposal struct {

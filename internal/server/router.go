@@ -203,6 +203,8 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		adminRoutes.GET("/jobs", controllers.AdminListJobsController)
 		adminRoutes.GET("/jobs/:id", controllers.AdminGetJobDetailController)
 		adminRoutes.PUT("/jobs/:id", controllers.AdminUpdateJobController)
+		adminRoutes.GET("/job-reports", controllers.AdminListJobReportsController)
+		adminRoutes.PUT("/job-reports/:id", controllers.AdminUpdateJobReportController)
 
 		// adminRoutes.GET("/payouts", payoutService.AdminListPayouts)
 		// adminRoutes.GET("/ledger", ledgerHandler.GetAdminLedgerReport)
@@ -272,6 +274,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		jobRoutes.GET("/:id/proposal", controllers.GetJobProposals)
 		jobRoutes.POST("/update/:id", controllers.UpdateJob)
 		jobRoutes.DELETE("/:id", jobPostHandler.DeleteJobPost)
+		jobRoutes.POST("/:id/report", jobPostHandler.ReportJob)
 	}
 
 	router.GET("/api/v1/get/system-settings", userHandler.GetSystemSettings)
@@ -322,6 +325,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		protected.POST("/api/user/verify-credentials", userHandler.VerifyUserCredential)
 		protected.POST("/api/user/update", userHandler.UpdateProfile)
 		protected.POST("/api/user/change-password", userHandler.ChangePassword)
+		protected.DELETE("/api/user/account", userHandler.DeleteAccount)
 		protected.GET("/api/v1/notifications/preferences", notifHandler.GetPreferences)
 		protected.PUT("/api/v1/notifications/preferences", notifHandler.UpsertPreferences)
 

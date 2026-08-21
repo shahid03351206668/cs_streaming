@@ -19,6 +19,9 @@ type JobFeedParams struct {
 	// PreferredCategoryIDs is applied when the user has feed preferences and
 	// no explicit Category filter was given. Empty = no preference filter.
 	PreferredCategoryIDs []string
+	// ExcludeReportedByUserID hides jobs this user has reported from their
+	// own feed. Empty = no exclusion (anonymous requests, or users with no reports).
+	ExcludeReportedByUserID string
 }
 
 // Haversine SQL expression to calculate distance in km between two lat/lng points.
@@ -81,6 +84,13 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 	if params.SearchQuery != "" {
 		like := "%" + params.SearchQuery + "%"
 		jobQuery = jobQuery.Where("job_posts.title ILIKE ? OR job_posts.description ILIKE ?", like, like)
+	}
+
+	if params.ExcludeReportedByUserID != "" {
+		jobQuery = jobQuery.Where(
+			"job_posts.id NOT IN (SELECT job_post_id FROM job_reports WHERE reporter_id = ?)",
+			params.ExcludeReportedByUserID,
+		)
 	}
 
 	if err := jobQuery.Count(&total).Error; err != nil {
