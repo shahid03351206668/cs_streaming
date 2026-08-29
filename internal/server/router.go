@@ -326,6 +326,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		protected.POST("/api/user/update", userHandler.UpdateProfile)
 		protected.POST("/api/user/change-password", userHandler.ChangePassword)
 		protected.DELETE("/api/user/account", userHandler.DeleteAccount)
+		protected.GET("/api/v1/notifications", notifHandler.ListNotifications)
 		protected.GET("/api/v1/notifications/preferences", notifHandler.GetPreferences)
 		protected.PUT("/api/v1/notifications/preferences", notifHandler.UpsertPreferences)
 

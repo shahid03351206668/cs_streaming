@@ -38,7 +38,7 @@ type Service interface {
 }
 
 type Notifier interface {
-	NotifyNewMessage(ctx context.Context, deviceToken, senderName, conversationID, jobPostID string) error
+	NotifyNewMessage(ctx context.Context, recipientUserID string, deviceTokens []string, senderName, conversationID, jobPostID string) error
 }
 
 type chatService struct {
@@ -241,26 +241,26 @@ func (s *chatService) SendMessage(senderID, convID, content, msgType string, fil
 				continue
 			}
 			tokens, err := s.repo.GetDeviceTokensByUserID(uid)
-			if err != nil || len(tokens) == 0 {
-				continue
+			if err != nil {
+				tokens = nil
 			}
-			logger.Log.Info("sending FCM push",
-				zap.String("recipient_user_id", uid),
-				zap.Int("token_count", len(tokens)),
-				zap.String("conversation_id", convID),
-				zap.String("job_post_id", JobPostID),
-			)
-			for _, t := range tokens {
-				tCtx, tCancel := context.WithTimeout(context.Background(), 15*time.Second)
-				if err := s.notifier.NotifyNewMessage(tCtx, t, senderName, convID, JobPostID); err != nil {
-					logger.Log.Error("FCM push failed",
-						zap.String("recipient_user_id", uid),
-						zap.String("token", t),
-						zap.Error(err),
-					)
-				}
-				tCancel()
+			if len(tokens) > 0 {
+				logger.Log.Info("sending FCM push",
+					zap.String("recipient_user_id", uid),
+					zap.Int("token_count", len(tokens)),
+					zap.String("conversation_id", convID),
+					zap.String("job_post_id", JobPostID),
+				)
 			}
+
+			tCtx, tCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			if err := s.notifier.NotifyNewMessage(tCtx, uid, tokens, senderName, convID, JobPostID); err != nil {
+				logger.Log.Error("chat notification failed",
+					zap.String("recipient_user_id", uid),
+					zap.Error(err),
+				)
+			}
+			tCancel()
 		}
 	}()
 

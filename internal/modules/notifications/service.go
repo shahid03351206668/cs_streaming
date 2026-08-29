@@ -8,8 +8,11 @@ import (
 	"strings"
 	"tasksy/models"
 	"tasksy/pkg/fcm"
+	"tasksy/pkg/logger"
 	"time"
 
+	"go.uber.org/zap"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -182,20 +185,46 @@ func (s *Service) isNotificationEnabled(userID, notifType string) (bool, error) 
 	}
 }
 
+// storeNotification persists a notification record so the recipient can view
+// it in-app, independent of whether push delivery succeeds or the user has
+// any registered device tokens.
+func (s *Service) storeNotification(userID, title, body, notifType, screen string, recordJSON []byte) {
+	notification := models.Notification{
+		UserID: userID,
+		Title:  title,
+		Body:   body,
+		Type:   notifType,
+		Screen: screen,
+		Data:   datatypes.JSON(recordJSON),
+	}
+	if err := s.db.Create(&notification).Error; err != nil {
+		logger.Log.Error("failed to store notification", zap.String("user_id", userID), zap.String("type", notifType), zap.Error(err))
+	}
+}
+
 func (s *Service) notifyUser(ctx context.Context, userID, title, body, notifType, screen string, record map[string]string) error {
-	if s.fcm == nil || s.db == nil {
+	if s.db == nil {
 		return nil
 	}
 	enabled, err := s.isNotificationEnabled(userID, notifType)
-	if err != nil || !enabled {
+	if err != nil {
 		return err
+	}
+	if !enabled {
+		return nil
+	}
+
+	recordJSON, _ := json.Marshal(record)
+	s.storeNotification(userID, title, body, notifType, screen, recordJSON)
+
+	if s.fcm == nil {
+		return nil
 	}
 	tokens, err := s.getUserDeviceTokens(userID)
 	if err != nil || len(tokens) == 0 {
 		return err
 	}
 
-	recordJSON, _ := json.Marshal(record)
 	data := map[string]string{
 		"type":              notifType,
 		"notification_time": time.Now().Format("2006-01-02 15:04:05"),
@@ -208,6 +237,28 @@ func (s *Service) notifyUser(ctx context.Context, userID, title, body, notifType
 		_, _ = s.fcm.SendToDevice(ctx, token, title, body, data)
 	}
 	return nil
+}
+
+// GetUserNotifications returns a page of the user's stored notifications, newest first.
+func (s *Service) GetUserNotifications(userID string, page, limit int) ([]models.Notification, int64, error) {
+	if s.db == nil {
+		return []models.Notification{}, 0, nil
+	}
+
+	query := s.db.Model(&models.Notification{}).Where("user_id = ?", userID)
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * limit
+	notifications := make([]models.Notification, 0, limit)
+	if err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&notifications).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return notifications, total, nil
 }
 
 func (s *Service) NotifyProposalReceived(ctx context.Context, recipientUserID, jobTitle, proposalID, jobPostID string) error {
@@ -276,8 +327,13 @@ func (s *Service) NotifyAwaitingCompletion(ctx context.Context, recipientUserID,
 	)
 }
 
-// NotifyNewMessage notifies a user about a new chat message.
-func (s *Service) NotifyNewMessage(ctx context.Context, deviceToken, senderName, conversationID, jobPostID string) error {
+// NotifyNewMessage notifies a user about a new chat message: it stores exactly
+// one notification record for the recipient and pushes to each of their
+// registered device tokens.
+func (s *Service) NotifyNewMessage(ctx context.Context, recipientUserID string, deviceTokens []string, senderName, conversationID, jobPostID string) error {
+	title := "New Message"
+	body := senderName + " sent you a message"
+
 	record := map[string]string{
 		"conversation_id": conversationID,
 	}
@@ -285,6 +341,14 @@ func (s *Service) NotifyNewMessage(ctx context.Context, deviceToken, senderName,
 		record["job_post_id"] = jobPostID
 	}
 	recordJSON, _ := json.Marshal(record)
+
+	if s.db != nil {
+		s.storeNotification(recipientUserID, title, body, "new_message", "/chat", recordJSON)
+	}
+
+	if s.fcm == nil || len(deviceTokens) == 0 {
+		return nil
+	}
 
 	data := map[string]string{
 		"type":              "new_message",
@@ -294,12 +358,13 @@ func (s *Service) NotifyNewMessage(ctx context.Context, deviceToken, senderName,
 		"record":            string(recordJSON),
 	}
 
-	_, err := s.fcm.SendToDevice(ctx, deviceToken,
-		"New Message",
-		senderName+" sent you a message",
-		data,
-	)
-	return err
+	var firstErr error
+	for _, token := range deviceTokens {
+		if _, err := s.fcm.SendToDevice(ctx, token, title, body, data); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // NotifyDisputeCreated notifies the other party that a dispute has been filed.
