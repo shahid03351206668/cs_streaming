@@ -189,9 +189,21 @@ func GetMyJobs(c *gin.Context) {
 
 	user := c.MustGet("user").(models.User)
 	var jobs []models.JobPost
+	status, _ := c.Params.Get("status")
 	query := DB.Preload("JobPostLocation").Preload("CreatedBy").Preload("Category").Preload("JobMedia").Preload("Proposals")
 
-	if err := query.Model(&models.JobPost{}).Where("created_by_id = ?", user.ID).Order("created_at DESC").Find(&jobs).Error; err != nil {
+	var err error
+	if status != "" {
+		filterStatus := status
+		if status == "in progress" {
+			filterStatus = "in_progress"
+		}
+		err = query.Model(&models.JobPost{}).Where("created_by_id = ? AND status = ?", user.ID, filterStatus).Order("created_at DESC").Find(&jobs).Error
+	} else {
+		err = query.Model(&models.JobPost{}).Where("created_by_id = ?", user.ID).Order("created_at DESC").Find(&jobs).Error
+	}
+
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
 			"error":   err.Error(),
