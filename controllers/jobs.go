@@ -189,7 +189,8 @@ func GetMyJobs(c *gin.Context) {
 
 	user := c.MustGet("user").(models.User)
 	var jobs []models.JobPost
-	status, _ := c.Params.Get("status")
+	status := c.Query("status")
+
 	query := DB.Preload("JobPostLocation").Preload("CreatedBy").Preload("Category").Preload("JobMedia").Preload("Proposals")
 
 	var err error
