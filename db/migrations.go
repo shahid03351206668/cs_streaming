@@ -126,6 +126,7 @@ func ApplyMigrations() error {
 		&models.UserFeedPreferences{},
 		&models.JobReport{},
 		&models.Notification{},
+		&models.UserBlock{},
 	}
 
 	if err := DB.AutoMigrate(modelsToMigrate...); err != nil {

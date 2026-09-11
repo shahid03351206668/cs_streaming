@@ -95,6 +95,7 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 
 	}
 
+	viewerID := lib.TryGetUserID(c)
 	params := JobFeedParams{
 		Category:                CategoryIds,
 		SearchQuery:             searchQuery,
@@ -104,7 +105,8 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 		Longitude:               lng,
 		RadiusKM:                JOB_SEARCH_RADIUS,
 		PreferredCategoryIDs:    preferredCategoryIDs,
-		ExcludeReportedByUserID: lib.TryGetUserID(c),
+		ExcludeReportedByUserID: viewerID,
+		ExcludeBlockedUsersFor:  viewerID,
 	}
 
 	jobs, count, err := h.service.GetJobFeed(params)

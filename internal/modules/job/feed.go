@@ -22,6 +22,9 @@ type JobFeedParams struct {
 	// ExcludeReportedByUserID hides jobs this user has reported from their
 	// own feed. Empty = no exclusion (anonymous requests, or users with no reports).
 	ExcludeReportedByUserID string
+	// ExcludeBlockedUsersFor hides jobs posted by anyone in a block relationship
+	// with this user, in either direction. Empty = no exclusion.
+	ExcludeBlockedUsersFor string
 }
 
 // Haversine SQL expression to calculate distance in km between two lat/lng points.
@@ -90,6 +93,13 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 		jobQuery = jobQuery.Where(
 			"job_posts.id NOT IN (SELECT job_post_id FROM job_reports WHERE reporter_id = ?)",
 			params.ExcludeReportedByUserID,
+		)
+	}
+
+	if params.ExcludeBlockedUsersFor != "" {
+		jobQuery = jobQuery.Where(
+			"job_posts.created_by_id NOT IN (SELECT blocked_id FROM user_blocks WHERE blocker_id = ? UNION SELECT blocker_id FROM user_blocks WHERE blocked_id = ?)",
+			params.ExcludeBlockedUsersFor, params.ExcludeBlockedUsersFor,
 		)
 	}
 

@@ -15,6 +15,7 @@ import (
 	// "tasksy/config"
 	"tasksy/db"
 	// "tasksy/internal/modules/payments"
+	"tasksy/lib"
 	"tasksy/models"
 	"time"
 
@@ -176,6 +177,21 @@ func GetJobDetail(c *gin.Context) {
 			"message": "error",
 		})
 		return
+	}
+
+	if viewerID := lib.TryGetUserID(c); viewerID != "" && viewerID != job.CreatedByID {
+		var blockCount int64
+		db.DB.Model(&models.UserBlock{}).
+			Where("(blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)",
+				viewerID, job.CreatedByID, job.CreatedByID, viewerID).
+			Count(&blockCount)
+		if blockCount > 0 {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error":   "job not found",
+				"message": "error",
+			})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{

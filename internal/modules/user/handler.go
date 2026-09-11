@@ -1093,6 +1093,61 @@ func (h *Handler) DeleteAccount(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "account deleted"})
 }
 
+func (h *Handler) BlockUser(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	var body struct {
+		UserID string `json:"user_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	block, err := h.service.BlockUser(user.ID, body.UserID)
+	if err == nil {
+		c.JSON(http.StatusOK, gin.H{"message": "success", "data": block})
+		return
+	}
+
+	switch {
+	case errors.Is(err, ErrUserNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": err.Error()})
+	case errors.Is(err, ErrCannotBlockSelf), errors.Is(err, ErrAlreadyBlocked), errors.Is(err, ErrBlockHasConnection):
+		c.JSON(http.StatusConflict, gin.H{"message": "error", "error": err.Error()})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to block user"})
+	}
+}
+
+func (h *Handler) UnblockUser(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	blockedID := c.Param("id")
+
+	if err := h.service.UnblockUser(user.ID, blockedID); err != nil {
+		if errors.Is(err, ErrBlockNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to unblock user"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success"})
+}
+
+func (h *Handler) GetBlockedUsers(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	blocks, err := h.service.GetBlockedUsers(user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": blocks})
+}
+
 func (h *Handler) VerifyUserCredential(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
