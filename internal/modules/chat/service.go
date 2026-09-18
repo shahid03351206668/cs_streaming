@@ -25,6 +25,7 @@ import (
 )
 
 var ErrNotParticipant = errors.New("not a participant")
+var ErrEmptyQuery = errors.New("query is required")
 
 type Service interface {
 	InitiateChat(userA, userB, title string) (*models.ChatConversation, error)
@@ -33,6 +34,7 @@ type Service interface {
 	GetChatHistory(conversationID string, page, limit int) ([]models.ChatMessage, error)
 	GetUnreadMessages(conversationID, userID string, page, limit int) ([]models.ChatMessage, error)
 	MarkConversationRead(conversationID, userID string) (int64, error)
+	SearchMessages(userID, query, conversationID string, page, limit int) ([]models.ChatMessage, int64, error)
 	RegisterClient(client *Client)
 	UnregisterClient(client *Client)
 }
@@ -312,6 +314,33 @@ func (s *chatService) UnregisterClient(c *Client) {
 		delete(s.clients, c.UserID)
 		close(c.Send)
 	}
+}
+
+func (s *chatService) SearchMessages(userID, query, conversationID string, page, limit int) ([]models.ChatMessage, int64, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, 0, ErrEmptyQuery
+	}
+
+	if conversationID != "" {
+		ok, err := s.repo.IsUserParticipant(conversationID, userID)
+		if err != nil {
+			return nil, 0, err
+		}
+		if !ok {
+			return nil, 0, ErrNotParticipant
+		}
+	}
+
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	offset := (page - 1) * limit
+
+	return s.repo.SearchMessages(userID, query, conversationID, limit, offset)
 }
 
 func (s *chatService) GetChatHistory(conversationID string, page, limit int) ([]models.ChatMessage, error) {

@@ -190,17 +190,18 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader, clientIP
 	imageURL := ""
 	if file != nil {
 		image, _ := file.Open()
-		allowedTypes := map[string]bool{
-			"image/jpeg": true,
-			"image/jpg":  true,
-			"image/png":  true,
-			"image/webp": true,
-		}
-
 		fileType := file.Header.Get("Content-Type")
-		if !allowedTypes[fileType] {
-			return nil, errors.New("Invalid filetype for user profile image allowed types are [jpeg, jpg, png, webp]")
-		}
+		// allowedTypes := map[string]bool{
+		// 	"image/jpeg": true,
+		// 	"image/jpg":  true,
+		// 	"image/png":  true,
+		// 	"image/webp": true,
+		// }
+
+		// fileType := file.Header.Get("Content-Type")
+		// if !allowedTypes[fileType] {
+		// 	return nil, errors.New("Invalid filetype for user profile image allowed types are [jpeg, jpg, png, webp]")
+		// }
 
 		url, _, err := s.s3Client.UploadFile(image, file.Filename, fileType, "", "")
 		if err != nil {

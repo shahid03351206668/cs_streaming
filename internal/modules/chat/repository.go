@@ -23,6 +23,7 @@ type Repository interface {
 	MarkConversationRead(conversationID, userID string) (int64, error)
 	GetUnreadMessages(conversationID, userID string, limit, offset int) ([]models.ChatMessage, error)
 	GetDeviceTokensByUserID(userID string) ([]string, error)
+	SearchMessages(userID, query, conversationID string, limit, offset int) ([]models.ChatMessage, int64, error)
 }
 
 type chatRepository struct {
@@ -79,6 +80,32 @@ func (r *chatRepository) GetUnreadMessages(conversationID, userID string, limit,
 		Offset(offset).
 		Find(&msgs).Error
 	return msgs, err
+}
+
+func (r *chatRepository) SearchMessages(userID, query, conversationID string, limit, offset int) ([]models.ChatMessage, int64, error) {
+	base := r.db.Model(&models.ChatMessage{}).
+		Joins("JOIN chat_participants cp ON cp.conversation_id = chat_message.conversation_id AND cp.user_id = ?", userID).
+		Where("chat_message.content ILIKE ?", "%"+query+"%")
+
+	if conversationID != "" {
+		base = base.Where("chat_message.conversation_id = ?", conversationID)
+	}
+
+	var total int64
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var msgs []models.ChatMessage
+	err := base.
+		Preload("Sender").
+		Preload("Attachments").
+		Order("chat_message.created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&msgs).Error
+
+	return msgs, total, err
 }
 
 func (r *chatRepository) IsUserParticipant(conversationID, userID string) (bool, error) {

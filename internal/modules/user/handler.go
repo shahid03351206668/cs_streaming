@@ -444,11 +444,8 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 		var refCode models.ReferralCode
 		if err := h.service.db.Where("UPPER(code) = ? AND is_active = ?", strings.ToUpper(data.ReferralCode), true).First(&refCode).Error; err == nil {
 			if refCode.ExpiresAt == nil || refCode.ExpiresAt.After(time.Now()) {
-				// Check max uses
 				if refCode.MaxUses == -1 || refCode.CurrentUses < refCode.MaxUses {
-					// Check user is not using their own code
 					if refCode.OwnerID != user.ID {
-						// Create referral usage
 						usage := models.ReferralUsage{
 							ReferralCodeID: refCode.ID,
 							ReferrerID:     refCode.OwnerID,
@@ -1183,7 +1180,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		DateOfBirth *time.Time `form:"dob" time_format:"2006-01-02"`
 		Email       string     `form:"email"`
 	}
-	
+
 	if err := c.ShouldBind(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "message": "Please provide valid profile data"})
 		return

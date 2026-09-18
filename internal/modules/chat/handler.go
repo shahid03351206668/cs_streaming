@@ -71,6 +71,38 @@ func (h *Handler) MarkConversationRead(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "updated": count})
 }
 
+func (h *Handler) SearchMessages(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	query := c.Query("query")
+	conversationID := c.Query("conversation_id")
+
+	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "invalid page"})
+		return
+	}
+	limit, err := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "invalid limit"})
+		return
+	}
+
+	msgs, total, err := h.service.SearchMessages(user.ID, query, conversationID, page, limit)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrEmptyQuery):
+			c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		case errors.Is(err, ErrNotParticipant):
+			c.JSON(http.StatusForbidden, gin.H{"message": "error", "error": "forbidden"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": msgs, "total": total, "page": page})
+}
+
 func (h *Handler) GetChatHistory(c *gin.Context) {
 	conversationID := c.Param("id")
 	if conversationID == "" {

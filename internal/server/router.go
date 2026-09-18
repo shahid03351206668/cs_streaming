@@ -356,6 +356,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	chatProtected.Use(middleware.AuthMiddleware())
 	{
 		chatProtected.GET("/inbox", chatHandler.GetInbox)
+		chatProtected.GET("/search", chatHandler.SearchMessages)
 		chatProtected.POST("/init", chatHandler.InitiateChat)
 		chatProtected.GET("/:id/history", chatHandler.GetChatHistory)
 		chatProtected.GET("/:id/unread", chatHandler.GetUnreadMessages)
