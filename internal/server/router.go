@@ -332,7 +332,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		protected.GET("/api/v1/notifications", notifHandler.ListNotifications)
 		protected.GET("/api/v1/notifications/preferences", notifHandler.GetPreferences)
 		protected.PUT("/api/v1/notifications/preferences", notifHandler.UpsertPreferences)
-
 		protected.GET("/api/proposals/get-contract", controllers.GetContracts)
 		protected.POST("/api/proposals/create-contract", controllers.CreateContract)
 
@@ -356,6 +355,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	chatProtected.Use(middleware.AuthMiddleware())
 	{
 		chatProtected.GET("/inbox", chatHandler.GetInbox)
+		chatProtected.GET("/inbox/search", chatHandler.SearchInbox)
 		chatProtected.GET("/search", chatHandler.SearchMessages)
 		chatProtected.POST("/init", chatHandler.InitiateChat)
 		chatProtected.GET("/:id/history", chatHandler.GetChatHistory)

@@ -152,6 +152,30 @@ func (h *Handler) GetInbox(c *gin.Context) {
 		"data":    conversations,
 	})
 }
+func (h *Handler) SearchInbox(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+	query := c.Query("query")
+
+	conversations, err := h.service.SearchInbox(user.ID, query)
+	if err != nil {
+		if errors.Is(err, ErrEmptyQuery) {
+			c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Failed to search inbox",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"count":   len(conversations),
+		"data":    conversations,
+	})
+}
+
 func NewHandler(s Service) *Handler {
 	return &Handler{service: s}
 }

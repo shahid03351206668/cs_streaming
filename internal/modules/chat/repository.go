@@ -24,6 +24,7 @@ type Repository interface {
 	GetUnreadMessages(conversationID, userID string, limit, offset int) ([]models.ChatMessage, error)
 	GetDeviceTokensByUserID(userID string) ([]string, error)
 	SearchMessages(userID, query, conversationID string, limit, offset int) ([]models.ChatMessage, int64, error)
+	SearchConversations(userID, query string) ([]models.ChatConversation, error)
 }
 
 type chatRepository struct {
@@ -199,6 +200,44 @@ func (r *chatRepository) FindPrivateChat(userA, userB, jobID string) (*models.Ch
 	return &chat, nil
 }
 
+func (r *chatRepository) SearchConversations(userID, query string) ([]models.ChatConversation, error) {
+	like := "%" + query + "%"
+	var chats []models.ChatConversation
+	err := r.db.
+		Table("chat_conversation").
+		Joins("JOIN chat_participants cp ON cp.conversation_id = chat_conversation.id").
+		Where("cp.user_id = ?", userID).
+		Where(`chat_conversation.id NOT IN (
+			SELECT cp2.conversation_id FROM chat_participants cp2
+			WHERE cp2.user_id <> ? AND cp2.user_id IN (
+				SELECT blocked_id FROM user_blocks WHERE blocker_id = ?
+				UNION
+				SELECT blocker_id FROM user_blocks WHERE blocked_id = ?
+			)
+		)`, userID, userID, userID).
+		Where(`(
+			chat_conversation.last_message ILIKE ?
+			OR EXISTS (
+				SELECT 1 FROM chat_participants cp3
+				JOIN users u ON u.id = cp3.user_id
+				WHERE cp3.conversation_id = chat_conversation.id AND cp3.user_id <> ?
+				AND (u.first_name ILIKE ? OR u.last_name ILIKE ?)
+			)
+			OR EXISTS (
+				SELECT 1 FROM job_posts jp
+				WHERE jp.id = chat_conversation.job_post_id AND jp.title ILIKE ?
+			)
+		)`, like, userID, like, like, like).
+		Preload("Participants").
+		Preload("Participants.User").
+		Preload("JobPost").
+		Preload("JobPost.CreatedBy").
+		Order("last_sent_at DESC").
+		Find(&chats).Error
+
+	return chats, err
+}
+
 func (r *chatRepository) SaveMessage(msg *models.ChatMessage) error {
 	tx := r.db.Begin()
 	if err := tx.Create(msg).Error; err != nil {
@@ -232,6 +271,14 @@ func (r *chatRepository) GetUserConversations(userID string) ([]models.ChatConve
 		Table("chat_conversation"). // Use explicit table name
 		Joins("JOIN chat_participants cp ON cp.conversation_id = chat_conversation.id").
 		Where("cp.user_id = ?", userID).
+		Where(`chat_conversation.id NOT IN (
+			SELECT cp2.conversation_id FROM chat_participants cp2
+			WHERE cp2.user_id <> ? AND cp2.user_id IN (
+				SELECT blocked_id FROM user_blocks WHERE blocker_id = ?
+				UNION
+				SELECT blocker_id FROM user_blocks WHERE blocked_id = ?
+			)
+		)`, userID, userID, userID).
 		Preload("Participants").
 		Preload("Participants.User").
 		Preload("JobPost").

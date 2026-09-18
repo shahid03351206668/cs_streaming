@@ -23,11 +23,12 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 	var body struct {
-		JobPostID   string   `form:"job_post_id" binding:"required"`
-		CoverLetter string   `form:"cover_letter" binding:"required"`
-		BidAmount   float64  `form:"bid_amount" binding:"required,gt=0"`
-		Duration    int      `form:"duration" binding:"required,gt=0"`
-		Attachments []string `form:"attachments"`
+		JobPostID        string     `form:"job_post_id" binding:"required"`
+		CoverLetter      string     `form:"cover_letter" binding:"required"`
+		AvailabilityDate *time.Time `form:"availability_date"`
+		BidAmount        float64    `form:"bid_amount" binding:"required,gt=0"`
+		Duration         int        `form:"duration" binding:"required,gt=0"`
+		Attachments      []string   `form:"attachments"`
 	}
 
 	if err := c.ShouldBind(&body); err != nil {
@@ -93,6 +94,7 @@ func CreateProposal(c *gin.Context) {
 	proposal := models.Proposal{
 		JobPostID:    body.JobPostID,
 		FreelancerID: user.ID,
+		AvailabilityDate: body.AvailabilityDate,
 		CoverLetter:  body.CoverLetter,
 		BidAmount:    body.BidAmount,
 		Duration:     body.Duration,
@@ -219,10 +221,11 @@ func UpdateProposal(c *gin.Context) {
 	}
 
 	var body struct {
-		CoverLetter string   `json:"cover_letter"`
-		BidAmount   float64  `json:"bid_amount"`
-		Duration    int      `json:"duration"`
-		Attachments []string `json:"attachments"`
+		CoverLetter      string     `json:"cover_letter"`
+		BidAmount        float64    `json:"bid_amount"`
+		Duration         int        `json:"duration"`
+		AvailabilityDate *time.Time `json:"availability_date"`
+		Attachments      []string   `json:"attachments"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -245,6 +248,10 @@ func UpdateProposal(c *gin.Context) {
 
 	if body.Duration > 0 {
 		updates["duration"] = body.Duration
+	}
+
+	if body.AvailabilityDate != nil {
+		updates["availability_date"] = body.AvailabilityDate
 	}
 
 	if len(updates) == 0 && len(body.Attachments) == 0 {

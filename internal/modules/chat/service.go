@@ -31,6 +31,7 @@ type Service interface {
 	InitiateChat(userA, userB, title string) (*models.ChatConversation, error)
 	SendMessage(senderID, convID, content, msgType string, files []*multipart.FileHeader) (*models.ChatMessage, error)
 	GetInbox(userID string) ([]models.ChatConversation, error)
+	SearchInbox(userID, query string) ([]models.ChatConversation, error)
 	GetChatHistory(conversationID string, page, limit int) ([]models.ChatMessage, error)
 	GetUnreadMessages(conversationID, userID string, page, limit int) ([]models.ChatMessage, error)
 	MarkConversationRead(conversationID, userID string) (int64, error)
@@ -299,6 +300,14 @@ func (s *chatService) MarkConversationRead(conversationID, userID string) (int64
 }
 func (s *chatService) GetInbox(userID string) ([]models.ChatConversation, error) {
 	return s.repo.GetUserConversations(userID)
+}
+
+func (s *chatService) SearchInbox(userID, query string) ([]models.ChatConversation, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, ErrEmptyQuery
+	}
+	return s.repo.SearchConversations(userID, query)
 }
 
 func (s *chatService) RegisterClient(c *Client) {
