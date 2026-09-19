@@ -138,20 +138,39 @@ func (h *Handler) GetInbox(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 	query := c.Query("query")
 
-	conversations, err := h.service.SearchInbox(user.ID, query)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Failed to fetch inbox",
-			"details": err.Error(),
+	if query != "" {
+		conversations, err := h.service.SearchInbox(user.ID, query)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "Failed to fetch inbox",
+				"details": err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"message": "success",
+			"count":   len(conversations),
+			"data":    conversations,
+		})
+		return
+	} else {
+
+		conversations, err := h.service.GetInbox(user.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "Failed to fetch inbox",
+				"details": err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"message": "success",
+			"count":   len(conversations),
+			"data":    conversations,
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "success",
-		"count":   len(conversations),
-		"data":    conversations,
-	})
 }
 func (h *Handler) SearchInbox(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
