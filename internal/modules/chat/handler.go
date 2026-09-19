@@ -136,8 +136,9 @@ func (h *Handler) GetChatHistory(c *gin.Context) {
 
 func (h *Handler) GetInbox(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
+	query := c.Query("query")
 
-	conversations, err := h.service.GetInbox(user.ID)
+	conversations, err := h.service.SearchInbox(user.ID, query)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Failed to fetch inbox",
