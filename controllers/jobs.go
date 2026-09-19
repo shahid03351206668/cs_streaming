@@ -1192,8 +1192,31 @@ func AddReview(c *gin.Context) {
 		return
 	}
 
+	updateUserRatingAggregate(targetID)
+
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Review submitted successfully",
 		"data":    review,
+	})
+}
+
+// updateUserRatingAggregate recomputes the target user's denormalized rating
+// and reviews_count from the reviews table, so every API response that embeds
+// a User object reflects the latest average without a live join per request.
+func updateUserRatingAggregate(userID string) {
+	var agg struct {
+		Avg   float64
+		Count int64
+	}
+	if err := db.DB.Model(&models.Review{}).
+		Where("target_id = ?", userID).
+		Select("COALESCE(AVG(rating), 0) as avg, COUNT(*) as count").
+		Scan(&agg).Error; err != nil {
+		return
+	}
+
+	db.DB.Model(&models.User{}).Where("id = ?", userID).Updates(map[string]any{
+		"rating":        agg.Avg,
+		"reviews_count": agg.Count,
 	})
 }
