@@ -23,15 +23,15 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 	var body struct {
-		JobPostID        string     `form:"job_post_id" binding:"required"`
-		CoverLetter      string     `form:"cover_letter" binding:"required"`
-		AvailabilityDate *time.Time `form:"availability_date" time_format:"2006-01-02"`
-		BidAmount        float64    `form:"bid_amount" binding:"required,gt=0"`
-		Duration         int        `form:"duration" binding:"required,gt=0"`
-		Attachments      []string   `form:"attachments"`
+		JobPostID        string   `json:"job_post_id" binding:"required"`
+		CoverLetter      string   `json:"cover_letter" binding:"required"`
+		AvailabilityDate string   `json:"availability_date" `
+		BidAmount        float64  `json:"bid_amount" binding:"required,gt=0"`
+		Duration         int      `json:"duration" binding:"required,gt=0"`
+		Attachments      []string `json:"attachments"`
 	}
 
-	if err := c.ShouldBind(&body); err != nil {
+	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
 			"error":   err.Error(),
@@ -39,11 +39,13 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 
-	// Gin allocates the pointer even for an empty (but present) form field,
-	// leaving it non-nil at the zero time instead of nil — normalize that
-	// back to nil so an unset date serializes as JSON null, not "0001-01-01...".
-	if body.AvailabilityDate != nil && body.AvailabilityDate.IsZero() {
-		body.AvailabilityDate = nil
+	date := body.AvailabilityDate
+	time_format := "2006-01-02"
+	var AvailabilityDate *time.Time
+
+	if date != "" {
+		val, _ := time.Parse(date, time_format)
+		AvailabilityDate = &val
 	}
 
 	jobPost := models.JobPost{}
@@ -101,7 +103,7 @@ func CreateProposal(c *gin.Context) {
 	proposal := models.Proposal{
 		JobPostID:        body.JobPostID,
 		FreelancerID:     user.ID,
-		AvailabilityDate: body.AvailabilityDate,
+		AvailabilityDate: AvailabilityDate,
 		CoverLetter:      body.CoverLetter,
 		BidAmount:        body.BidAmount,
 		Duration:         body.Duration,
