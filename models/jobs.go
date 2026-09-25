@@ -111,15 +111,15 @@ func (JobReport) TableName() string {
 
 type Proposal struct {
 	BaseModel
-	JobPostID        string     `gorm:"not null;index" json:"job_post_id"`
-	JobPost          JobPost    `gorm:"foreignKey:JobPostID;constraint:OnDelete:CASCADE" json:"job_post"`
-	FreelancerID     string     `gorm:"not null;index" json:"freelancer_id"`
-	Freelancer       User       `gorm:"foreignKey:FreelancerID;constraint:OnDelete:CASCADE" json:"freelancer"`
-	CoverLetter      string     `gorm:"type:text;not null" json:"cover_letter"`
-	BidAmount        float64    `gorm:"type:decimal(10,2);not null" json:"bid_amount"`
-	Duration         int        `gorm:"not null" json:"duration"`
-	AvailabilityDate *time.Time `gorm:"column:availability_date" json:"availability_date"`
-	Status           string     `gorm:"type:varchar(50);default:'pending';index" json:"status"`
+	JobPostID        string    `gorm:"not null;index" json:"job_post_id"`
+	JobPost          JobPost   `gorm:"foreignKey:JobPostID;constraint:OnDelete:CASCADE" json:"job_post"`
+	FreelancerID     string    `gorm:"not null;index" json:"freelancer_id"`
+	Freelancer       User      `gorm:"foreignKey:FreelancerID;constraint:OnDelete:CASCADE" json:"freelancer"`
+	CoverLetter      string    `gorm:"type:text;not null" json:"cover_letter"`
+	BidAmount        float64   `gorm:"type:decimal(10,2);not null" json:"bid_amount"`
+	Duration         int       `gorm:"not null" json:"duration"`
+	AvailabilityDate time.Time `gorm:"column:availability_date" json:"availability_date"`
+	Status           string    `gorm:"type:varchar(50);default:'pending';index" json:"status"`
 	// Status: pending, shortlisted, accepted, rejected, withdrawn
 	ProposalAttachments []ProposalAttachment `gorm:"foreignKey:ProposalID;constraint:OnDelete:CASCADE" json:"attachments,omitempty"`
 }

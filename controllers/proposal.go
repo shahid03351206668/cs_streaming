@@ -23,12 +23,12 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 	var body struct {
-		JobPostID        string     `form:"job_post_id" binding:"required"`
-		CoverLetter      string     `form:"cover_letter" binding:"required"`
-		AvailabilityDate *time.Time `form:"availability_date" time_format:"2006-01-02"`
-		BidAmount        float64    `form:"bid_amount" binding:"required,gt=0"`
-		Duration         int        `form:"duration" binding:"required,gt=0"`
-		Attachments      []string   `form:"attachments"`
+		JobPostID        string    `form:"job_post_id" binding:"required"`
+		CoverLetter      string    `form:"cover_letter" binding:"required"`
+		AvailabilityDate time.Time `form:"availability_date" time_format:"2006-01-02"`
+		BidAmount        float64   `form:"bid_amount" binding:"required,gt=0"`
+		Duration         int       `form:"duration" binding:"required,gt=0"`
+		Attachments      []string  `form:"attachments"`
 	}
 
 	if err := c.ShouldBind(&body); err != nil {

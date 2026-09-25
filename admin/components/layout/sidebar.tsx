@@ -16,6 +16,7 @@ import {
   Building2,
   ShieldAlert,
   Mail,
+  ScrollText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ const navItems = [
   { title: "Disputes",     href: "/dashboard/disputes",     icon: ShieldAlert },
   { title: "Banks",        href: "/dashboard/banks",        icon: Building2 },
   { title: "Email",        href: "/dashboard/email",        icon: Mail },
+  { title: "Logs",         href: "/dashboard/logs",         icon: ScrollText },
   { title: "Settings",     href: "/dashboard/settings",     icon: Settings },
 ];
 
