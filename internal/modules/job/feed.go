@@ -25,6 +25,9 @@ type JobFeedParams struct {
 	// ExcludeBlockedUsersFor hides jobs posted by anyone in a block relationship
 	// with this user, in either direction. Empty = no exclusion.
 	ExcludeBlockedUsersFor string
+	// ViewerUserID marks AlreadyApplied on each returned job when this user has
+	// a proposal on it. Empty = no viewer (anonymous request), always false.
+	ViewerUserID string
 }
 
 // Haversine SQL expression to calculate distance in km between two lat/lng points.
@@ -62,9 +65,6 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 	if useLocation {
 		lat := *params.Latitude
 		lng := *params.Longitude
-
-		// Bounding-box prefilter to reduce rows before Haversine math.
-		// 1 degree latitude is ~111km. Longitude degrees shrink by cos(latitude).
 		latDelta := params.RadiusKM / 111.0
 		lngDelta := params.RadiusKM / (111.320 * math.Cos(lat*math.Pi/180.0))
 		if math.IsNaN(lngDelta) || math.IsInf(lngDelta, 0) || lngDelta > 180 {
@@ -139,6 +139,21 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 		return nil, 0, err
 	}
 
+	appliedProposalIDs := make(map[string]string) // job_post_id -> proposal_id
+	if params.ViewerUserID != "" && len(jobResults) > 0 {
+		jobIDs := make([]string, len(jobResults))
+		for i, row := range jobResults {
+			jobIDs[i] = row.ID
+		}
+		var proposals []models.Proposal
+		s.db.Select("id", "job_post_id").
+			Where("freelancer_id = ? AND job_post_id IN ?", params.ViewerUserID, jobIDs).
+			Find(&proposals)
+		for _, p := range proposals {
+			appliedProposalIDs[p.JobPostID] = p.ID
+		}
+	}
+
 	// ----- Transform results -----
 	jobsArray := make([]JobPostValue, 0, len(jobResults))
 	for _, row := range jobResults {
@@ -180,20 +195,22 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 			}
 		}
 		job := JobPostValue{
-			ID:          post.ID,
-			Title:       post.Title,
-			Description: post.Description,
-			Budget:      post.Budget,
-			OpenBudget:  post.OpenBudget,
-			Address:     post.Address,
-			Status:      post.Status,
-			CreatedBy:   creator,
-			Category:    cat,
-			Media:       mediaList,
-			Location:    location,
-			CreatedAt:   post.CreatedAt,
-			UpdatedAt:   post.UpdatedAt,
-			DistanceKM:  row.DistanceKM,
+			ID:             post.ID,
+			Title:          post.Title,
+			Description:    post.Description,
+			Budget:         post.Budget,
+			OpenBudget:     post.OpenBudget,
+			Address:        post.Address,
+			Status:         post.Status,
+			CreatedBy:      creator,
+			Category:       cat,
+			Media:          mediaList,
+			Location:       location,
+			CreatedAt:      post.CreatedAt,
+			UpdatedAt:      post.UpdatedAt,
+			DistanceKM:     row.DistanceKM,
+			AlreadyApplied: appliedProposalIDs[post.ID] != "",
+			ProposalID:     appliedProposalIDs[post.ID],
 		}
 
 		jobsArray = append(jobsArray, job)

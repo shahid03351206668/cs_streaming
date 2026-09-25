@@ -19,9 +19,9 @@ import (
 )
 
 var (
-	ErrJobNotFound          = errors.New("job not found")
-	ErrJobNotOwned          = errors.New("you are not the owner of this job")
-	ErrJobCannotBeDeleted   = errors.New("job cannot be deleted while it is in progress or has an active contract")
+	ErrJobNotFound        = errors.New("job not found")
+	ErrJobNotOwned        = errors.New("you are not the owner of this job")
+	ErrJobCannotBeDeleted = errors.New("job cannot be deleted while it is in progress or has an active contract")
 )
 
 type TypeCategory struct {
@@ -56,20 +56,22 @@ type JobPostLocation struct {
 	Country    string  `json:"country"`
 }
 type JobPostValue struct {
-	ID          string          `json:"id"`
-	Title       string          `json:"title"`
-	Description string          `json:"description"`
-	Budget      float64         `json:"budget"`
-	OpenBudget  bool            `json:"open_budget"`
-	Address     string          `json:"address"`
-	Status      string          `json:"status"`
-	CreatedBy   TypeUser        `json:"created_by"`
-	Category    TypeCategory    `json:"category"`
-	Media       []TypeMedia     `json:"media"`
-	DistanceKM  *float64        `json:"distance_km,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
-	Location    JobPostLocation `json:"location"`
+	ID             string          `json:"id"`
+	Title          string          `json:"title"`
+	Description    string          `json:"description"`
+	Budget         float64         `json:"budget"`
+	OpenBudget     bool            `json:"open_budget"`
+	Address        string          `json:"address"`
+	Status         string          `json:"status"`
+	CreatedBy      TypeUser        `json:"created_by"`
+	Category       TypeCategory    `json:"category"`
+	Media          []TypeMedia     `json:"media"`
+	DistanceKM     *float64        `json:"distance_km,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+	Location       JobPostLocation `json:"location"`
+	AlreadyApplied bool            `json:"already_applied"`
+	ProposalID     string          `json:"proposal_id,omitempty"`
 }
 
 type JobPostData struct {
@@ -80,7 +82,6 @@ type JobPostData struct {
 	OpenBudget  bool    `form:"open_budget"`
 	Address     string  `form:"address"`
 
-
 	City       string  `form:"city"`
 	State      string  `form:"state"`
 	Latitude   float64 `form:"latitude"`
@@ -88,7 +89,7 @@ type JobPostData struct {
 	PostalCode string  `form:"postalcode"`
 	Street     string  `form:"street"`
 	Country    string  `form:"country"`
-	DoorNo       string  `form:"door_no"`
+	DoorNo     string  `form:"door_no"`
 }
 
 type Service struct {

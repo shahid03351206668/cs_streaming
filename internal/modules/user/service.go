@@ -3,10 +3,7 @@ package user
 import (
 	"errors"
 	"fmt"
-	"io"
 	"mime/multipart"
-	"os"
-	"path/filepath"
 	"strings"
 	"tasksy/config"
 	"tasksy/models"
@@ -53,6 +50,7 @@ type UserProfile struct {
 	PhoneNo       string    `json:"phone_no"`
 	JoinedAt      time.Time `json:"joined_at"`
 	Rating        float64   `json:"rating"`
+	ReviewsCount  int       `json:"reviews_count"`
 }
 
 func NewService(db *gorm.DB, appConfig *config.Config, s3Client *aws_services.S3Client) *Service {
@@ -87,10 +85,13 @@ func (s *Service) UpsertDeviceToken(userID, token, platform string) error {
 
 func (s *Service) DeleteDeviceToken(userID, token string) error {
 	token = strings.TrimSpace(token)
+
 	if token == "" {
 		return errors.New("token is required")
 	}
-	result := s.db.Where("token = ? AND user_id = ?", token, userID).Delete(&models.DeviceToken{})
+
+	result := s.db.Where("token = ? AND user_id = ?", token, userID).Unscoped().Delete(&models.DeviceToken{})
+
 	if result.Error != nil {
 		return result.Error
 	}
@@ -122,11 +123,8 @@ func (s *Service) GetUserProfile(id string) (*UserProfileResponse, error) {
 		return nil, err
 	}
 
-	var reviewsRes []map[string]any
-	var totalRating float64
-
+	reviewsRes := make([]map[string]any, 0, len(reviews))
 	for _, i := range reviews {
-		totalRating += float64(i.Rating)
 		reviewsRes = append(reviewsRes, map[string]any{
 			"id":         i.ID,
 			"rating":     i.Rating,
@@ -140,11 +138,6 @@ func (s *Service) GetUserProfile(id string) (*UserProfileResponse, error) {
 		})
 	}
 
-	avgRating := 0.0
-	if len(reviewsRes) > 0 {
-		avgRating = totalRating / float64(len(reviewsRes))
-	}
-
 	return &UserProfileResponse{
 		User: UserProfile{
 			FirstName:     user.FirstName,
@@ -155,9 +148,10 @@ func (s *Service) GetUserProfile(id string) (*UserProfileResponse, error) {
 			PhoneVerified: user.PhoneVerified,
 			PhoneNo:       user.PhoneNumber,
 			JoinedAt:      user.CreatedAt,
-			Rating:        avgRating,
+			Rating:        user.Rating,
+			ReviewsCount:  user.ReviewsCount,
 		},
-		Reviews: reviewsRes, // ✅ was `reviews` (raw models, losing reviewer info + re-triggering rating bug)
+		Reviews: reviewsRes,
 	}, nil
 }
 
@@ -770,39 +764,18 @@ func (s *Service) UpdateProfile(user *models.User, data UpdateProfileData, photo
 			return nil, errors.New("file size too large, maximum 5MB allowed")
 		}
 
-		profilePhotoPath := filepath.Join("media/", "profiles")
-		if err := os.MkdirAll(profilePhotoPath, 0755); err != nil {
-			return nil, fmt.Errorf("failed to create profile photo directory: %w", err)
-		}
-
-		if user.ProfilePhoto != "" {
-			if _, err := os.Stat(user.ProfilePhoto); err == nil {
-				os.Remove(user.ProfilePhoto)
-			}
-		}
-
-		ext := filepath.Ext(photoFile.Filename)
-		fileName := fmt.Sprintf("profile_%s_%d%s", user.ID, time.Now().UnixNano(), ext)
-		filePath := filepath.Join(profilePhotoPath, fileName)
-
 		src, err := photoFile.Open()
 		if err != nil {
 			return nil, fmt.Errorf("failed to open uploaded file: %w", err)
 		}
 		defer src.Close()
 
-		dst, err := os.Create(filePath)
+		url, _, err := s.s3Client.UploadFile(src, photoFile.Filename, contentType, "", "")
 		if err != nil {
-			return nil, fmt.Errorf("failed to create destination file: %w", err)
-		}
-		defer dst.Close()
-
-		if _, err = io.Copy(dst, src); err != nil {
-			os.Remove(filePath)
-			return nil, fmt.Errorf("failed to save profile photo: %w", err)
+			return nil, fmt.Errorf("failed to upload profile photo: %w", err)
 		}
 
-		updates["profile_photo"] = filePath
+		updates["profile_photo"] = url
 	}
 
 	if len(updates) == 0 {
@@ -810,9 +783,6 @@ func (s *Service) UpdateProfile(user *models.User, data UpdateProfileData, photo
 	}
 
 	if err := s.db.Model(user).Updates(updates).Error; err != nil {
-		if photoPath, ok := updates["profile_photo"].(string); ok {
-			os.Remove(photoPath)
-		}
 		return nil, err
 	}
 

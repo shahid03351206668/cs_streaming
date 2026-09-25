@@ -161,6 +161,48 @@ func AdminGetUserController(c *gin.Context) {
 		"data": user,
 	})
 }
+
+// AdminDeleteUserController permanently deletes a user and every related row
+// across the schema (jobs, proposals, contracts, reviews, payments, chat
+// messages, etc). This is irreversible. To guard against an accidental call,
+// the request must confirm the target's exact current email.
+func AdminDeleteUserController(c *gin.Context) {
+	userID := c.Param("id")
+
+	var target models.User
+	if err := db.DB.First(&target, "id = ?", userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": "user not found"})
+		return
+	}
+
+	var body struct {
+		ConfirmEmail string `json:"confirm_email" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "error",
+			"error":   "confirm_email is required and must match the user's exact email",
+		})
+		return
+	}
+	if body.ConfirmEmail != target.Email {
+		c.JSON(http.StatusConflict, gin.H{"message": "error", "error": "confirm_email does not match this user's email"})
+		return
+	}
+
+	if userService == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "user service not configured"})
+		return
+	}
+
+	if err := userService.HardDeleteAccount(userID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "user and all related data permanently deleted"})
+}
+
 func AdminUserCreateController(c *gin.Context) {
 	var body struct {
 		FirstName   string `json:"first_name" binding:"required,min=2"`

@@ -77,13 +77,13 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	router.Group("/api/v1/admin").POST("/email/test", emailHandler.SendTestEmail)
 
 	emailSend := router.Group("/api/v1/email")
-	// emailSend.Use(middleware.AuthMiddleware())
 	{
 		emailSend.POST("/send", emailHandler.SendEmail)
 	}
 
 	userService := user.NewService(db, appConfig, s3Client)
 	userHandler := user.NewHandler(userService)
+	controllers.SetUserService(userService)
 	jobPostService := job.NewService(db, s3Client, queueClient, notifService)
 	jobPostHandler := job.NewHandler(jobPostService)
 
@@ -198,8 +198,10 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		adminRoutes.GET("/users", controllers.AdminUserListController)
 		adminRoutes.GET("/users/:id", controllers.AdminGetUserController)
 		adminRoutes.PUT("/users/:id", controllers.AdminUpdateUserController)
+		adminRoutes.DELETE("/users/:id", controllers.AdminDeleteUserController)
 		adminRoutes.PUT("/users/:id/password", controllers.AdminChangeUserPasswordController)
 		adminRoutes.GET("/users/:id/wallet", controllers.AdminUserWalletController)
+		adminRoutes.GET("/logs", controllers.AdminListLogsController)
 		adminRoutes.GET("/jobs", controllers.AdminListJobsController)
 		adminRoutes.GET("/jobs/:id", controllers.AdminGetJobDetailController)
 		adminRoutes.PUT("/jobs/:id", controllers.AdminUpdateJobController)

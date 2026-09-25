@@ -25,7 +25,7 @@ func CreateProposal(c *gin.Context) {
 	var body struct {
 		JobPostID        string     `form:"job_post_id" binding:"required"`
 		CoverLetter      string     `form:"cover_letter" binding:"required"`
-		AvailabilityDate *time.Time `form:"availability_date"`
+		AvailabilityDate *time.Time `form:"availability_date" time_format:"2006-01-02"`
 		BidAmount        float64    `form:"bid_amount" binding:"required,gt=0"`
 		Duration         int        `form:"duration" binding:"required,gt=0"`
 		Attachments      []string   `form:"attachments"`
@@ -92,13 +92,13 @@ func CreateProposal(c *gin.Context) {
 
 	// Create proposal
 	proposal := models.Proposal{
-		JobPostID:    body.JobPostID,
-		FreelancerID: user.ID,
+		JobPostID:        body.JobPostID,
+		FreelancerID:     user.ID,
 		AvailabilityDate: body.AvailabilityDate,
-		CoverLetter:  body.CoverLetter,
-		BidAmount:    body.BidAmount,
-		Duration:     body.Duration,
-		Status:       models.ProposalStatusPending,
+		CoverLetter:      body.CoverLetter,
+		BidAmount:        body.BidAmount,
+		Duration:         body.Duration,
+		Status:           models.ProposalStatusPending,
 	}
 
 	tx := db.DB.Begin()

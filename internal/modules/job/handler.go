@@ -107,6 +107,7 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 		PreferredCategoryIDs:    preferredCategoryIDs,
 		ExcludeReportedByUserID: viewerID,
 		ExcludeBlockedUsersFor:  viewerID,
+		ViewerUserID:            viewerID,
 	}
 
 	jobs, count, err := h.service.GetJobFeed(params)
