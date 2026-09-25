@@ -69,19 +69,21 @@ type CategoryResponse struct {
 }
 
 type JobPostResponse struct {
-	ID          string             `json:"id"`
-	Title       string             `json:"title"`
-	Description string             `json:"description"`
-	Budget      float64            `json:"budget"`
-	OpenBudget  bool               `json:"open_budget"`
-	Address     string             `json:"address"`
-	Status      string             `json:"status"`
-	CreatedBy   UserResponse       `json:"created_by"`
-	Category    CategoryResponse   `json:"category"`
-	Media       []JobMediaResponse `json:"media"`
-	CreatedAt   time.Time          `json:"created_at"`
-	UpdatedAt   time.Time          `json:"updated_at"`
-	Location    *JobLocation       `json:"location"`
+	ID             string             `json:"id"`
+	Title          string             `json:"title"`
+	Description    string             `json:"description"`
+	Budget         float64            `json:"budget"`
+	OpenBudget     bool               `json:"open_budget"`
+	Address        string             `json:"address"`
+	Status         string             `json:"status"`
+	CreatedBy      UserResponse       `json:"created_by"`
+	Category       CategoryResponse   `json:"category"`
+	Media          []JobMediaResponse `json:"media"`
+	CreatedAt      time.Time          `json:"created_at"`
+	UpdatedAt      time.Time          `json:"updated_at"`
+	Location       *JobLocation       `json:"location"`
+	AlreadyApplied bool               `json:"already_applied"`
+	ProposalID     string             `json:"proposal_id,omitempty"`
 }
 
 type JobLocation struct {
@@ -179,7 +181,9 @@ func GetJobDetail(c *gin.Context) {
 		return
 	}
 
-	if viewerID := lib.TryGetUserID(c); viewerID != "" && viewerID != job.CreatedByID {
+	viewerID := lib.TryGetUserID(c)
+
+	if viewerID != "" && viewerID != job.CreatedByID {
 		var blockCount int64
 		db.DB.Model(&models.UserBlock{}).
 			Where("(blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)",
@@ -194,9 +198,20 @@ func GetJobDetail(c *gin.Context) {
 		}
 	}
 
+	resp := serializeJobPost(job)
+	if viewerID != "" {
+		var proposal models.Proposal
+		if err := db.DB.Select("id").
+			Where("job_post_id = ? AND freelancer_id = ?", job.ID, viewerID).
+			First(&proposal).Error; err == nil {
+			resp.AlreadyApplied = true
+			resp.ProposalID = proposal.ID
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
-		"data":    serializeJobPost(job),
+		"data":    resp,
 	})
 }
 
