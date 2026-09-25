@@ -1186,7 +1186,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	photoFile, _ := c.FormFile("image")
+	photoFile, _ := c.FormFile("profile_photo")
 
 	data := UpdateProfileData{
 		FirstName:   body.FirstName,
