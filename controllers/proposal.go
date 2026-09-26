@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"tasksy/db"
 	paymentsv3 "tasksy/internal/modules/payments-v3"
@@ -10,8 +12,51 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 	"gorm.io/gorm"
 )
+
+// proposalFieldName maps a Go struct field to the JSON key clients actually
+// send, so validation errors are readable by whatever's showing them to a
+// user instead of leaking Go/validator internals.
+var proposalFieldName = map[string]string{
+	"JobPostID":   "job_post_id",
+	"CoverLetter": "cover_letter",
+	"BidAmount":   "bid_amount",
+	"Duration":    "duration",
+}
+
+// friendlyBindError turns a ShouldBindJSON error into a plain-language
+// message: which field, and what's wrong with it.
+func friendlyBindError(err error) string {
+	var ve validator.ValidationErrors
+	if errors.As(err, &ve) {
+		fe := ve[0]
+		field := proposalFieldName[fe.Field()]
+		if field == "" {
+			field = fe.Field()
+		}
+		switch fe.Tag() {
+		case "required":
+			return field + " is required"
+		case "gt":
+			return field + " must be greater than " + fe.Param()
+		default:
+			return field + " is invalid"
+		}
+	}
+
+	var ute *json.UnmarshalTypeError
+	if errors.As(err, &ute) {
+		return ute.Field + " has the wrong type (expected " + ute.Type.String() + ")"
+	}
+
+	if errors.Is(err, io.EOF) {
+		return "request body is required"
+	}
+
+	return "invalid request body"
+}
 
 func CreateProposal(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
@@ -24,28 +69,32 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 	var body struct {
-		JobPostID        string   `json:"job_post_id" binding:"required"`
-		CoverLetter      string   `json:"cover_letter" binding:"required"`
-		AvailabilityDate string   `json:"availability_date" `
-		BidAmount        float64  `json:"bid_amount" binding:"required,gt=0"`
-		Duration         int      `json:"duration" binding:"required,gt=0"`
-		Attachments      []string `json:"attachments"`
+		JobPostID        string  `json:"job_post_id" binding:"required"`
+		CoverLetter      string  `json:"cover_letter" binding:"required"`
+		AvailabilityDate string  `json:"availability_date" `
+		BidAmount        float64 `json:"bid_amount" binding:"required,gt=0"`
+		Duration         int     `json:"duration" binding:"required,gt=0"`
+		// Attachments      []string `json:"attachments"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
-			"error":   err.Error(),
+			"error":   friendlyBindError(err),
 		})
 		return
 	}
 
-	date := body.AvailabilityDate
-	time_format := "2006-01-02"
 	var AvailabilityDate *time.Time
-
-	if date != "" {
-		val, _ := time.Parse(date, time_format)
+	if body.AvailabilityDate != "" {
+		val, err := time.Parse("2006-01-02", body.AvailabilityDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"message": "error",
+				"error":   "availability_date must be in YYYY-MM-DD format",
+			})
+			return
+		}
 		AvailabilityDate = &val
 	}
 
@@ -122,22 +171,22 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 
-	if len(body.Attachments) > 0 {
-		for _, attachmentURL := range body.Attachments {
-			attachment := models.ProposalAttachment{
-				ProposalID: proposal.ID,
-				URL:        attachmentURL,
-			}
-			if err := tx.Create(&attachment).Error; err != nil {
-				tx.Rollback()
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"message": "error",
-					"error":   "failed to add attachments",
-				})
-				return
-			}
-		}
-	}
+	// if len(body.Attachments) > 0 {
+	// 	for _, attachmentURL := range body.Attachments {
+	// 		attachment := models.ProposalAttachment{
+	// 			ProposalID: proposal.ID,
+	// 			URL:        attachmentURL,
+	// 		}
+	// 		if err := tx.Create(&attachment).Error; err != nil {
+	// 			tx.Rollback()
+	// 			c.JSON(http.StatusInternalServerError, gin.H{
+	// 				"message": "error",
+	// 				"error":   "failed to add attachments",
+	// 			})
+	// 			return
+	// 		}
+	// 	}
+	// }
 
 	if err := tx.Commit().Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
