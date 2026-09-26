@@ -58,6 +58,28 @@ func friendlyBindError(err error) string {
 	return "invalid request body"
 }
 
+// dateTimeLayouts covers every format this API has been sent in practice:
+// date-only, space-separated date+time (no timezone), and full RFC3339.
+var dateTimeLayouts = []string{
+	"2006-01-02",
+	"2006-01-02 15:04:05",
+	time.RFC3339,
+}
+
+// parseFlexibleDateTime returns nil for an empty string (field omitted), or a
+// clear error naming the accepted formats if none of them match.
+func parseFlexibleDateTime(value string) (*time.Time, error) {
+	if value == "" {
+		return nil, nil
+	}
+	for _, layout := range dateTimeLayouts {
+		if t, err := time.Parse(layout, value); err == nil {
+			return &t, nil
+		}
+	}
+	return nil, errors.New("must be one of: YYYY-MM-DD, YYYY-MM-DD HH:MM:SS, or RFC3339")
+}
+
 func CreateProposal(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
@@ -69,10 +91,10 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 	var body struct {
-		JobPostID           string     `json:"job_post_id" binding:"required"`
-		CoverLetter         string     `json:"cover_letter" binding:"required"`
-		AvailabilityDate    *time.Time `json:"availability_date" `
-		AvailabilityDateEnd *time.Time `json:"availability_date_end" `
+		JobPostID           string `json:"job_post_id" binding:"required"`
+		CoverLetter         string `json:"cover_letter" binding:"required"`
+		AvailabilityDate    string `json:"availability_date"`
+		AvailabilityDateEnd string `json:"availability_date_end"`
 
 		BidAmount float64 `json:"bid_amount" binding:"required,gt=0"`
 		Duration  int     `json:"duration" binding:"required,gt=0"`
@@ -87,18 +109,20 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 
-	// var AvailabilityDate *time.Time
-	// if body.AvailabilityDate != "" {
-	// 	val, err := time.Parse("2006-01-02", body.AvailabilityDate)
-	// 	if err != nil {
-	// 		c.JSON(http.StatusBadRequest, gin.H{
-	// 			"message": "error",
-	// 			"error":   "availability_date must be in YYYY-MM-DD format",
-	// 		})
-	// 		return
-	// 	}
-	// 	AvailabilityDate = &val
-	// }
+	availabilityDate, err := parseFlexibleDateTime(body.AvailabilityDate)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "availability_date " + err.Error()})
+		return
+	}
+	availabilityDateEnd, err := parseFlexibleDateTime(body.AvailabilityDateEnd)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "availability_date_end " + err.Error()})
+		return
+	}
+	if availabilityDate != nil && availabilityDateEnd != nil && availabilityDateEnd.Before(*availabilityDate) {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "availability_date_end must not be before availability_date"})
+		return
+	}
 
 	jobPost := models.JobPost{}
 	if err := db.DB.Where("id = ?", body.JobPostID).First(&jobPost).Error; err != nil {
@@ -154,13 +178,13 @@ func CreateProposal(c *gin.Context) {
 	proposal := models.Proposal{
 		JobPostID:        body.JobPostID,
 		FreelancerID:     user.ID,
-		AvailabilityDate: body.AvailabilityDate,
+		AvailabilityDate: availabilityDate,
 
-		AvailabilityDateEnd: body.AvailabilityDateEnd,
-		CoverLetter:      body.CoverLetter,
-		BidAmount:        body.BidAmount,
-		Duration:         body.Duration,
-		Status:           models.ProposalStatusPending,
+		AvailabilityDateEnd: availabilityDateEnd,
+		CoverLetter:         body.CoverLetter,
+		BidAmount:           body.BidAmount,
+		Duration:            body.Duration,
+		Status:              models.ProposalStatusPending,
 	}
 
 	tx := db.DB.Begin()
