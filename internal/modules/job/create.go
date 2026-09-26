@@ -235,11 +235,11 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 	s.InvalidateJobFeedCache()
 
 	if s.notifier != nil && jobPost.Status == models.JobStatusOpen {
-		go func(post models.JobPost, loc models.JobPostLocation) {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			_ = s.notifier.NotifyNewJobPostedToInterestedUsers(ctx, &post, &loc)
-		}(jobPost, jobLocation)
+		// go func(post models.JobPost, loc models.JobPostLocation) {
+		// ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// defer cancel()
+		// _ = s.notifier.NotifyNewJobPostedToInterestedUsers(ctx, &post, &loc)
+		// }(jobPost, jobLocation)
 	}
 
 	// Upload video files and queue for processing (after transaction commits)

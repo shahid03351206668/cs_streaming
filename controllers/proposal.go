@@ -245,7 +245,7 @@ func CreateProposal(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		if notificationService != nil {
-			_ = notificationService.NotifyProposalSent(ctx, actor.ID, p.JobPost.Title, p.ID, p.JobPostID)
+			// _ = notificationService.NotifyProposalSent(ctx, actor.ID, p.JobPost.Title, p.ID, p.JobPostID)
 			_ = notificationService.NotifyProposalReceived(ctx, p.JobPost.CreatedByID, p.JobPost.Title, p.ID, p.JobPostID)
 		}
 		if emailService != nil && p.JobPost.CreatedBy.Email != "" {

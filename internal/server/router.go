@@ -106,7 +106,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	v3Routes.Use(middleware.AuthMiddleware())
 	{
 		v3Routes.POST("/intent", paymentV3Handler.HandleCreatePaymentIntent)
-		v3Routes.POST("/:id/refund", paymentV3Handler.HandleRefund)
 		v3Routes.GET("/transactions", paymentV3Handler.HandleListTransactions)
 	}
 
@@ -123,6 +122,10 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		v3AdminPayouts.GET("/escrows", paymentV3Handler.HandleAdminListEscrows)
 		v3AdminPayouts.POST("/escrows/:id/release", paymentV3Handler.HandleAdminReleaseEscrow)
 		v3AdminPayouts.GET("/withdrawals", paymentV3Handler.HandleAdminListWithdrawals)
+		// Refund the client — e.g. to resolve a dispute in their favour. Reverses
+		// the Stripe transfer first if the escrow was already released.
+		v3AdminPayouts.POST("/transactions/:id/refund", paymentV3Handler.HandleRefund)
+		v3AdminPayouts.POST("/contracts/:id/refund", paymentV3Handler.HandleAdminRefundContract)
 	}
 
 	router.GET("/api/v3/admin/payments/transactions", paymentV3Handler.HandleAdminListTransactions)

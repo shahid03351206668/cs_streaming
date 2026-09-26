@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 	"github.com/stripe/stripe-go/v84"
-	"github.com/stripe/stripe-go/v84/refund"
 	"gorm.io/gorm"
 )
 
@@ -282,8 +281,21 @@ func (h *Handler) HandleGetWallet(c *gin.Context) {
 	})
 }
 
+// HandleRefund is admin-only (see router.go) and delegates to the same
+// escrow-aware refund logic as HandleAdminRefundContract: it refuses a
+// transaction that's already refunded and reverses the Stripe transfer first
+// if the escrow was already released to the freelancer.
 func (h *Handler) HandleRefund(c *gin.Context) {
+	admin := c.MustGet("user").(models.User)
 	transactionID := c.Param("id")
+
+	var body struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "a reason for the refund is required"})
+		return
+	}
 
 	var transaction models.PaymentTransactionV3
 	if err := h.service.db.First(&transaction, "id = ?", transactionID).Error; err != nil {
@@ -293,19 +305,13 @@ func (h *Handler) HandleRefund(c *gin.Context) {
 
 	stripe.Key = h.config.Stripe.SecretKey
 
-	if _, err := refund.New(&stripe.RefundParams{
-		PaymentIntent: stripe.String(transaction.StripePaymentIntentID),
-	}); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+	refunded, err := h.service.AdminRefundContract(transaction.ContractID, admin.ID, body.Reason)
+	if err != nil {
+		respondRefund(c, err)
 		return
 	}
 
-	if err := h.service.db.Model(&transaction).Update("status", "refunded").Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "success"})
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": refunded})
 }
 
 func (h *Handler) HandleListTransactions(c *gin.Context) {

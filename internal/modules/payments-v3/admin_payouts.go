@@ -188,6 +188,40 @@ func (h *Handler) HandleAdminReleaseEscrow(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "payment released to freelancer"})
 }
 
+// HandleAdminRefundContract refunds the client for a contract's payment —
+// typically used to resolve a dispute in the admin panel's favour of the
+// client. A reason is required and kept on the payment record for audit.
+func (h *Handler) HandleAdminRefundContract(c *gin.Context) {
+	admin := c.MustGet("user").(models.User)
+
+	var body struct {
+		Reason string `json:"reason" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Reason) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "a reason for the refund is required"})
+		return
+	}
+
+	stripe.Key = h.config.Stripe.SecretKey
+
+	refunded, err := h.service.AdminRefundContract(c.Param("id"), admin.ID, strings.TrimSpace(body.Reason))
+	if err != nil {
+		respondRefund(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "client refunded", "data": refunded})
+}
+
+func respondRefund(c *gin.Context, err error) {
+	status := http.StatusBadGateway
+	switch {
+	case errors.Is(err, ErrAlreadyRefunded), errors.Is(err, ErrRefundStateChanged), errors.Is(err, ErrNoPaymentForContract):
+		status = http.StatusConflict
+	}
+	c.JSON(status, gin.H{"message": "error", "error": err.Error()})
+}
+
 // HandleAdminListWithdrawals lists tasker withdrawals. Filter with ?status=.
 func (h *Handler) HandleAdminListWithdrawals(c *gin.Context) {
 	page, limit := pageParams(c)

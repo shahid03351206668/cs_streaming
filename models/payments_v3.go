@@ -29,6 +29,15 @@ type PaymentTransactionV3 struct {
 	Currency      string          `gorm:"default:usd" json:"currency"`
 	Status        string          `gorm:"default:held" json:"status"`
 	FlowVersion   string          `gorm:"default:v3" json:"flow_version"`
+
+	// Refund audit trail. StripeReversalID is set only when the escrow had
+	// already been released, meaning the freelancer's transfer had to be
+	// pulled back before the original charge could be refunded.
+	StripeRefundID    string     `gorm:"type:varchar(100)" json:"stripe_refund_id,omitempty"`
+	StripeReversalID  string     `gorm:"type:varchar(100)" json:"stripe_reversal_id,omitempty"`
+	RefundedByAdminID string     `gorm:"type:varchar(64)" json:"refunded_by_admin_id,omitempty"`
+	RefundReason      string     `gorm:"type:text" json:"refund_reason,omitempty"`
+	RefundedAt        *time.Time `json:"refunded_at,omitempty"`
 }
 
 func (PaymentTransactionV3) TableName() string {
