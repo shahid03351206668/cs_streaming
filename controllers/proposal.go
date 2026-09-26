@@ -69,11 +69,13 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 	var body struct {
-		JobPostID        string  `json:"job_post_id" binding:"required"`
-		CoverLetter      string  `json:"cover_letter" binding:"required"`
-		AvailabilityDate string  `json:"availability_date" `
-		BidAmount        float64 `json:"bid_amount" binding:"required,gt=0"`
-		Duration         int     `json:"duration" binding:"required,gt=0"`
+		JobPostID           string     `json:"job_post_id" binding:"required"`
+		CoverLetter         string     `json:"cover_letter" binding:"required"`
+		AvailabilityDate    *time.Time `json:"availability_date" `
+		AvailabilityDateEnd *time.Time `json:"availability_date_end" `
+
+		BidAmount float64 `json:"bid_amount" binding:"required,gt=0"`
+		Duration  int     `json:"duration" binding:"required,gt=0"`
 		// Attachments      []string `json:"attachments"`
 	}
 
@@ -85,18 +87,18 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 
-	var AvailabilityDate *time.Time
-	if body.AvailabilityDate != "" {
-		val, err := time.Parse("2006-01-02", body.AvailabilityDate)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"message": "error",
-				"error":   "availability_date must be in YYYY-MM-DD format",
-			})
-			return
-		}
-		AvailabilityDate = &val
-	}
+	// var AvailabilityDate *time.Time
+	// if body.AvailabilityDate != "" {
+	// 	val, err := time.Parse("2006-01-02", body.AvailabilityDate)
+	// 	if err != nil {
+	// 		c.JSON(http.StatusBadRequest, gin.H{
+	// 			"message": "error",
+	// 			"error":   "availability_date must be in YYYY-MM-DD format",
+	// 		})
+	// 		return
+	// 	}
+	// 	AvailabilityDate = &val
+	// }
 
 	jobPost := models.JobPost{}
 	if err := db.DB.Where("id = ?", body.JobPostID).First(&jobPost).Error; err != nil {
@@ -140,7 +142,6 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 
-	// Validate bid amount against job budget (if not open budget)
 	if !jobPost.OpenBudget && body.BidAmount > jobPost.Budget {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
@@ -153,7 +154,7 @@ func CreateProposal(c *gin.Context) {
 	proposal := models.Proposal{
 		JobPostID:        body.JobPostID,
 		FreelancerID:     user.ID,
-		AvailabilityDate: AvailabilityDate,
+		AvailabilityDate: body.AvailabilityDate,
 		CoverLetter:      body.CoverLetter,
 		BidAmount:        body.BidAmount,
 		Duration:         body.Duration,
@@ -280,11 +281,12 @@ func UpdateProposal(c *gin.Context) {
 	}
 
 	var body struct {
-		CoverLetter      string     `json:"cover_letter"`
-		BidAmount        float64    `json:"bid_amount"`
-		Duration         int        `json:"duration"`
-		AvailabilityDate *time.Time `json:"availability_date"`
-		Attachments      []string   `json:"attachments"`
+		CoverLetter         string     `json:"cover_letter"`
+		BidAmount           float64    `json:"bid_amount"`
+		Duration            int        `json:"duration"`
+		AvailabilityDate    *time.Time `json:"availability_date"`
+		AvailabilityDateEnd *time.Time `json:"availability_date_end"`
+		Attachments         []string   `json:"attachments"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -312,7 +314,10 @@ func UpdateProposal(c *gin.Context) {
 	if body.AvailabilityDate != nil {
 		updates["availability_date"] = body.AvailabilityDate
 	}
+	if body.AvailabilityDateEnd != nil {
+		updates["availability_date_end"] = body.AvailabilityDateEnd
 
+	}
 	if len(updates) == 0 && len(body.Attachments) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",

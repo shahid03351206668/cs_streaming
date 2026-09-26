@@ -119,6 +119,8 @@ type Proposal struct {
 	BidAmount        float64    `gorm:"type:decimal(10,2);not null" json:"bid_amount"`
 	Duration         int        `gorm:"not null" json:"duration"`
 	AvailabilityDate *time.Time `gorm:"column:availability_date" json:"availability_date"`
+	AvailabilityDateEnd *time.Time `gorm:"column:availability_date_end" json:"availability_date_end"`
+	
 	Status           string     `gorm:"type:varchar(50);default:'pending';index" json:"status"`
 	// Status: pending, shortlisted, accepted, rejected, withdrawn
 	ProposalAttachments []ProposalAttachment `gorm:"foreignKey:ProposalID;constraint:OnDelete:CASCADE" json:"attachments,omitempty"`
