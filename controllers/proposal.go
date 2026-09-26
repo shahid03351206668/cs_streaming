@@ -155,6 +155,8 @@ func CreateProposal(c *gin.Context) {
 		JobPostID:        body.JobPostID,
 		FreelancerID:     user.ID,
 		AvailabilityDate: body.AvailabilityDate,
+
+		AvailabilityDateEnd: body.AvailabilityDateEnd,
 		CoverLetter:      body.CoverLetter,
 		BidAmount:        body.BidAmount,
 		Duration:         body.Duration,
