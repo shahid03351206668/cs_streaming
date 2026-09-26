@@ -103,6 +103,7 @@ func ApplyMigrations() error {
 		&models.Category{},
 		&models.PaymentTransactionV3{},
 		&models.EscrowTransactionV3{},
+		&models.WithdrawalV3{},
 		&models.UserAddress{},
 		&models.JobMedia{},
 		&models.Proposal{},

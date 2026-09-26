@@ -1,14 +1,16 @@
 package paymentsv3
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"tasksy/config"
-	"tasksy/lib"
 	"tasksy/models"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/refund"
 	"gorm.io/gorm"
@@ -26,9 +28,10 @@ func NewHandler(config *config.Config, service *Service) *Handler {
 func (h *Handler) HandleCreatePaymentIntent(c *gin.Context) {
 	client := c.MustGet("user").(models.User)
 
+	// "amount" is accepted for backward compatibility but ignored — the charge
+	// is always computed server-side from the proposal bid.
 	var body struct {
-		ProposalID string  `json:"proposal_id" binding:"required"`
-		Amount     float64 `json:"amount" binding:"required"`
+		ProposalID string `json:"proposal_id" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -37,8 +40,13 @@ func (h *Handler) HandleCreatePaymentIntent(c *gin.Context) {
 	}
 
 	var proposal models.Proposal
-	if err := h.service.db.First(&proposal, "id = ?", body.ProposalID).Error; err != nil {
+	if err := h.service.db.Preload("JobPost").First(&proposal, "id = ?", body.ProposalID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": "proposal not found"})
+		return
+	}
+
+	if proposal.JobPost.CreatedByID != client.ID {
+		c.JSON(http.StatusForbidden, gin.H{"message": "error", "error": "only the job owner can pay for this proposal"})
 		return
 	}
 
@@ -49,7 +57,7 @@ func (h *Handler) HandleCreatePaymentIntent(c *gin.Context) {
 	}
 
 	stripe.Key = h.config.Stripe.SecretKey
-	intent, err := h.service.CreatePaymentIntent(&client, &freelancer, body.ProposalID, body.Amount)
+	intent, fees, err := h.service.CreatePaymentIntent(&client, &freelancer, &proposal)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
 		return
@@ -60,6 +68,9 @@ func (h *Handler) HandleCreatePaymentIntent(c *gin.Context) {
 		"data": gin.H{
 			"client_secret":     intent.ClientSecret,
 			"payment_intent_id": intent.ID,
+			"amount":            fees.ClientTotal.InexactFloat64(),
+			"currency":          PaymentCurrency,
+			"payment_summary":   fees.Summary(),
 		},
 	})
 }
@@ -154,12 +165,102 @@ func (h *Handler) HandleReleaseEscrow(c *gin.Context) {
 
 	stripe.Key = h.config.Stripe.SecretKey
 
-	if err := h.service.ReleaseEscrow(escrowID, user.ID); err != nil {
+	released, err := h.service.ReleaseEscrow(escrowID, user.ID)
+	respondRelease(c, released, err)
+}
+
+// HandleReleaseContract lets either party retry release by contract ID, e.g.
+// after auto-release failed or a dispute on a completed contract was resolved.
+func (h *Handler) HandleReleaseContract(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	stripe.Key = h.config.Stripe.SecretKey
+
+	released, err := h.service.ReleaseForParty(c.Param("id"), user.ID)
+	respondRelease(c, released, err)
+}
+
+func respondRelease(c *gin.Context, released int, err error) {
+	if err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case errors.Is(err, ErrNotContractParty):
+			status = http.StatusForbidden
+		case errors.Is(err, ErrContractDisputed), errors.Is(err, ErrContractNotCompleted), errors.Is(err, ErrNothingToRelease):
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"message": "error", "error": err.Error(), "released": released})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "success", "released": released})
+}
+
+func (h *Handler) HandleGetPayoutBalance(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	stripe.Key = h.config.Stripe.SecretKey
+
+	bal, err := h.service.GetPayoutBalance(&user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"data": gin.H{
+			"currency":  PaymentCurrency,
+			"available": bal.Available.InexactFloat64(),
+			"pending":   bal.Pending.InexactFloat64(),
+		},
+	})
+}
+
+func (h *Handler) HandleWithdraw(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	// Omit "amount" to withdraw everything available; omit "bank_account_id"
+	// to use the default bank account on Stripe.
+	var body struct {
+		Amount        *float64 `json:"amount"`
+		BankAccountID string   `json:"bank_account_id"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil && !errors.Is(err, io.EOF) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "success"})
+	stripe.Key = h.config.Stripe.SecretKey
+
+	withdrawal, err := h.service.Withdraw(&user, body.Amount, body.BankAccountID)
+	if err != nil {
+		status := http.StatusBadGateway
+		switch {
+		case errors.Is(err, ErrBankAccountNotFound):
+			status = http.StatusNotFound
+		case errors.Is(err, ErrNoStripeAccount), errors.Is(err, ErrNoBankAccount),
+			errors.Is(err, ErrBankAccountNotLinked),
+			errors.Is(err, ErrNothingToWithdraw), errors.Is(err, ErrInvalidAmount),
+			errors.Is(err, ErrInsufficientBalance):
+			status = http.StatusBadRequest
+		}
+		c.JSON(status, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": withdrawal})
+}
+
+func (h *Handler) HandleListWithdrawals(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	withdrawals, err := h.service.ListWithdrawals(user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": withdrawals})
 }
 
 func (h *Handler) HandleGetWallet(c *gin.Context) {
@@ -472,57 +573,29 @@ func (h *Handler) GetProposalPaymentDetails(c *gin.Context) {
 		return
 	}
 
-	bidAmount := lib.Float(proposal.BidAmount)
-	appFees := lib.Float(settings.AppFee)
-	commissionPct := lib.Float(settings.ClientCommission)
-
-	commissionAmount := lib.Float(0)
-	if commissionPct > 0 {
-		commissionAmount = bidAmount / 100.0 * commissionPct
-	}
-
-	discountAmount := lib.Float(0)
-	referralCode := ""
-	// var discountPct float64
-	// var userReferral models.ReferralUsage
-	// if err := h.service.db.Preload("ReferralCode").
-	// 	Where("referee_id = ? AND is_qualified = ?", user.ID, false).
-	// 	First(&userReferral).Error; err == nil {
-
-	// 	referralCode = userReferral.ReferralCode.Code
-	// 	discountPct = float64(userReferral.ReferralCode.DiscountPercentage)
-
-	// 	if discountPct > 0 {
-	// 		discountAmount = int64(float64(commissionAmount) * discountPct / 100.0)
-	// 	}
-	// 	if discountAmount > commissionAmount {
-	// 		discountAmount = commissionAmount
-	// 	}
-	// }
-
-	finalCommission := commissionAmount - discountAmount
-	grandTotal := bidAmount + finalCommission + appFees
+	fees := CalculateFees(proposal.BidAmount, settings)
+	n := func(d decimal.Decimal) float64 { return d.InexactFloat64() }
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"data": gin.H{
 			"proposal_id": proposal.ID,
-			"currency":    "usd",
-			"bid_amount":  bidAmount,
+			"currency":    PaymentCurrency,
+			"bid_amount":  n(fees.BidAmount),
 			"commission": gin.H{
-				"original_amount":  commissionAmount,
-				"percentage":       commissionPct,
-				"discount_applied": discountAmount,
-				"final_amount":     finalCommission,
-				
+				"original_amount":  n(fees.ClientCommission),
+				"percentage":       n(fees.ClientCommissionPct),
+				"discount_applied": 0,
+				"final_amount":     n(fees.ClientCommission),
 			},
-			"app_fees": appFees,
+			"app_fees": n(fees.ClientPlatformFee),
 			"referral": gin.H{
-				"code":       referralCode,
+				"code":       "",
 				"percentage": 0,
-				"saved":      discountAmount,
+				"saved":      0,
 			},
-			"grand_total": grandTotal,
+			"grand_total":     n(fees.ClientTotal),
+			"payment_summary": fees.Summary(),
 		},
 	})
 }
@@ -536,39 +609,14 @@ func (h *Handler) GetJobPaymentDetails(c *gin.Context) {
 		return
 	}
 
-	settings, _ := h.service.GetSystemSettings()
-
-	budgetAmount := lib.Float(jobPost.Budget)
-	appFees := lib.Float(settings.AppFee)
-	commissionPct := lib.Float(settings.ClientCommission)
-
-	commissionAmount := 0.00
-	if commissionPct > 0 {
-		commissionAmount = budgetAmount / 100.0 * commissionPct
+	settings, err := h.service.GetSystemSettings()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to load system settings"})
+		return
 	}
 
-	referralCode := ""
-	var discountPct float64
-
-	// discountAmount := int64(0)
-	// var userReferral models.ReferralUsage
-	// if err := h.service.db.Preload("ReferralCode").
-	// 	Where("referee_id = ? AND is_qualified = ?", user.ID, false).
-	// 	First(&userReferral).Error; err == nil {
-
-	// 	referralCode = userReferral.ReferralCode.Code
-	// 	discountPct = float64(userReferral.ReferralCode.DiscountPercentage)
-
-	// 	if discountPct > 0 {
-	// 		discountAmount = int64(float64(commissionAmount) * discountPct / 100.0)
-	// 	}
-	// 	if discountAmount > commissionAmount {
-	// 		discountAmount = commissionAmount
-	// 	}
-	// }
-
-	finalCommission := commissionAmount
-	grandTotal := budgetAmount + finalCommission + appFees
+	fees := CalculateFees(jobPost.Budget, settings)
+	n := func(d decimal.Decimal) float64 { return d.InexactFloat64() }
 
 	budgetDescription := "Fixed budget"
 	if jobPost.OpenBudget {
@@ -579,100 +627,32 @@ func (h *Handler) GetJobPaymentDetails(c *gin.Context) {
 		"message": "success",
 		"data": gin.H{
 			"job_post_id": jobPost.ID,
-			"currency":    "usd",
+			"currency":    PaymentCurrency,
 			"open_budget": jobPost.OpenBudget,
 			"budget": gin.H{
-				"amount":      budgetAmount,
+				"amount":      n(fees.BidAmount),
 				"is_open":     jobPost.OpenBudget,
 				"description": budgetDescription,
 			},
 			"commission": gin.H{
-				"original_amount": commissionAmount,
-				"percentage":      commissionPct,
-				// "discount_applied": toDollars(discountAmount),
-				"final_amount": finalCommission,
+				"original_amount": n(fees.ClientCommission),
+				"percentage":      n(fees.ClientCommissionPct),
+				"final_amount":    n(fees.ClientCommission),
 			},
-			"app_fees": appFees,
+			"app_fees": n(fees.ClientPlatformFee),
 			"referral": gin.H{
-				"code":       referralCode,
-				"percentage": discountPct,
-				// "saved":      toDollars(discountAmount),
-			},
-			"grand_total": grandTotal,
-			"summary": gin.H{
-				"budget":     budgetAmount,
-				"commission": finalCommission,
-				"app_fees":   appFees,
-				"total_fees": finalCommission + appFees,
-				// "discount_saved": toDollars(discountAmount),
-				"amount_due": grandTotal,
-			},
-		},
-	})
-}
-
-func (h *Handler) ProposalPaymentDetail(c *gin.Context) {
-	proposalID := c.Param("id")
-	var proposal models.Proposal
-
-	if err := h.service.db.Where("id = ?", proposalID).First(&proposal).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "proposal not found"})
-		return
-	}
-
-	settings, _ := h.service.GetSystemSettings()
-
-	bidAmount := lib.Float(proposal.BidAmount)
-	appFees := lib.Float(settings.AppFee)
-	commissionPct := lib.Float(settings.ClientCommission)
-
-	commissionAmount := lib.Float(0)
-	if commissionPct > 0 {
-		commissionAmount = bidAmount / 100.0 * commissionPct
-	}
-
-	discountAmount := lib.Float(0)
-	referralCode := ""
-
-	// var discountPct float64
-	// var userReferral models.ReferralUsage
-	// if err := h.service.db.Preload("ReferralCode").
-	// 	Where("referee_id = ? AND is_qualified = ?", user.ID, false).
-	// 	First(&userReferral).Error; err == nil {
-
-	// 	referralCode = userReferral.ReferralCode.Code
-	// 	discountPct = float64(userReferral.ReferralCode.DiscountPercentage)
-
-	// 	if discountPct > 0 {
-	// 		discountAmount = int64(float64(commissionAmount) * discountPct / 100.0)
-	// 	}
-	// 	if discountAmount > commissionAmount {
-	// 		discountAmount = commissionAmount
-	// 	}
-	// }
-
-	finalCommission := commissionAmount - discountAmount
-	grandTotal := bidAmount + finalCommission + appFees
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "success",
-		"data": gin.H{
-			"proposal_id": proposal.ID,
-			"currency":    "usd",
-			"bid_amount":  bidAmount,
-			"commission": gin.H{
-				"original_amount":  commissionAmount,
-				"percentage":       commissionPct,
-				"discount_applied": discountAmount,
-				"final_amount":     finalCommission,
-			},
-			"app_fees": appFees,
-			"referral": gin.H{
-				"code":       referralCode,
+				"code":       "",
 				"percentage": 0,
-				"saved":      discountAmount,
 			},
-			"grand_total": grandTotal,
+			"grand_total": n(fees.ClientTotal),
+			"summary": gin.H{
+				"budget":     n(fees.BidAmount),
+				"commission": n(fees.ClientCommission),
+				"app_fees":   n(fees.ClientPlatformFee),
+				"total_fees": n(fees.ClientCommission.Add(fees.ClientPlatformFee)),
+				"amount_due": n(fees.ClientTotal),
+			},
+			"payment_summary": fees.Summary(),
 		},
 	})
 }

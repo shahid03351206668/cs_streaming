@@ -14,12 +14,14 @@ import (
 
 	// "tasksy/config"
 	"tasksy/db"
-	// "tasksy/internal/modules/payments"
+	paymentsv3 "tasksy/internal/modules/payments-v3"
 	"tasksy/lib"
 	"tasksy/models"
+	"tasksy/pkg/logger"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -861,6 +863,7 @@ func CompleteContract(c *gin.Context) {
 		return
 	}
 
+	//
 	var openDisputeCount int64
 	if err := tx.Model(&models.Dispute{}).
 		Where("contract_id = ? AND status = ?", contractID, models.DisputeStatusOpen).
@@ -941,12 +944,30 @@ func CompleteContract(c *gin.Context) {
 		return
 	}
 
-	// After commit: notifications + escrow release
+	// Auto-release escrow once both parties have confirmed. A failed release
+	// doesn't undo completion — escrow stays held and can be retried via
+	// POST /api/v3/escrow/contracts/:id/release.
+	paymentRelease := gin.H{"status": "not_applicable"}
+	fundsReleased := false
+	if contract.ClientCompleted && contract.FreelancerCompleted {
+		released, err := paymentsv3.NewService(dbConn).ReleaseContractFunds(contract.ID)
+		switch {
+		case err == nil:
+			fundsReleased = released > 0
+			paymentRelease = gin.H{"status": "released", "released": released}
+		case errors.Is(err, paymentsv3.ErrNothingToRelease):
+			paymentRelease = gin.H{"status": "no_payment_held"}
+		default:
+			logger.Log.Error("auto-release failed on contract completion",
+				zap.String("contract_id", contract.ID), zap.Error(err))
+			paymentRelease = gin.H{"status": "failed", "error": err.Error()}
+		}
+	}
+
 	go func(ctr models.Contract, actorID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		// Fetch job title for notification messages
 		var jobPost models.JobPost
 		jobTitle := "your job"
 		if err := dbConn.Select("title").First(&jobPost, "id = ?", ctr.JobPostID).Error; err == nil {
@@ -984,25 +1005,13 @@ func CompleteContract(c *gin.Context) {
 					"job_title":   jobTitle,
 					"client_name": client.FirstName + " " + client.LastName,
 				})
-				_ = emailService.SendTemplatedEmail("payment_released", freelancer.Email, map[string]string{
-					"first_name": freelancer.FirstName,
-					"job_title":  jobTitle,
-				})
+				if fundsReleased {
+					_ = emailService.SendTemplatedEmail("payment_released", freelancer.Email, map[string]string{
+						"first_name": freelancer.FirstName,
+						"job_title":  jobTitle,
+					})
+				}
 			}
-		}
-
-		// Release funds to freelancer wallet when both parties have confirmed
-		if ctr.ClientCompleted && ctr.FreelancerCompleted {
-			// stripeCfg := &config.StripeConfig{
-			// 	SecretKey:     os.Getenv("STRIPE_SECRET_KEY"),
-			// 	WebhookSecret: os.Getenv("STRIPE_WEBHOOK_SIGNING_SECRET"),
-			// 	APIKey:        os.Getenv("STRIPE_API_KEY"),
-			// }
-			// ledgerSvc := payments.NewLedgerService(dbConn)
-			// paymentService := payments.NewService(stripeCfg, dbConn, ledgerSvc)
-			// if err := paymentService.ReleaseContractFunds(ctr.ID); err != nil {
-			// 	fmt.Printf("failed to release funds for contract %s: %v\n", ctr.ID, err)
-			// }
 		}
 	}(contract, user.ID)
 
@@ -1016,6 +1025,7 @@ func CompleteContract(c *gin.Context) {
 			"completed_at":         contract.CompletedAt,
 			"escrow_status":        contract.EscrowStatus,
 		},
+		"payment_release": paymentRelease,
 	})
 }
 

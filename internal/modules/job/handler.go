@@ -3,6 +3,7 @@ package job
 import (
 	// "encoding/json"
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -206,9 +207,11 @@ func (h *Handler) CreateJobPost(c *gin.Context) {
 		return
 	}
 
-	form, _ := c.MultipartForm()
-	logger.Log.Info("job creation multipart form received", zap.Int("file_count", len(form.File["media"])))
-	files := form.File["media"]
+	var files []*multipart.FileHeader
+	if form, err := c.MultipartForm(); err == nil && form != nil {
+		files = form.File["media"]
+	}
+	logger.Log.Info("job creation multipart form received", zap.Int("file_count", len(files)))
 
 	var category models.Category
 	if err := h.service.db.First(&category, "id = ?", data.CategoryID).Error; err != nil {

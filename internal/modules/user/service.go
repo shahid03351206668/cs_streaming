@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"strings"
 	"tasksy/config"
+	paymentsv3 "tasksy/internal/modules/payments-v3"
 	"tasksy/models"
 	aws_services "tasksy/pkg"
 	"tasksy/pkg/logger"
@@ -249,6 +250,7 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader, clientIP
 				Date: stripe.Int64(now),
 				IP:   stripe.String(ip),
 			},
+			Settings: paymentsv3.ManualPayoutSettings(),
 			Capabilities: &stripe.AccountCapabilitiesParams{
 				CardPayments: &stripe.AccountCapabilitiesCardPaymentsParams{
 					Requested: stripe.Bool(true),
@@ -492,6 +494,7 @@ func (s *Service) SyncUserToStripe(user *models.User) error {
 			Date: stripe.Int64(now),
 			IP:   stripe.String("127.0.0.1"),
 		},
+		Settings: paymentsv3.ManualPayoutSettings(),
 		Capabilities: &stripe.AccountCapabilitiesParams{
 			CardPayments: &stripe.AccountCapabilitiesCardPaymentsParams{
 				Requested: stripe.Bool(true),
@@ -625,12 +628,32 @@ func (s *Service) AddBankAccount(user *models.User, accountHolderName, sortCode,
 		return fmt.Errorf("failed to tokenize bank account: %w", err)
 	}
 
-	_, err = bankaccount.New(&stripe.BankAccountParams{
+	ba, err := bankaccount.New(&stripe.BankAccountParams{
 		Account: stripe.String(user.StripeConnectAccountID),
 		Token:   stripe.String(tok.ID),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to attach bank account: %w", err)
+	}
+
+	// Save a local row so the bank shows in the user's list and can be chosen
+	// as a withdrawal destination.
+	var count int64
+	s.db.Model(&models.UserBankAccount{}).Where("user_id = ?", user.ID).Count(&count)
+	record := models.UserBankAccount{
+		UserID:                 user.ID,
+		StripeConnectAccountID: user.StripeConnectAccountID,
+		StripeBankAccountID:    ba.ID,
+		AccountHolderName:      accountHolderName,
+		AccountNumber:          accountNumber,
+		SortCode:               sortCode,
+		AccountNumberLast4:     ba.Last4,
+		BankName:               ba.BankName,
+		Currency:               string(ba.Currency),
+		IsDefault:              count == 0,
+	}
+	if err := s.db.Create(&record).Error; err != nil {
+		return fmt.Errorf("failed to save bank account: %w", err)
 	}
 
 	return s.db.Model(&models.User{}).Where("id = ?", user.ID).Update("stripe_connect_onboarded", true).Error

@@ -31,14 +31,15 @@ type User struct {
 	EmailVerified          bool       `gorm:"default:false;column:email_verified" json:"email_verified"`
 	ProfilePhoto           string     `gorm:"size:255;column:profile_photo" json:"profile_photo"`
 	IdentityVerfied        bool       `gorm:"default:false;column:identity_verified" json:"identity_verified"`
-	GoogleID               string
-	Roles                  []Role  `gorm:"many2many:user_roles;" json:"roles"`
-	ReferralRewardBalance  int64   `gorm:"default:0" json:"referral_reward_balance"`
-	WalletBalance          int64   `gorm:"default:0" json:"wallet_balance"`
-	StripeConnectAccountID string  `gorm:"type:varchar(100)" json:"stripe_connect_account_id"`
-	StripeConnectOnboarded bool    `gorm:"default:false" json:"stripe_connect_onboarded"`
-	Rating                 float64 `gorm:"default:0" json:"rating"`
-	ReviewsCount           int     `gorm:"default:0" json:"reviews_count"`
+	GoogleID               string     `json:"-"`
+	Roles                  []Role     `gorm:"many2many:user_roles;" json:"roles"`
+	ReferralRewardBalance  int64      `gorm:"default:0" json:"referral_reward_balance"`
+	WalletBalance          int64      `gorm:"default:0" json:"wallet_balance"`
+	StripeConnectAccountID string     `gorm:"type:varchar(100)" json:"stripe_connect_account_id"`
+	StripeConnectOnboarded bool       `gorm:"default:false" json:"stripe_connect_onboarded"`
+	StripeCustomerID       string     `gorm:"type:varchar(100)" json:"-"`
+	Rating                 float64    `gorm:"default:0" json:"rating"`
+	ReviewsCount           int        `gorm:"default:0" json:"reviews_count"`
 }
 
 func (u *User) Can(slug string, db *gorm.DB) bool {

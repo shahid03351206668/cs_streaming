@@ -200,3 +200,6 @@
   "meta": { "page": 1, "limit": 20, "total": 100 }
 }
 ```
+
+
+new endpoint /api/v3/escrow/contracts/:id/release

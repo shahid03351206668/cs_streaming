@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"tasksy/models"
@@ -13,9 +14,9 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/bankaccount"
+	"github.com/stripe/stripe-go/v84/customer"
 	"github.com/stripe/stripe-go/v84/paymentintent"
 	"github.com/stripe/stripe-go/v84/token"
-	"github.com/stripe/stripe-go/v84/transfer"
 	"gorm.io/gorm"
 )
 
@@ -61,46 +62,77 @@ func (s *Service) GetSystemSettings() (*SystemSetting, error) {
 	}, nil
 }
 
-func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposalID string, amount float64) (*stripe.PaymentIntent, error) {
+var ErrBidBelowFees = errors.New("bid amount is too low to cover the freelancer commission and platform fee")
+
+// CreatePaymentIntent charges the client the server-computed total for the
+// proposal's bid; the amount is never taken from the request.
+func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposal *models.Proposal) (*stripe.PaymentIntent, *FeeBreakdown, error) {
 	if freelancer.StripeConnectAccountID == "" {
-		return nil, errors.New("freelancer does not have a stripe account")
+		return nil, nil, errors.New("freelancer does not have a stripe account")
 	}
 
 	settings, err := s.GetSystemSettings()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load system settings: %w", err)
+		return nil, nil, fmt.Errorf("failed to load system settings: %w", err)
 	}
 
-	clientFeeAmt := 0.0
-	if settings.ClientCommission > 0 {
-		clientFeeAmt = amount * (settings.ClientCommission / 100)
+	fees := CalculateFees(proposal.BidAmount, settings)
+	if !fees.FreelancerNet.IsPositive() {
+		return nil, nil, ErrBidBelowFees
 	}
 
-	freelancerFeeAmt := 0.0
-	if settings.FreelancerCommission > 0 {
-		freelancerFeeAmt = amount * (settings.FreelancerCommission / 100)
+	customerID, err := s.ensureStripeCustomer(client)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to set up stripe customer: %w", err)
 	}
 
-	totalPlatformFee := clientFeeAmt + freelancerFeeAmt
-	freelancerNet := amount - clientFeeAmt - freelancerFeeAmt
+	metadata := fees.Metadata()
+	metadata["proposal_id"] = proposal.ID
+	metadata["from_user_id"] = client.ID
+	metadata["to_user_id"] = freelancer.ID
+	metadata["freelancer_connect_id"] = freelancer.StripeConnectAccountID
 
 	params := &stripe.PaymentIntentParams{
-		Amount:   stripe.Int64(int64(amount * 100)),
+		Amount:   stripe.Int64(ToPence(fees.ClientTotal)),
 		Currency: stripe.String(string(stripe.CurrencyGBP)),
-		Metadata: map[string]string{
-			"proposal_id":           proposalID,
-			"from_user_id":          client.ID,
-			"to_user_id":            freelancer.ID,
-			"freelancer_connect_id": freelancer.StripeConnectAccountID,
-			"client_fee_amount":     fmt.Sprintf("%d", int64(clientFeeAmt*100)),
-			"freelancer_fee_amount": fmt.Sprintf("%d", int64(freelancerFeeAmt*100)),
-			"platform_fee_amount":   fmt.Sprintf("%d", int64(totalPlatformFee*100)),
-			"freelancer_net_amount": fmt.Sprintf("%d", int64(freelancerNet*100)),
-		},
+		Customer: stripe.String(customerID),
+		Metadata: metadata,
 	}
 
-	params.IdempotencyKey = stripe.String("v3-intent-" + proposalID + uuid.NewString() + time.Now().String())
-	return paymentintent.New(params)
+	params.IdempotencyKey = stripe.String("v3-intent-" + proposal.ID + uuid.NewString() + time.Now().String())
+	intent, err := paymentintent.New(params)
+	if err != nil {
+		return nil, nil, err
+	}
+	return intent, &fees, nil
+}
+
+// ensureStripeCustomer returns the client's Stripe Customer ID, creating one
+// on first use so charges show up linked to a customer in the Dashboard
+// (and so saved payment methods are possible later).
+func (s *Service) ensureStripeCustomer(client *models.User) (string, error) {
+	if client.StripeCustomerID != "" {
+		return client.StripeCustomerID, nil
+	}
+
+	cust, err := customer.New(&stripe.CustomerParams{
+		Email: stripe.String(client.Email),
+		Name:  stripe.String(strings.TrimSpace(client.FirstName + " " + client.LastName)),
+		Metadata: map[string]string{
+			"user_id": client.ID,
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	if err := s.db.Model(&models.User{}).Where("id = ?", client.ID).
+		Update("stripe_customer_id", cust.ID).Error; err != nil {
+		return "", fmt.Errorf("failed to save stripe customer id: %w", err)
+	}
+
+	client.StripeCustomerID = cust.ID
+	return cust.ID, nil
 }
 
 func (s *Service) tokenizeBankAccount(accountHolderName, sortCode, accountNumber string) (*stripe.Token, error) {
@@ -266,61 +298,6 @@ func (s *Service) GetBankAccounts(user *models.User) ([]models.UserBankAccount, 
 	return accounts, err
 }
 
-func (s *Service) ReleaseEscrow(escrowID string, requestingUserID string) error {
-	var escrow models.EscrowTransactionV3
-	if err := s.db.First(&escrow, "id = ?", escrowID).Error; err != nil {
-		return fmt.Errorf("escrow not found: %w", err)
-	}
-
-	if escrow.Status != "held" {
-		return errors.New("escrow is not in held state")
-	}
-
-	var contract models.Contract
-	if err := s.db.First(&contract, "id = ?", escrow.ContractID).Error; err != nil {
-		return fmt.Errorf("contract not found: %w", err)
-	}
-
-	if requestingUserID != contract.ClientID {
-		return errors.New("only the client can release this escrow")
-	}
-
-	var freelancer models.User
-	if err := s.db.First(&freelancer, "id = ?", escrow.UserID).Error; err != nil {
-		return fmt.Errorf("freelancer not found: %w", err)
-	}
-
-	amountCents, _ := escrow.Amount.Mul(decimal.NewFromInt(100)).Float64()
-
-	tx := s.db.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
-	tr, err := transfer.New(&stripe.TransferParams{
-		Amount:      stripe.Int64(int64(amountCents)),
-		Currency:    stripe.String(escrow.Currency),
-		Destination: stripe.String(freelancer.StripeConnectAccountID),
-	})
-	if err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to create stripe transfer: %w", err)
-	}
-
-	if err := tx.Model(&escrow).Updates(map[string]any{
-		"status":             "released",
-		"stripe_transfer_id": tr.ID,
-		"released_at":        time.Now(),
-	}).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("failed to update escrow: %w", err)
-	}
-
-	return tx.Commit().Error
-}
-
 func (s *Service) GetUserWallet(user *models.User) (*UserWalletVal, error) {
 	transactions := make([]TypeWalletTransaction, 0)
 
@@ -389,6 +366,25 @@ func (s *Service) GetUserWallet(user *models.User) (*UserWalletVal, error) {
 		})
 	}
 
+	// Withdrawals leave the wallet unless Stripe failed/canceled them.
+	var withdrawals []models.WithdrawalV3
+	if err := s.db.Where("user_id = ? AND status NOT IN ?", user.ID,
+		[]string{string(stripe.PayoutStatusFailed), string(stripe.PayoutStatusCanceled)}).
+		Find(&withdrawals).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch withdrawals: %w", err)
+	}
+	for _, w := range withdrawals {
+		amt, _ := w.Amount.Float64()
+		balance -= amt
+		transactions = append(transactions, TypeWalletTransaction{
+			Amount:      amt,
+			Type:        "debit",
+			Description: "Withdrawal to bank",
+			Date:        w.CreatedAt,
+			ID:          w.ID,
+		})
+	}
+
 	sort.Slice(transactions, func(i, j int) bool {
 		return transactions[i].Date.After(transactions[j].Date)
 	})
@@ -429,23 +425,27 @@ func (s *Service) handleChargeSucceededV3(event *stripe.Event) error {
 		return err
 	}
 
-	settings, err := s.GetSystemSettings()
-	if err != nil {
-		return fmt.Errorf("failed to load system settings: %w", err)
+	// Use the split captured on the PaymentIntent (what the client was shown and
+	// charged). Intents created before fee_version 2 fall back to recomputing
+	// from the proposal bid with current settings.
+	fees, ok := FeesFromMetadata(charge.Metadata)
+	if !ok {
+		var proposal models.Proposal
+		if err := s.db.First(&proposal, "id = ?", proposalID).Error; err != nil {
+			return fmt.Errorf("proposal not found: %w", err)
+		}
+		settings, err := s.GetSystemSettings()
+		if err != nil {
+			return fmt.Errorf("failed to load system settings: %w", err)
+		}
+		fees = CalculateFees(proposal.BidAmount, settings)
 	}
 
-	grossAmount := decimal.NewFromInt(charge.Amount).Div(decimal.NewFromInt(100))
-
-	clientFee := decimal.Zero
-	if settings.ClientCommission > 0 {
-		clientFee = grossAmount.Mul(decimal.NewFromFloat(settings.ClientCommission)).Div(decimal.NewFromInt(100))
-	}
-	freelancerFee := decimal.Zero
-	if settings.FreelancerCommission > 0 {
-		freelancerFee = grossAmount.Mul(decimal.NewFromFloat(settings.FreelancerCommission)).Div(decimal.NewFromInt(100))
-	}
-	platformFee := clientFee.Add(freelancerFee)
-	netAmount := grossAmount.Sub(clientFee).Sub(freelancerFee)
+	grossAmount := fromPence(charge.Amount)
+	clientFee := fees.ClientCommission.Add(fees.ClientPlatformFee)
+	freelancerFee := fees.FreelancerCommission.Add(fees.FreelancerPlatformFee)
+	netAmount := fees.FreelancerNet
+	platformFee := grossAmount.Sub(netAmount)
 
 	tx := s.db.Begin()
 	defer func() {
@@ -505,20 +505,22 @@ func (s *Service) handleTransferPaidV3(event *stripe.Event) error {
 		return err
 	}
 
+	// Match by transfer ID, or by escrow_id metadata when the release call
+	// created the transfer but failed to record it.
 	var escrow models.EscrowTransactionV3
-	if err := s.db.Where("stripe_transfer_id = ?", tr.ID).First(&escrow).Error; err != nil {
+	err := s.db.Where("stripe_transfer_id = ?", tr.ID).First(&escrow).Error
+	if err != nil && tr.Metadata["escrow_id"] != "" {
+		err = s.db.Where("id = ?", tr.Metadata["escrow_id"]).First(&escrow).Error
+	}
+	if err != nil {
 		return nil
 	}
 
-	if escrow.Status == "released" || escrow.Status == "refunded" {
+	if escrow.Status == escrowReleased || escrow.Status == "refunded" {
 		return nil
 	}
 
-	now := time.Now()
-	return s.db.Model(&escrow).Updates(map[string]any{
-		"status":      "released",
-		"released_at": &now,
-	}).Error
+	return s.markReleased(escrow.ID, escrow.PaymentTransactionID, tr.ID)
 }
 
 func (s *Service) handleAccountUpdatedV3(event *stripe.Event) error {

@@ -146,6 +146,9 @@ func (s *Service) HardDeleteAccount(userID string) error {
 				return tx.Unscoped().Where("user_id = ?", userID).Delete(&models.UserBankAccount{}).Error
 			},
 			func() error {
+				return tx.Unscoped().Where("user_id = ?", userID).Delete(&models.WithdrawalV3{}).Error
+			},
+			func() error {
 				return tx.Unscoped().Where("user_id = ?", userID).Delete(&models.UserAddress{}).Error
 			},
 			func() error {

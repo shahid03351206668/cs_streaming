@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"tasksy/db"
+	paymentsv3 "tasksy/internal/modules/payments-v3"
 	"tasksy/models"
 	"time"
 
@@ -470,29 +471,27 @@ func GetProposal(c *gin.Context) {
 		return
 	}
 
-	var settings models.SystemSettings
-	db.DB.First(&settings)
-
-	bidAmount := proposal.BidAmount
-	commissionPct := settings.ClientCommissionPercentage
-	commissionAmount := 0.0
-	if commissionPct > 0 {
-		commissionAmount = bidAmount * commissionPct / 100.0
+	settings, err := paymentsv3.NewService(db.DB).GetSystemSettings()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "error",
+			"error":   "failed to load system settings",
+		})
+		return
 	}
-	appFees := settings.ApplicationFeeAmount
-	grandTotal := bidAmount + commissionAmount + appFees
+
+	fees := paymentsv3.CalculateFees(proposal.BidAmount, settings)
+	summary := fees.Summary()
+	// Legacy flat keys kept so existing clients keep working.
+	summary["commission_pct"] = fees.ClientCommissionPct.InexactFloat64()
+	summary["commission_amount"] = fees.ClientCommission.InexactFloat64()
+	summary["app_fees"] = fees.ClientPlatformFee.InexactFloat64()
+	summary["grand_total"] = fees.ClientTotal.InexactFloat64()
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "success",
-		"data":    proposal,
-		"payment_summary": gin.H{
-			"currency":          "gbp",
-			"bid_amount":        bidAmount,
-			"commission_pct":    commissionPct,
-			"commission_amount": commissionAmount,
-			"app_fees":          appFees,
-			"grand_total":       grandTotal,
-		},
+		"message":         "success",
+		"data":            proposal,
+		"payment_summary": summary,
 	})
 }
 

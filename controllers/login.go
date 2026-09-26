@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"tasksy/db"
+	paymentsv3 "tasksy/internal/modules/payments-v3"
 	"tasksy/lib"
 	"tasksy/models"
 	"tasksy/pkg/logger"
@@ -22,9 +23,16 @@ import (
 )
 
 func stripeIndividualParams(user models.User, addr *models.UserAddress) *stripe.PersonParams {
+	nameParts := strings.Fields(user.FirstName)
+	lastName := user.LastName
+
+	if lastName == "" && len(nameParts) > 1 {
+		lastName = nameParts[len(nameParts)-1]
+	}
+
 	params := &stripe.PersonParams{
 		FirstName: stripe.String(user.FirstName),
-		LastName:  stripe.String(user.LastName),
+		LastName:  stripe.String(lastName),
 		Email:     stripe.String(user.Email),
 	}
 	if user.PhoneNumber != "" {
@@ -119,6 +127,7 @@ func provisionStripeAccount(user models.User, clientIP string) {
 				Date: stripe.Int64(now),
 				IP:   stripe.String(ip),
 			},
+			Settings: paymentsv3.ManualPayoutSettings(),
 			Capabilities: &stripe.AccountCapabilitiesParams{
 				CardPayments: &stripe.AccountCapabilitiesCardPaymentsParams{
 					Requested: stripe.Bool(true),
@@ -128,7 +137,8 @@ func provisionStripeAccount(user models.User, clientIP string) {
 				},
 			},
 		}
-		if shouldAttachExternalAccount(user, bank) {
+		attachBank := shouldAttachExternalAccount(user, bank)
+		if attachBank {
 			params.ExternalAccount = stripeExternalAccountParams(bank)
 		}
 
@@ -136,8 +146,13 @@ func provisionStripeAccount(user models.User, clientIP string) {
 			updateParams := *params
 			updateParams.Type = nil
 			updateParams.Country = nil
-			if _, err := account.Update(user.StripeConnectAccountID, &updateParams); err != nil {
+			acc, err := account.Update(user.StripeConnectAccountID, &updateParams)
+			if err != nil {
 				logger.Log.Error("stripe connect account sync failed at login", zap.String("user_id", user.ID), zap.Error(err))
+				return
+			}
+			if attachBank {
+				linkBankToStripe(bank, acc)
 			}
 			return
 		}
@@ -150,7 +165,32 @@ func provisionStripeAccount(user models.User, clientIP string) {
 		if err := db.DB.Model(&models.User{}).Where("id = ?", user.ID).Update("stripe_connect_account_id", acc.ID).Error; err != nil {
 			logger.Log.Error("failed to save stripe connect account id at login", zap.String("user_id", user.ID), zap.Error(err))
 		}
+		if attachBank {
+			linkBankToStripe(bank, acc)
+		}
 	}()
+}
+
+// linkBankToStripe records the Stripe external-account ID created from a local
+// bank row, so that row can later be chosen as a withdrawal destination.
+func linkBankToStripe(bank *models.UserBankAccount, acc *stripe.Account) {
+	if bank == nil || acc == nil || acc.ExternalAccounts == nil || len(bank.AccountNumber) < 4 {
+		return
+	}
+	last4 := bank.AccountNumber[len(bank.AccountNumber)-4:]
+	for _, ext := range acc.ExternalAccounts.Data {
+		if ext == nil || ext.BankAccount == nil || ext.BankAccount.Last4 != last4 {
+			continue
+		}
+		if err := db.DB.Model(&models.UserBankAccount{}).Where("id = ?", bank.ID).Updates(map[string]any{
+			"stripe_bank_account_id":    ext.BankAccount.ID,
+			"stripe_connect_account_id": acc.ID,
+			"account_number_last4":      last4,
+		}).Error; err != nil {
+			logger.Log.Error("failed to link bank account to stripe", zap.String("bank_account_id", bank.ID), zap.Error(err))
+		}
+		return
+	}
 }
 
 func LoginControllerV1(c *gin.Context) {

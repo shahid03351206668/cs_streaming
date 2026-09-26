@@ -68,6 +68,20 @@ func (h *Handler) HandleStripeUserAccount(c *gin.Context) {
 	})
 }
 
+// GetStripeConnectStatus reports whether the caller's Stripe Connect account
+// exists and is ready to send/receive payments, or what's still missing.
+func (h *Handler) GetStripeConnectStatus(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	status, err := h.service.GetStripeConnectStatus(&user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": status})
+}
+
 func (h *Handler) UpdateUserFeedPreferences(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 

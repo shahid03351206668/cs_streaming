@@ -20,10 +20,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
+	"github.com/stripe/stripe-go/v84"
 	"gorm.io/gorm"
 )
 
-func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient, redisClient *redis.Client) *gin.Engine { //nolint:funlen
+func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient, redisClient *redis.Client) *gin.Engine {
+	// nolint:funlen
 	router := gin.Default()
 
 	router.Static("/media", "./media")
@@ -87,17 +89,13 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	jobPostService := job.NewService(db, s3Client, queueClient, notifService)
 	jobPostHandler := job.NewHandler(jobPostService)
 
-	// ledgerService := payments.NewLedgerService(db)
-	// ledgerService.EnsureSystemAccounts()
-	// ledgerHandler := payments.NewLedgerHandler(ledgerService, db)
-
-	// payoutService := payments.NewPayoutService(db, &appConfig.Stripe, ledgerService)
-
 	promotionService := promotions.NewService(db)
 	promotionHandler := promotions.NewHandler(promotionService)
 
 	disputeService := dispute.NewService(db, notifService, s3Client)
 	disputeHandler := dispute.NewHandler(disputeService)
+
+	stripe.Key = appConfig.Stripe.SecretKey
 
 	paymentV3Service := paymentsv3.NewService(db)
 	paymentV3Handler := paymentsv3.NewHandler(appConfig, paymentV3Service)
@@ -116,6 +114,15 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	v3Escrow.Use(middleware.AuthMiddleware())
 	{
 		v3Escrow.POST("/:id/release", paymentV3Handler.HandleReleaseEscrow)
+		v3Escrow.POST("/contracts/:id/release", paymentV3Handler.HandleReleaseContract)
+	}
+
+	v3AdminPayouts := router.Group("/api/v3/admin/payouts")
+	v3AdminPayouts.Use(middleware.AuthMiddleware(), middleware.RequireRole("admin"))
+	{
+		v3AdminPayouts.GET("/escrows", paymentV3Handler.HandleAdminListEscrows)
+		v3AdminPayouts.POST("/escrows/:id/release", paymentV3Handler.HandleAdminReleaseEscrow)
+		v3AdminPayouts.GET("/withdrawals", paymentV3Handler.HandleAdminListWithdrawals)
 	}
 
 	router.GET("/api/v3/admin/payments/transactions", paymentV3Handler.HandleAdminListTransactions)
@@ -126,6 +133,9 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	v3Wallet.Use(middleware.AuthMiddleware())
 	{
 		v3Wallet.GET("", paymentV3Handler.HandleGetWallet)
+		v3Wallet.GET("/payout-balance", paymentV3Handler.HandleGetPayoutBalance)
+		v3Wallet.POST("/withdraw", paymentV3Handler.HandleWithdraw)
+		v3Wallet.GET("/withdrawals", paymentV3Handler.HandleListWithdrawals)
 	}
 
 	v3Bank := router.Group("/api/v3/bank-account")
@@ -147,17 +157,15 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	// walletRoutes.Use(middleware.AuthMiddleware())
 	// {
 	// 	walletRoutes.GET("/balance", payoutService.GetWalletBalance)
-	// 	// walletRoutes.POST("/withdraw", payoutService.RequestPayout)
-	// 	// walletRoutes.GET("/withdrawals", payoutService.GetPayoutHistory)
+	// 	walletRoutes.POST("/withdraw", payoutService.RequestPayout)
+	// 	walletRoutes.GET("/withdrawals", payoutService.GetPayoutHistory)
 	// 	walletRoutes.GET("/bank-accounts", payoutService.ListBankAccounts)
 	// 	walletRoutes.POST("/bank-accounts", payoutService.AddBankAccount)
-	// 	// walletRoutes.PUT("/bank-accounts/:id/default", payoutService.SetDefaultBankAccount)
-	// 	// walletRoutes.DELETE("/bank-accounts/:id", payoutService.DeleteBankAccount)
+	// 	walletRoutes.PUT("/bank-accounts/:id/default", payoutService.SetDefaultBankAccount)
+	// 	walletRoutes.DELETE("/bank-accounts/:id", payoutService.DeleteBankAccount)
 	// }
 
 	referralHandler := referrals.NewHandler(referrals.NewService(db))
-
-	// Referral routes (public)
 	referralRoutes := router.Group("/api/v1/referrals")
 	{
 		referralRoutes.GET("/validate/:code", referralHandler.ValidateReferralCode)
@@ -322,6 +330,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	{
 		protected.GET("/api/jobs/:id/payment-details", paymentV3Handler.GetJobPaymentDetails)
 		protected.GET("/api/user/profile", userHandler.GetAuthProfile)
+		protected.GET("/api/user/stripe-connect-status", userHandler.GetStripeConnectStatus)
 		protected.POST("/api/user/device-token", userHandler.SaveDeviceToken)
 		protected.DELETE("/api/user/device-token", userHandler.DeleteDeviceToken)
 		protected.POST("/api/user/verify-credentials", userHandler.VerifyUserCredential)
