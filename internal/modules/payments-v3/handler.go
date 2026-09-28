@@ -523,7 +523,7 @@ func (h *Handler) HandleAdminPaymentStats(c *gin.Context) {
 	var query *gorm.DB = h.service.db.Model(&models.PaymentTransactionV3{})
 	query.
 		Select("TO_CHAR(created_at, 'YYYY-MM-DD') as date, COALESCE(SUM(gross_amount::numeric), 0) as gross_volume, COALESCE(SUM(platform_fee::numeric), 0) as platform_fee, COUNT(*) as count").
-		Where("created_at >= ?", since).
+		Where("created_at >= ? AND status != ?", since, escrowRefunded).
 		Group("TO_CHAR(created_at, 'YYYY-MM-DD')").
 		Order("date ASC").
 		Scan(&daily)
@@ -541,13 +541,13 @@ func (h *Handler) HandleAdminPaymentStats(c *gin.Context) {
 
 	var totalVolume, totalFees, totalNet float64
 	h.service.db.Model(&models.PaymentTransactionV3{}).
-		Where("created_at >= ?", since).
+		Where("created_at >= ? AND status != ?", since, escrowRefunded).
 		Select("COALESCE(SUM(gross_amount::numeric), 0)").Scan(&totalVolume)
 	h.service.db.Model(&models.PaymentTransactionV3{}).
-		Where("created_at >= ?", since).
+		Where("created_at >= ? AND status != ?", since, escrowRefunded).
 		Select("COALESCE(SUM(platform_fee::numeric), 0)").Scan(&totalFees)
 	h.service.db.Model(&models.PaymentTransactionV3{}).
-		Where("created_at >= ?", since).
+		Where("created_at >= ? AND status != ?", since, escrowRefunded).
 		Select("COALESCE(SUM(net_amount::numeric), 0)").Scan(&totalNet)
 
 	c.JSON(http.StatusOK, gin.H{

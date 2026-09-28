@@ -303,7 +303,7 @@ func (s *Service) GetUserWallet(user *models.User) (*UserWalletVal, error) {
 
 	totalPending := decimal.Zero
 	if err := s.db.Model(&models.EscrowTransactionV3{}).
-		Where("user_id = ? AND status = ?", user.ID, "held").
+		Where("user_id = ? AND status = ?", user.ID, escrowHeld).
 		Select("COALESCE(SUM(amount::numeric), 0)").
 		Scan(&totalPending).Error; err != nil {
 		return nil, fmt.Errorf("failed to sum held escrows: %w", err)
@@ -311,7 +311,7 @@ func (s *Service) GetUserWallet(user *models.User) (*UserWalletVal, error) {
 
 	balance := 0.0
 	if err := s.db.Model(&models.EscrowTransactionV3{}).
-		Where("user_id = ? AND status = ?", user.ID, "released").
+		Where("user_id = ? AND status = ?", user.ID, escrowReleased).
 		Select("COALESCE(SUM(amount::numeric), 0)").
 		Scan(&balance).Error; err != nil {
 		return nil, fmt.Errorf("failed to sum released escrows: %w", err)
@@ -328,14 +328,23 @@ func (s *Service) GetUserWallet(user *models.User) (*UserWalletVal, error) {
 		net, _ := p.NetAmount.Float64()
 
 		if p.FromUserID == user.ID {
+			desc := "Contract payment sent"
+			if p.Status == escrowRefunded {
+				desc = "Contract payment sent (refunded)"
+			}
 			transactions = append(transactions, TypeWalletTransaction{
 				Amount:      gross,
 				Type:        "debit",
-				Description: "Contract payment sent",
+				Description: desc,
 				Date:        p.CreatedAt,
 				ID:          p.ID,
 			})
-		} else if p.ToUserID == user.ID {
+		} else if p.ToUserID == user.ID && p.Status == escrowHeld {
+			// Only shown while still held. Once released, the releasedEscrows
+			// loop below adds the definitive credit entry for the same money —
+			// including both would double-count it in the transaction list.
+			// If instead refunded, the freelancer never received it, so nothing
+			// is shown at all.
 			transactions = append(transactions, TypeWalletTransaction{
 				Amount:      net,
 				Type:        "credit",
@@ -347,7 +356,7 @@ func (s *Service) GetUserWallet(user *models.User) (*UserWalletVal, error) {
 	}
 
 	var releasedEscrows []models.EscrowTransactionV3
-	if err := s.db.Where("user_id = ? AND status = ?", user.ID, "released").
+	if err := s.db.Where("user_id = ? AND status = ?", user.ID, escrowReleased).
 		Find(&releasedEscrows).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch escrow transactions: %w", err)
 	}

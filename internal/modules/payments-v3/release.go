@@ -16,6 +16,7 @@ const (
 	escrowHeld      = "held"
 	escrowReleasing = "releasing"
 	escrowReleased  = "released"
+	escrowRefunded  = "refunded"
 )
 
 var (
