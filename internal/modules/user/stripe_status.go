@@ -1,6 +1,8 @@
 package user
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 
 	"tasksy/models"
@@ -113,4 +115,95 @@ func (s *Service) GetStripeConnectStatus(user *models.User) (*StripeConnectStatu
 		result.Message = "Your payment account is being verified. This can take a few minutes; please check back shortly."
 	}
 	return result, nil
+}
+
+// ConnectRequirementsInput carries whichever of the missing Stripe Connect
+// fields the client is submitting. Empty fields are left untouched rather
+// than overwriting good data with blanks.
+type ConnectRequirementsInput struct {
+	FirstName   string
+	LastName    string
+	PhoneNumber string
+	Address     *models.UserAddress
+}
+
+// SubmitConnectRequirements pushes the given fields to Stripe synchronously
+// (unlike the fire-and-forget syncs triggered by ordinary profile/address
+// edits) and returns the refreshed status in the same round trip, so a
+// client can submit exactly what GetStripeConnectStatus said was missing and
+// immediately see whether it resolved things.
+func (s *Service) SubmitConnectRequirements(user *models.User, in ConnectRequirementsInput) (*StripeConnectStatus, error) {
+	if user.StripeConnectAccountID == "" {
+		return &StripeConnectStatus{
+			Connected: false,
+			Status:    "not_connected",
+			Message:   "Your payment account hasn't been set up yet. Please log out and log back in to set it up, then try again.",
+		}, nil
+	}
+
+	if in.PhoneNumber != "" && in.PhoneNumber != user.PhoneNumber {
+		var existing models.User
+		if s.db.Where("phone_number = ? AND id != ?", in.PhoneNumber, user.ID).First(&existing).Error == nil {
+			return nil, ErrPhoneAlreadyTaken
+		}
+	}
+
+	person := &stripe.PersonParams{}
+	hasPerson := false
+	if in.FirstName != "" {
+		person.FirstName = stripe.String(in.FirstName)
+		hasPerson = true
+	}
+	if in.LastName != "" {
+		person.LastName = stripe.String(in.LastName)
+		hasPerson = true
+	}
+	if in.PhoneNumber != "" {
+		person.Phone = stripe.String(in.PhoneNumber)
+		hasPerson = true
+	}
+	if in.Address != nil && in.Address.Line1 != "" {
+		person.Address = &stripe.AddressParams{
+			Line1:      stripe.String(in.Address.Line1),
+			Line2:      stripe.String(in.Address.Line2),
+			City:       stripe.String(in.Address.City),
+			State:      stripe.String(in.Address.State),
+			PostalCode: stripe.String(in.Address.PostalCode),
+			Country:    stripe.String(in.Address.Country),
+		}
+		hasPerson = true
+	}
+	if !hasPerson {
+		return nil, errors.New("no details provided")
+	}
+
+	stripe.Key = s.appConfig.Stripe.SecretKey
+	if _, err := account.Update(user.StripeConnectAccountID, &stripe.AccountParams{Individual: person}); err != nil {
+		return nil, fmt.Errorf("stripe rejected these details: %w", err)
+	}
+
+	// Persist locally so a later profile/address edit doesn't clobber this
+	// with stale blanks via the fire-and-forget sync.
+	updates := map[string]any{}
+	if in.FirstName != "" {
+		updates["first_name"] = in.FirstName
+	}
+	if in.LastName != "" {
+		updates["last_name"] = in.LastName
+	}
+	if in.PhoneNumber != "" {
+		updates["phone_number"] = in.PhoneNumber
+	}
+	if len(updates) > 0 {
+		s.db.Model(&models.User{}).Where("id = ?", user.ID).Updates(updates)
+	}
+	if in.Address != nil && in.Address.Line1 != "" {
+		addr := *in.Address
+		addr.UserID = user.ID
+		addr.IsDefault = true
+		s.db.Model(&models.UserAddress{}).Where("user_id = ?", user.ID).Update("is_default", false)
+		s.db.Create(&addr)
+	}
+
+	return s.GetStripeConnectStatus(user)
 }

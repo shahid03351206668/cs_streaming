@@ -334,6 +334,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		protected.GET("/api/jobs/:id/payment-details", paymentV3Handler.GetJobPaymentDetails)
 		protected.GET("/api/user/profile", userHandler.GetAuthProfile)
 		protected.GET("/api/user/stripe-connect-status", userHandler.GetStripeConnectStatus)
+		protected.POST("/api/user/stripe-connect-status", userHandler.SubmitStripeConnectRequirements)
 		protected.POST("/api/user/device-token", userHandler.SaveDeviceToken)
 		protected.DELETE("/api/user/device-token", userHandler.DeleteDeviceToken)
 		protected.POST("/api/user/verify-credentials", userHandler.VerifyUserCredential)

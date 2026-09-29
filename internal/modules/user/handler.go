@@ -82,6 +82,59 @@ func (h *Handler) GetStripeConnectStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": status})
 }
 
+// SubmitStripeConnectRequirements lets the caller submit exactly the fields
+// GetStripeConnectStatus flagged as missing (name, phone, address) and get
+// back the refreshed status in the same request.
+func (h *Handler) SubmitStripeConnectRequirements(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	var body struct {
+		FirstName   string `json:"first_name"`
+		LastName    string `json:"last_name"`
+		PhoneNumber string `json:"phone_number"`
+		Address     *struct {
+			Line1      string `json:"line1"`
+			Line2      string `json:"line2"`
+			City       string `json:"city"`
+			State      string `json:"state"`
+			PostalCode string `json:"postal_code"`
+			Country    string `json:"country"`
+		} `json:"address"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	input := ConnectRequirementsInput{
+		FirstName:   body.FirstName,
+		LastName:    body.LastName,
+		PhoneNumber: body.PhoneNumber,
+	}
+	if body.Address != nil {
+		input.Address = &models.UserAddress{
+			Line1:      body.Address.Line1,
+			Line2:      body.Address.Line2,
+			City:       body.Address.City,
+			State:      body.Address.State,
+			PostalCode: body.Address.PostalCode,
+			Country:    body.Address.Country,
+		}
+	}
+
+	status, err := h.service.SubmitConnectRequirements(&user, input)
+	if err != nil {
+		code := http.StatusBadGateway
+		if errors.Is(err, ErrPhoneAlreadyTaken) {
+			code = http.StatusConflict
+		}
+		c.JSON(code, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": status})
+}
+
 func (h *Handler) UpdateUserFeedPreferences(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 

@@ -58,7 +58,11 @@ func (h *Handler) HandleCreatePaymentIntent(c *gin.Context) {
 	stripe.Key = h.config.Stripe.SecretKey
 	intent, fees, err := h.service.CreatePaymentIntent(&client, &freelancer, &proposal)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		status := http.StatusBadRequest
+		if errors.Is(err, ErrAlreadyPaid) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
 

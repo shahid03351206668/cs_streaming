@@ -10,7 +10,6 @@ import (
 
 	"tasksy/models"
 
-	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stripe/stripe-go/v84"
 	"github.com/stripe/stripe-go/v84/bankaccount"
@@ -62,13 +61,30 @@ func (s *Service) GetSystemSettings() (*SystemSetting, error) {
 	}, nil
 }
 
-var ErrBidBelowFees = errors.New("bid amount is too low to cover the freelancer commission and platform fee")
+var (
+	ErrBidBelowFees = errors.New("bid amount is too low to cover the freelancer commission and platform fee")
+	ErrAlreadyPaid  = errors.New("this proposal has already been paid for")
+)
 
 // CreatePaymentIntent charges the client the server-computed total for the
 // proposal's bid; the amount is never taken from the request.
 func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposal *models.Proposal) (*stripe.PaymentIntent, *FeeBreakdown, error) {
 	if freelancer.StripeConnectAccountID == "" {
 		return nil, nil, errors.New("freelancer does not have a stripe account")
+	}
+
+	// The stable idempotency key below only protects retries within Stripe's
+	// 24h cache window. Guard the rest of the time too: refuse a second charge
+	// if this proposal's contract already has a live (held/released) payment.
+	var contract models.Contract
+	if err := s.db.Where("proposal_id = ?", proposal.ID).First(&contract).Error; err == nil {
+		var existing int64
+		s.db.Model(&models.PaymentTransactionV3{}).
+			Where("contract_id = ? AND status IN ?", contract.ID, []string{escrowHeld, escrowReleasing, escrowReleased}).
+			Count(&existing)
+		if existing > 0 {
+			return nil, nil, ErrAlreadyPaid
+		}
 	}
 
 	settings, err := s.GetSystemSettings()
@@ -99,7 +115,10 @@ func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposal 
 		Metadata: metadata,
 	}
 
-	params.IdempotencyKey = stripe.String("v3-intent-" + proposal.ID + uuid.NewString() + time.Now().String())
+	// Stable per proposal so a retry (double-tap, client timeout, network
+	// blip) returns the SAME PaymentIntent instead of creating a second
+	// charge for the same proposal.
+	params.IdempotencyKey = stripe.String("v3-intent-" + proposal.ID)
 	intent, err := paymentintent.New(params)
 	if err != nil {
 		return nil, nil, err
