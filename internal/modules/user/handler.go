@@ -68,8 +68,6 @@ func (h *Handler) HandleStripeUserAccount(c *gin.Context) {
 	})
 }
 
-// GetStripeConnectStatus reports whether the caller's Stripe Connect account
-// exists and is ready to send/receive payments, or what's still missing.
 func (h *Handler) GetStripeConnectStatus(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
@@ -82,7 +80,9 @@ func (h *Handler) GetStripeConnectStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": status})
 }
 
-/
+// SubmitStripeConnectRequirements lets the caller submit exactly the fields
+// GetStripeConnectStatus flagged as missing (name, phone, address) and get
+// back the refreshed status in the same request.
 func (h *Handler) SubmitStripeConnectRequirements(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
