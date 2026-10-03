@@ -18,7 +18,7 @@ type APIClient struct {
 }
 
 func NewAPIClient(baseURL string) *APIClient {
-	return &APIClient{baseURL: strings.TrimRight(baseURL, "/"), http: &http.Client{Timeout: 20 * time.Second}}
+	return &APIClient{baseURL: strings.TrimRight(baseURL, "/"), http: &http.Client{Timeout: 60 * time.Second}}
 }
 
 // Do sends a JSON request (body may be nil) and decodes the JSON response into out (may be nil).
@@ -99,6 +99,26 @@ func (c *APIClient) PostForm(path, token string, form url.Values, out any) (int,
 			return resp.StatusCode, generic, fmt.Errorf("decode response: %w (raw: %s)", err, truncate(raw, 300))
 		}
 	}
+	return resp.StatusCode, generic, nil
+}
+
+// DoRaw posts a raw body with custom headers (used to forge webhook calls).
+func (c *APIClient) DoRaw(path string, body []byte, headers map[string]string) (int, map[string]any, error) {
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var generic map[string]any
+	_ = json.Unmarshal(raw, &generic)
 	return resp.StatusCode, generic, nil
 }
 

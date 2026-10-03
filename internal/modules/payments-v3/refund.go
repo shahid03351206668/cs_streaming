@@ -26,9 +26,10 @@ const escrowRefunding = "refunding"
 // the original charge is refunded — otherwise the platform would pay out to
 // the freelancer AND refund the client, losing the full amount twice over.
 //
-// If the freelancer has already withdrawn the funds, the connected account
-// won't have enough balance to reverse and this returns a clear error rather
-// than proceeding with a refund that leaves the platform short.
+// If the freelancer has already withdrawn the funds, Stripe still allows the
+// reversal and the connected account's balance goes negative — the platform
+// carries that until the freelancer earns more. If the reversal is refused
+// for any reason, nothing is refunded.
 func (s *Service) AdminRefundContract(contractID, adminID, reason string) (*models.PaymentTransactionV3, error) {
 	var payment models.PaymentTransactionV3
 	if err := s.db.Where("contract_id = ?", contractID).Order("created_at DESC").First(&payment).Error; err != nil {

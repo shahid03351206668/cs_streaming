@@ -3,134 +3,181 @@ package main
 import (
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 )
 
+// Labels the status endpoint uses for fields POST /api/user/stripe-connect-status submits.
+var submittableLabels = []string{"Add your address", "Add your legal first name", "Add your legal last name", "Add a valid phone number"}
 
-func onboardStripeConnect(api *APIClient, sc *StripeClient, r *Runner, user *TestUser, label, accountHolderName string) {
-	r.Check(label+": connect account starts restricted", func() (string, error) {
-		acc, err := sc.Get("/accounts/"+user.StripeAccountID, "")
+func (s *Suite) connectStatus(u *TestUser) (map[string]any, error) {
+	status, resp, err := s.api.Do("GET", "/api/user/stripe-connect-status", u.AccessToken, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := expect(status, resp, 200); err != nil {
+		return nil, err
+	}
+	return getMap(resp, "data"), nil
+}
+
+// onboard takes a user's Connect account from restricted to transfers-active
+// through the app's own endpoints, so a broken endpoint fails here instead of
+// being bypassed. Only identity documents go to Stripe directly — the app has
+// no upload endpoint for them.
+func (s *Suite) onboard(u *TestUser, first, last string, otherUserPhone string) {
+	p := u.Label + ": "
+
+	s.r.Check(p+"connect status starts action_required", func() (string, error) {
+		st, err := s.connectStatus(u)
 		if err != nil {
 			return "", err
 		}
-		if getBool(acc, "charges_enabled") {
-			return "", fmt.Errorf("expected a brand-new account to be restricted, but charges_enabled is already true")
+		if getStr(st, "status") == "ready" || getBool(st, "payouts_enabled") {
+			return "", fmt.Errorf("brand-new account already ready: %v", st)
 		}
-		return fmt.Sprintf("charges_enabled=false, disabled_reason=%v", getStr(acc, "requirements", "disabled_reason")), nil
+		if getStr(st, "account_id") != u.StripeAccountID {
+			return "", fmt.Errorf("account_id=%s, expected %s", getStr(st, "account_id"), u.StripeAccountID)
+		}
+		return fmt.Sprintf("status=%s missing=%v", getStr(st, "status"), getSlice(st, "missing")), nil
 	})
 
-	r.MustCheck(label+": set dob (magic test value for auto-verification)", func() (string, error) {
-		form := url.Values{"dob": {"1901-01-01"}}
-		status, resp, err := api.PostForm("/api/user/update", user.AccessToken, form, nil)
+	s.r.Check(p+"submit requirements with empty body is refused", func() (string, error) {
+		status, resp, err := s.api.Do("POST", "/api/user/stripe-connect-status", u.AccessToken, map[string]any{}, nil)
 		if err != nil {
 			return "", err
 		}
-		if status != 200 {
-			return "", fmt.Errorf("status %d: %v", status, resp)
-		}
-		return "dob=1901-01-01", nil
+		return expectRefused(status, resp, "no details")
 	})
 
-	r.MustCheck(label+": add address", func() (string, error) {
-		status, resp, err := api.Do("POST", "/api/v1/user/"+user.ID+"/addresses", user.AccessToken, map[string]any{
-			"line1": "10 Downing Street", "city": "London", "state": "London",
-			"postal_code": "SW1A 2AA", "country": "GB", "is_default": true,
+	s.r.Check(p+"submit requirements with invalid phone is rejected", func() (string, error) {
+		status, resp, err := s.api.Do("POST", "/api/user/stripe-connect-status", u.AccessToken, map[string]any{"phone_number": "12345"}, nil)
+		if err != nil {
+			return "", err
+		}
+		return expectRefused(status, resp, "phone")
+	})
+
+	if otherUserPhone != "" {
+		s.r.Check(p+"submit requirements with another user's phone is refused", func() (string, error) {
+			status, resp, err := s.api.Do("POST", "/api/user/stripe-connect-status", u.AccessToken, map[string]any{"phone_number": otherUserPhone}, nil)
+			if err != nil {
+				return "", err
+			}
+			return expectRefused(status, resp, "phone")
+		})
+	}
+
+	s.r.MustCheck(p+"set date of birth via /api/user/update", func() (string, error) {
+		status, resp, err := s.api.PostForm("/api/user/update", u.AccessToken, url.Values{"dob": {"1901-01-01"}}, nil)
+		if err != nil {
+			return "", err
+		}
+		return "dob=1901-01-01 (stripe test auto-verify value)", expect(status, resp, 200)
+	})
+
+	phone := randomUKPhone()
+	s.r.Check(p+"submit name/phone/address clears those requirements", func() (string, error) {
+		status, resp, err := s.api.Do("POST", "/api/user/stripe-connect-status", u.AccessToken, map[string]any{
+			"first_name":   first,
+			"last_name":    last,
+			"phone_number": phone,
+			"address": map[string]any{
+				"line1": "10 Downing Street", "line2": "", "city": "London",
+				"state": "", "postal_code": "SW1A 2AA", "country": "GB",
+			},
 		}, nil)
 		if err != nil {
 			return "", err
 		}
-		if status != 200 && status != 201 {
-			return "", fmt.Errorf("status %d: %v", status, resp)
+		if err := expect(status, resp, 200); err != nil {
+			return "", err
 		}
-		return "address saved", nil
+		// The response is the refreshed status; Stripe can lag a moment, so
+		// re-read until the submitted fields are gone.
+		return pollUntil(20*time.Second, func() (string, bool, error) {
+			st, err := s.connectStatus(u)
+			if err != nil {
+				return "", false, err
+			}
+			var still []string
+			for _, m := range getSlice(st, "missing") {
+				for _, label := range submittableLabels {
+					if m == label {
+						still = append(still, m)
+					}
+				}
+			}
+			if len(still) > 0 {
+				return "still missing after submit: " + strings.Join(still, ", "), false, nil
+			}
+			return fmt.Sprintf("remaining=%v", getSlice(st, "missing")), true, nil
+		})
 	})
+	u.Phone = phone
 
-	r.MustCheck(label+": add bank account (stripe test UK bank)", func() (string, error) {
-		status, resp, err := api.Do("POST", "/api/v3/bank-account", user.AccessToken, map[string]any{
-			"account_holder_name": accountHolderName,
+	s.r.MustCheck(p+"add bank account (stripe test UK bank)", func() (string, error) {
+		status, resp, err := s.api.Do("POST", "/api/v3/bank-account", u.AccessToken, map[string]any{
+			"account_holder_name": first + " " + last,
 			"sort_code":           "108800",
 			"account_number":      "00012345",
 		}, nil)
 		if err != nil {
 			return "", err
 		}
-		if status != 200 {
-			return "", fmt.Errorf("status %d: %v", status, resp)
+		if err := expect(status, resp, 200); err != nil {
+			return "", err
 		}
-		data := getMap(resp, "data")
-		bankID := getStr(data, "stripe_bank_account_id")
-		if bankID == "" {
-			return "", fmt.Errorf("no stripe_bank_account_id in response: %v", resp)
+		u.BankID = getStr(resp, "data", "id")
+		u.BankStripeID = getStr(resp, "data", "stripe_bank_account_id")
+		if u.BankStripeID == "" || !getBool(resp, "data", "is_default") {
+			return "", fmt.Errorf("bank not attached on stripe or not default: %v", resp)
 		}
-		return "bank=" + getStr(data, "bank_name") + " last4=" + getStr(data, "account_number_last4"), nil
+		return "bank=" + u.BankStripeID + " default=true", nil
 	})
 
-	r.MustCheck(label+": re-login to push profile to stripe", func() (string, error) {
-		return loginUser(api, user)
-	})
-
-	// provisionStripeAccount runs in a fire-and-forget goroutine on the server,
-	// so the sync isn't done the instant login returns — poll for it.
 	var personID string
-	r.MustCheck(label+": stripe account phone/name/address requirements satisfied", func() (string, error) {
-		return pollUntil(15*time.Second, func() (string, bool, error) {
-			acc, err := sc.Get("/accounts/"+user.StripeAccountID, "")
+	s.r.MustCheck(p+"find stripe person", func() (string, error) {
+		acc, err := s.sc.Get("/accounts/"+u.StripeAccountID, "")
+		if err != nil {
+			return "", err
+		}
+		personID = getStr(acc, "individual", "id")
+		if personID == "" {
+			return "", fmt.Errorf("account has no individual person")
+		}
+		return personID, nil
+	})
+
+	// Both documents up front: the keyed-identity check can fail even when
+	// the primary document passes, and additional_document is Stripe's
+	// documented alternate path for that case.
+	s.r.MustCheck(p+"upload identity documents (stripe test tokens)", func() (string, error) {
+		_, err := s.sc.Post("/accounts/"+u.StripeAccountID+"/persons/"+personID, url.Values{
+			"verification[document][front]":            {"file_identity_document_success"},
+			"verification[additional_document][front]": {"file_identity_document_success"},
+		}, "")
+		return "document + additional_document submitted", err
+	})
+
+	s.r.MustCheck(p+"transfers capability becomes active", func() (string, error) {
+		return pollUntil(3*time.Minute, func() (string, bool, error) {
+			acc, err := s.sc.Get("/accounts/"+u.StripeAccountID, "")
 			if err != nil {
 				return "", false, err
 			}
-			individual := getMap(acc, "individual")
-			personID = getStr(individual, "id")
-			due := getSlice(acc, "requirements", "currently_due")
-			remaining := filterOut(due, "external_account")
-			if len(remaining) > 0 {
-				return fmt.Sprintf("still due: %v", remaining), false, nil
-			}
-			return "external_account satisfied by bank; no other currently_due fields", true, nil
+			tr := getStr(acc, "capabilities", "transfers")
+			return fmt.Sprintf("transfers=%s due=%v", tr, getSlice(acc, "requirements", "currently_due")), tr == "active", nil
 		})
 	})
 
-	// GB phone numbers need a real, valid-looking number; the app's own phone
-	// (a UK "drama" test number) isn't accepted by Stripe's person.phone
-	// validator, so fix it directly to isolate the identity check. Each user
-	// needs a distinct number — Stripe rejects reusing one across persons.
-	r.MustCheck(label+": set a stripe-valid phone number on the person", func() (string, error) {
-		phone := randomUKPhone()
-		form := url.Values{"phone": {phone}}
-		_, err := sc.Post("/accounts/"+user.StripeAccountID+"/persons/"+personID, form, "")
-		return "phone=" + phone, err
-	})
-
-	r.MustCheck(label+": simulate successful identity document upload (test-mode magic token)", func() (string, error) {
-		form := url.Values{"verification[document][front]": {"file_identity_document_success"}}
-		_, err := sc.Post("/accounts/"+user.StripeAccountID+"/persons/"+personID, form, "")
-		return "verification.document.front=file_identity_document_success", err
-	})
-
-	// The keyed-identity check (does the typed name/address/dob match a real
-	// identity?) can fail even after document verification succeeds — Stripe's
-	// own requirements payload names "verification.additional_document" as the
-	// documented alternate path for exactly that case. Submit it upfront rather
-	// than reactively: it's harmless if the plain document check would have
-	// passed alone, and it avoids racing the exact moment Stripe flips the
-	// primary check to "inactive" between polls.
-	r.MustCheck(label+": submit additional_document as the alternate verification path", func() (string, error) {
-		form := url.Values{"verification[additional_document][front]": {"file_identity_document_success"}}
-		_, err := sc.Post("/accounts/"+user.StripeAccountID+"/persons/"+personID, form, "")
-		return "verification.additional_document.front=file_identity_document_success", err
-	})
-
-	r.Check(label+": wait for capability activation", func() (string, error) {
-		return pollUntil(3*time.Minute, func() (string, bool, error) {
-			acc, err := sc.Get("/accounts/"+user.StripeAccountID, "")
+	s.r.Check(p+"connect status endpoint reports ready", func() (string, error) {
+		return pollUntil(60*time.Second, func() (string, bool, error) {
+			st, err := s.connectStatus(u)
 			if err != nil {
 				return "", false, err
 			}
-			caps := getMap(acc, "capabilities")
-			transfers := getStr(caps, "transfers")
-			if transfers == "active" {
-				return fmt.Sprintf("capabilities=%v charges_enabled=%v", caps, getBool(acc, "charges_enabled")), true, nil
-			}
-			return "transfers=" + transfers, false, nil
+			return fmt.Sprintf("status=%s missing=%v", getStr(st, "status"), getSlice(st, "missing")), getStr(st, "status") == "ready", nil
 		})
 	})
 }

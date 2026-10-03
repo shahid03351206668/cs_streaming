@@ -34,9 +34,11 @@ type TypeWalletTransaction struct {
 }
 
 type UserWalletVal struct {
-	Balance      float64
-	Transactions []TypeWalletTransaction
-	EscrowAmount float64
+	Balance             float64
+	Transactions        []TypeWalletTransaction
+	EscrowAmount        float64
+	AvailableToWithdraw float64
+	PendingSettlement   float64
 }
 
 type Service struct {
@@ -62,13 +64,17 @@ func (s *Service) GetSystemSettings() (*SystemSetting, error) {
 }
 
 var (
-	ErrBidBelowFees = errors.New("bid amount is too low to cover the freelancer commission and platform fee")
-	ErrAlreadyPaid  = errors.New("this proposal has already been paid for")
+	ErrBidBelowFees        = errors.New("bid amount is too low to cover the freelancer commission and platform fee")
+	ErrAlreadyPaid         = errors.New("this proposal has already been paid for")
+	ErrProposalNotAccepted = errors.New("only an accepted proposal can be paid for")
 )
 
 // CreatePaymentIntent charges the client the server-computed total for the
 // proposal's bid; the amount is never taken from the request.
 func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposal *models.Proposal) (*stripe.PaymentIntent, *FeeBreakdown, error) {
+	if proposal.Status != models.ProposalStatusAccepted {
+		return nil, nil, ErrProposalNotAccepted
+	}
 	if freelancer.StripeConnectAccountID == "" {
 		return nil, nil, errors.New("freelancer does not have a stripe account")
 	}
@@ -419,10 +425,28 @@ func (s *Service) GetUserWallet(user *models.User) (*UserWalletVal, error) {
 
 	escrowAmount, _ := totalPending.Float64()
 
+	// Balance above is our ledger total (sum of released escrows) — it goes
+	// up the instant a contract releases. Stripe holds that money for days
+	// before it's actually withdrawable, so a withdrawal for the full
+	// "balance" can fail with insufficient funds even though the ledger
+	// says it's there. availableToWithdraw/pendingSettlement reflect what
+	// Stripe will actually let through right now; a client should drive the
+	// withdraw screen off these, not off balance.
+	availableToWithdraw := balance
+	pendingSettlement := 0.0
+	if user.StripeConnectAccountID != "" {
+		if bal, err := s.connectBalance(user.StripeConnectAccountID); err == nil {
+			availableToWithdraw = bal.Available.InexactFloat64()
+			pendingSettlement = bal.Pending.InexactFloat64()
+		}
+	}
+
 	return &UserWalletVal{
-		Balance:      balance,
-		Transactions: transactions,
-		EscrowAmount: escrowAmount,
+		Balance:             balance,
+		Transactions:        transactions,
+		EscrowAmount:        escrowAmount,
+		AvailableToWithdraw: availableToWithdraw,
+		PendingSettlement:   pendingSettlement,
 	}, nil
 }
 

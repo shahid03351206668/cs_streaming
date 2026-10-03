@@ -179,6 +179,15 @@ func (s *Service) releaseEscrow(e *models.EscrowTransactionV3, contract *models.
 		return false, fmt.Errorf("payment transaction not found: %w", err)
 	}
 
+	// A transfer may already exist (created, but our DB write failed and the
+	// webhook was missed) — record it rather than paying a second time.
+	if existing := findEscrowTransfer(contract.ID, e.ID); existing != "" {
+		if err := s.markReleased(e.ID, e.PaymentTransactionID, existing); err != nil {
+			return false, fmt.Errorf("transfer %s exists but failed to record release: %w", existing, err)
+		}
+		return true, nil
+	}
+
 	params := &stripe.TransferParams{
 		Amount:        stripe.Int64(ToPence(e.Amount)),
 		Currency:      stripe.String(e.Currency),
@@ -194,20 +203,66 @@ func (s *Service) releaseEscrow(e *models.EscrowTransactionV3, contract *models.
 	if payment.StripeChargeID != "" {
 		params.SourceTransaction = stripe.String(payment.StripeChargeID)
 	}
-	params.SetIdempotencyKey("v3-transfer-" + e.ID)
 
-	tr, err := transfer.New(params)
-	if err != nil {
+	attempt := e.TransferAttempt
+	for tries := 0; ; tries++ {
+		params.SetIdempotencyKey(transferIdempotencyKey(e.ID, attempt))
+		tr, err := transfer.New(params)
+		if err == nil {
+			// If this write fails the escrow stays "releasing"; the
+			// transfer.created webhook reconciles it via escrow_id metadata.
+			if err := s.markReleased(e.ID, e.PaymentTransactionID, tr.ID); err != nil {
+				return false, fmt.Errorf("transfer %s created but failed to record release: %w", tr.ID, err)
+			}
+			return true, nil
+		}
+
+		rejected, replayed := rejectedByStripe(err)
+		if rejected {
+			// Stripe caches a rejected request's response under its
+			// idempotency key for 24h. Without a new key, a retry after the
+			// cause is fixed (e.g. the freelancer finishing onboarding) would
+			// replay the old rejection.
+			attempt++
+			s.db.Model(&models.EscrowTransactionV3{}).Where("id = ?", e.ID).Update("transfer_attempt", attempt)
+			if replayed && tries == 0 {
+				continue // the error was an earlier attempt's cached result; try for real
+			}
+		}
 		unclaim()
 		return false, fmt.Errorf("failed to create stripe transfer: %w", err)
 	}
+}
 
-	// If this write fails the escrow stays "releasing"; the transfer.created
-	// webhook reconciles it via the escrow_id metadata.
-	if err := s.markReleased(e.ID, e.PaymentTransactionID, tr.ID); err != nil {
-		return false, fmt.Errorf("transfer %s created but failed to record release: %w", tr.ID, err)
+// transferIdempotencyKey is stable across retries of one attempt, so a call
+// that timed out after Stripe created the transfer can't pay twice.
+func transferIdempotencyKey(escrowID string, attempt int) string {
+	if attempt == 0 {
+		return "v3-transfer-" + escrowID
 	}
-	return true, nil
+	return fmt.Sprintf("v3-transfer-%s-%d", escrowID, attempt)
+}
+
+// rejectedByStripe reports a 4xx from Stripe — the request was refused and
+// no transfer exists, so a new idempotency key is safe — and whether that
+// response was a replay of an earlier request under the same key.
+func rejectedByStripe(err error) (rejected, replayed bool) {
+	var se *stripe.Error
+	if !errors.As(err, &se) || se.HTTPStatusCode < 400 || se.HTTPStatusCode >= 500 {
+		return false, false
+	}
+	replayed = se.LastResponse != nil && se.LastResponse.Header.Get("Idempotent-Replayed") == "true"
+	return true, replayed
+}
+
+func findEscrowTransfer(contractID, escrowID string) string {
+	it := transfer.List(&stripe.TransferListParams{TransferGroup: stripe.String(contractID)})
+	for it.Next() {
+		if t := it.Transfer(); t.Metadata["escrow_id"] == escrowID && !t.Reversed {
+			return t.ID
+		}
+	}
+	return ""
 }
 
 func (s *Service) markReleased(escrowID, paymentTransactionID, transferID string) error {

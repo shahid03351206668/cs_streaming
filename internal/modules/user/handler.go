@@ -122,11 +122,19 @@ func (h *Handler) SubmitStripeConnectRequirements(c *gin.Context) {
 
 	status, err := h.service.SubmitConnectRequirements(&user, input)
 	if err != nil {
-		code := http.StatusBadGateway
-		if errors.Is(err, ErrPhoneAlreadyTaken) {
-			code = http.StatusConflict
+		var stripeErr *stripe.Error
+		switch {
+		case errors.Is(err, ErrPhoneAlreadyTaken):
+			c.JSON(http.StatusConflict, gin.H{"message": "error", "error": err.Error()})
+		case errors.Is(err, ErrNoConnectDetails):
+			c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		case errors.As(err, &stripeErr) && stripeErr.Type == stripe.ErrorTypeInvalidRequest:
+			// Stripe rejected the user's input (e.g. an invalid phone); show
+			// its message, not the raw error with internal request details.
+			c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": stripeErr.Msg, "field": stripeErr.Param})
+		default:
+			c.JSON(http.StatusBadGateway, gin.H{"message": "error", "error": err.Error()})
 		}
-		c.JSON(code, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
 

@@ -269,6 +269,8 @@ func (h *Handler) HandleListWithdrawals(c *gin.Context) {
 func (h *Handler) HandleGetWallet(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
+	stripe.Key = h.config.Stripe.SecretKey
+
 	wallet, err := h.service.GetUserWallet(&user)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
@@ -278,9 +280,11 @@ func (h *Handler) HandleGetWallet(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"data": gin.H{
-			"balance":       wallet.Balance,
-			"transactions":  wallet.Transactions,
-			"escrow_amount": wallet.EscrowAmount,
+			"balance":               wallet.Balance,
+			"transactions":          wallet.Transactions,
+			"escrow_amount":         wallet.EscrowAmount,
+			"available_to_withdraw": wallet.AvailableToWithdraw,
+			"pending_settlement":    wallet.PendingSettlement,
 		},
 	})
 }

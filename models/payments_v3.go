@@ -61,6 +61,9 @@ type EscrowTransactionV3 struct {
 	// Audit trail for admin-forced releases; empty for automatic releases.
 	ReleasedBy  string `gorm:"type:varchar(64)" json:"released_by,omitempty"`
 	ReleaseNote string `gorm:"type:text" json:"release_note,omitempty"`
+	// Bumped each time Stripe definitively rejects a transfer, so the next
+	// release attempt uses a fresh idempotency key.
+	TransferAttempt int `gorm:"default:0" json:"-"`
 }
 
 func (EscrowTransactionV3) TableName() string {

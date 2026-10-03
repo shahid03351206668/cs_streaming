@@ -683,13 +683,13 @@ func CreateContract(c *gin.Context) {
 		Terms       string    `json:"terms"`
 	}
 
-	if body.EndDate.Before(body.StartDate) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "End date must be after start date"})
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "message": "error"})
 		return
 	}
 
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "message": "error"})
+	if body.EndDate.Before(body.StartDate) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "End date must be after start date", "message": "error"})
 		return
 	}
 
@@ -710,6 +710,7 @@ func CreateContract(c *gin.Context) {
 	if proposal.Status != models.ProposalStatusAccepted {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Only accepted proposals can have contracts",
 			"message": "error"})
+		return
 	}
 
 	fmt.Println(time.Now())

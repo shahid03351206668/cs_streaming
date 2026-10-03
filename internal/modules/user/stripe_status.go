@@ -114,6 +114,8 @@ func (s *Service) GetStripeConnectStatus(user *models.User) (*StripeConnectStatu
 	return result, nil
 }
 
+var ErrNoConnectDetails = errors.New("no details provided")
+
 type ConnectRequirementsInput struct {
 	FirstName   string
 	LastName    string
@@ -163,7 +165,7 @@ func (s *Service) SubmitConnectRequirements(user *models.User, in ConnectRequire
 		hasPerson = true
 	}
 	if !hasPerson {
-		return nil, errors.New("no details provided")
+		return nil, ErrNoConnectDetails
 	}
 
 	stripe.Key = s.appConfig.Stripe.SecretKey
