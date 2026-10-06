@@ -69,19 +69,15 @@ var (
 	ErrProposalNotAccepted = errors.New("only an accepted proposal can be paid for")
 )
 
-// CreatePaymentIntent charges the client the server-computed total for the
-// proposal's bid; the amount is never taken from the request.
 func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposal *models.Proposal) (*stripe.PaymentIntent, *FeeBreakdown, error) {
-	if proposal.Status != models.ProposalStatusAccepted {
-		return nil, nil, ErrProposalNotAccepted
-	}
+	// if proposal.Status != models.ProposalStatusAccepted {
+	// 	return nil, nil, ErrProposalNotAccepted
+	// }
+
 	if freelancer.StripeConnectAccountID == "" {
 		return nil, nil, errors.New("freelancer does not have a stripe account")
 	}
 
-	// The stable idempotency key below only protects retries within Stripe's
-	// 24h cache window. Guard the rest of the time too: refuse a second charge
-	// if this proposal's contract already has a live (held/released) payment.
 	var contract models.Contract
 	if err := s.db.Where("proposal_id = ?", proposal.ID).First(&contract).Error; err == nil {
 		var existing int64
@@ -121,9 +117,6 @@ func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposal 
 		Metadata: metadata,
 	}
 
-	// Stable per proposal so a retry (double-tap, client timeout, network
-	// blip) returns the SAME PaymentIntent instead of creating a second
-	// charge for the same proposal.
 	params.IdempotencyKey = stripe.String("v3-intent-" + proposal.ID)
 	intent, err := paymentintent.New(params)
 	if err != nil {

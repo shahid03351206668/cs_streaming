@@ -27,8 +27,7 @@ func NewHandler(config *config.Config, service *Service) *Handler {
 func (h *Handler) HandleCreatePaymentIntent(c *gin.Context) {
 	client := c.MustGet("user").(models.User)
 
-	// "amount" is accepted for backward compatibility but ignored — the charge
-	// is always computed server-side from the proposal bid.
+	
 	var body struct {
 		ProposalID string `json:"proposal_id" binding:"required"`
 	}
