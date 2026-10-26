@@ -182,9 +182,9 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		promoProtected.GET("/my-eligibility", promotionHandler.CheckMyEligibility)
 	}
 
+	router.GET("/api/v1/admin/settings", controllers.GetSystemSettings)
 	adminRoutes := router.Group("/api/v1/admin", middleware.AdminOnly()...)
 	{
-		adminRoutes.GET("/settings", controllers.GetSystemSettings)
 		adminRoutes.GET("/users", controllers.AdminUserListController)
 		adminRoutes.GET("/users/:id", controllers.AdminGetUserController)
 		adminRoutes.PUT("/users/:id", controllers.AdminUpdateUserController)
