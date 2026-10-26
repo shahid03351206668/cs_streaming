@@ -668,6 +668,7 @@ func GetSystemSettings(c *gin.Context) {
 		return
 	}
 
+
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": gin.H{
 		"id":                               settings.ID,
 		"client_commission_percentage":     settings.ClientCommissionPercentage,
