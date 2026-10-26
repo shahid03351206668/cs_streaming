@@ -403,6 +403,10 @@ func GetUserAuthToken(c *gin.Context) {
 		return
 	}
 
+	if refuseAdminAccount(c, user.ID) {
+		return
+	}
+
 	tokens, err := lib.GenerateAuthTokens(user.ID, 0)
 
 	if err != nil {

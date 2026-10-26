@@ -10,10 +10,7 @@ const PaymentCurrency = "gbp"
 
 var hundred = decimal.NewFromInt(100)
 
-// FeeBreakdown is the single source of truth for how a bid is split.
-// Client pays:     bid + client commission + platform fee
-// Freelancer gets: bid - freelancer commission - platform fee
-// The flat platform fee (ApplicationFeeAmount) is charged to both sides.
+// Client pays bid + client commission + platform fee; freelancer gets bid - commission - platform fee.
 type FeeBreakdown struct {
 	BidAmount               decimal.Decimal
 	ClientCommissionPct     decimal.Decimal
@@ -53,7 +50,6 @@ func CalculateFees(bid float64, s *SystemSetting) FeeBreakdown {
 	}
 }
 
-// ToPence converts a 2dp amount to integer pence for Stripe.
 func ToPence(d decimal.Decimal) int64 {
 	return d.Round(2).Mul(hundred).IntPart()
 }
@@ -62,8 +58,7 @@ func fromPence(p int64) decimal.Decimal {
 	return decimal.NewFromInt(p).Div(hundred)
 }
 
-// Metadata stores the exact split on the PaymentIntent so the webhook records
-// what the client was actually shown and charged, even if settings change later.
+// Stored on the PaymentIntent so the webhook records what was charged even if settings change later.
 func (f FeeBreakdown) Metadata() map[string]string {
 	p := func(d decimal.Decimal) string { return strconv.FormatInt(ToPence(d), 10) }
 	return map[string]string{
@@ -78,8 +73,7 @@ func (f FeeBreakdown) Metadata() map[string]string {
 	}
 }
 
-// FeesFromMetadata rebuilds a breakdown from PaymentIntent/charge metadata.
-// Returns ok=false for intents created before fee_version 2.
+// ok is false for intents created before fee_version 2.
 func FeesFromMetadata(md map[string]string) (FeeBreakdown, bool) {
 	if md["fee_version"] != "2" {
 		return FeeBreakdown{}, false
@@ -106,8 +100,7 @@ func FeesFromMetadata(md map[string]string) (FeeBreakdown, bool) {
 	}, true
 }
 
-// Summary is the JSON shape shown to users. decimal.Decimal marshals as a
-// string, so amounts are converted to float64 for API responses.
+// decimal.Decimal marshals as a string, so amounts go out as float64.
 func (f FeeBreakdown) Summary() map[string]any {
 	n := func(d decimal.Decimal) float64 { return d.InexactFloat64() }
 	return map[string]any{

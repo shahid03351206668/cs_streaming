@@ -1,7 +1,6 @@
 package job
 
 import (
-	// "encoding/json"
 	"errors"
 	"mime/multipart"
 	"net/http"
@@ -10,7 +9,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	// "tasksy/db"
 	"tasksy/lib"
 	"tasksy/models"
 	"tasksy/pkg/logger"
@@ -18,7 +16,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// search radius in Kilometers
 const JOB_SEARCH_RADIUS = 50
 const MAX_JOBS_PER_PAGE = 20
 
@@ -67,21 +64,6 @@ func (h *Handler) JobFeedHandler(c *gin.Context) {
 	}
 
 	var preferredCategoryIDs []string
-	// if category == "" {
-	// 	if userID := lib.TryGetUserID(c); userID != "" {
-	// 		var prefs models.UserFeedPreferences
-	// 		if err := db.DB.Where("user_id = ?", userID).First(&prefs).Error; err == nil {
-	// 			var cats []models.CategoryItem
-	// 			if json.Unmarshal(prefs.Categories, &cats) == nil {
-	// 				for _, cat := range cats {
-	// 					if cat.ID != "" {
-	// 						preferredCategoryIDs = append(preferredCategoryIDs, cat.ID)
-	// 					}
-	// 				}
-	// 			}
-	// 		}
-	// 	}
-	// }
 
 	var CategoryIds []string
 

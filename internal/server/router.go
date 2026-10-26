@@ -61,7 +61,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	})
 
 	emailHandler := email.NewHandler(emailService)
-	emailAdmin := router.Group("/api/v1/admin/email-accounts")
+	emailAdmin := router.Group("/api/v1/admin/email-accounts", middleware.AdminOnly()...)
 	{
 		emailAdmin.GET("", emailHandler.ListEmailAccounts)
 		emailAdmin.POST("", emailHandler.CreateEmailAccount)
@@ -69,16 +69,16 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		emailAdmin.DELETE("/:id", emailHandler.DeleteEmailAccount)
 		emailAdmin.PUT("/:id/default", emailHandler.SetDefaultEmailAccount)
 	}
-	emailTemplateAdmin := router.Group("/api/v1/admin/email-templates")
+	emailTemplateAdmin := router.Group("/api/v1/admin/email-templates", middleware.AdminOnly()...)
 	{
 		emailTemplateAdmin.GET("", emailHandler.ListEmailTemplates)
 		emailTemplateAdmin.POST("", emailHandler.CreateEmailTemplate)
 		emailTemplateAdmin.PUT("/:id", emailHandler.UpdateEmailTemplate)
 		emailTemplateAdmin.DELETE("/:id", emailHandler.DeleteEmailTemplate)
 	}
-	router.Group("/api/v1/admin").POST("/email/test", emailHandler.SendTestEmail)
+	router.Group("/api/v1/admin", middleware.AdminOnly()...).POST("/email/test", emailHandler.SendTestEmail)
 
-	emailSend := router.Group("/api/v1/email")
+	emailSend := router.Group("/api/v1/email", middleware.AdminOnly()...)
 	{
 		emailSend.POST("/send", emailHandler.SendEmail)
 	}
@@ -116,21 +116,21 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		v3Escrow.POST("/contracts/:id/release", paymentV3Handler.HandleReleaseContract)
 	}
 
-	v3AdminPayouts := router.Group("/api/v3/admin/payouts")
-	v3AdminPayouts.Use(middleware.AuthMiddleware(), middleware.RequireRole("admin"))
+	v3AdminPayouts := router.Group("/api/v3/admin/payouts", middleware.AdminOnly()...)
 	{
 		v3AdminPayouts.GET("/escrows", paymentV3Handler.HandleAdminListEscrows)
 		v3AdminPayouts.POST("/escrows/:id/release", paymentV3Handler.HandleAdminReleaseEscrow)
 		v3AdminPayouts.GET("/withdrawals", paymentV3Handler.HandleAdminListWithdrawals)
-		// Refund the client — e.g. to resolve a dispute in their favour. Reverses
-		// the Stripe transfer first if the escrow was already released.
 		v3AdminPayouts.POST("/transactions/:id/refund", paymentV3Handler.HandleRefund)
 		v3AdminPayouts.POST("/contracts/:id/refund", paymentV3Handler.HandleAdminRefundContract)
 	}
 
-	router.GET("/api/v3/admin/payments/transactions", paymentV3Handler.HandleAdminListTransactions)
-	router.GET("/api/v3/admin/payments/transactions/:id", paymentV3Handler.HandleAdminGetTransaction)
-	router.GET("/api/v3/admin/payments/stats", paymentV3Handler.HandleAdminPaymentStats)
+	v3AdminPayments := router.Group("/api/v3/admin/payments", middleware.AdminOnly()...)
+	{
+		v3AdminPayments.GET("/transactions", paymentV3Handler.HandleAdminListTransactions)
+		v3AdminPayments.GET("/transactions/:id", paymentV3Handler.HandleAdminGetTransaction)
+		v3AdminPayments.GET("/stats", paymentV3Handler.HandleAdminPaymentStats)
+	}
 
 	v3Wallet := router.Group("/api/v3/wallet")
 	v3Wallet.Use(middleware.AuthMiddleware())
@@ -150,31 +150,12 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		v3Bank.DELETE("/:id", paymentV3Handler.HandleDeleteBankAccount)
 	}
 
-	// paymentProtected := router.Group("/api/v1/payments")
-	// paymentProtected.Use(middleware.AuthMiddleware())
-	// {
-	// 	// paymentProtected.GET("/transactions/my", paymentHandler.GetUserPaymentTransactions)
-	// }
-
-	// walletRoutes := router.Group("/api/v1/wallet")
-	// walletRoutes.Use(middleware.AuthMiddleware())
-	// {
-	// 	walletRoutes.GET("/balance", payoutService.GetWalletBalance)
-	// 	walletRoutes.POST("/withdraw", payoutService.RequestPayout)
-	// 	walletRoutes.GET("/withdrawals", payoutService.GetPayoutHistory)
-	// 	walletRoutes.GET("/bank-accounts", payoutService.ListBankAccounts)
-	// 	walletRoutes.POST("/bank-accounts", payoutService.AddBankAccount)
-	// 	walletRoutes.PUT("/bank-accounts/:id/default", payoutService.SetDefaultBankAccount)
-	// 	walletRoutes.DELETE("/bank-accounts/:id", payoutService.DeleteBankAccount)
-	// }
-
 	referralHandler := referrals.NewHandler(referrals.NewService(db))
 	referralRoutes := router.Group("/api/v1/referrals")
 	{
 		referralRoutes.GET("/validate/:code", referralHandler.ValidateReferralCode)
 	}
 
-	// Referral routes (authenticated)
 	referralProtected := router.Group("/api/v1/referrals")
 	referralProtected.Use(middleware.AuthMiddleware())
 	{
@@ -187,8 +168,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		referralProtected.GET("/status", referralHandler.GetMyReferralStatus)
 	}
 
-	referralAdmin := router.Group("/api/v1/admin/referrals")
-	referralAdmin.Use(middleware.AuthMiddleware())
+	referralAdmin := router.Group("/api/v1/admin/referrals", middleware.AdminOnly()...)
 	{
 		referralAdmin.GET("/codes", referralHandler.GetAllReferralCodes)
 		referralAdmin.GET("/usages", referralHandler.GetAllReferralUsages)
@@ -202,10 +182,9 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		promoProtected.GET("/my-eligibility", promotionHandler.CheckMyEligibility)
 	}
 
-	router.GET("/api/v1/admin/settings", controllers.GetSystemSettings)
-	adminRoutes := router.Group("/api/v1/admin")
-	// adminRoutes.Use(middleware.AuthMiddleware())
+	adminRoutes := router.Group("/api/v1/admin", middleware.AdminOnly()...)
 	{
+		adminRoutes.GET("/settings", controllers.GetSystemSettings)
 		adminRoutes.GET("/users", controllers.AdminUserListController)
 		adminRoutes.GET("/users/:id", controllers.AdminGetUserController)
 		adminRoutes.PUT("/users/:id", controllers.AdminUpdateUserController)
@@ -218,10 +197,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		adminRoutes.PUT("/jobs/:id", controllers.AdminUpdateJobController)
 		adminRoutes.GET("/job-reports", controllers.AdminListJobReportsController)
 		adminRoutes.PUT("/job-reports/:id", controllers.AdminUpdateJobReportController)
-
-		// adminRoutes.GET("/payouts", payoutService.AdminListPayouts)
-		// adminRoutes.GET("/ledger", ledgerHandler.GetAdminLedgerReport)
-		// adminRoutes.GET("/ledger/accounts/:id/balance", ledgerHandler.GetAccountBalanceHandler)
 
 		adminRoutes.PUT("/settings", controllers.UpdateSystemSettings)
 		adminRoutes.GET("/banks", controllers.AdminListBanks)
@@ -238,17 +213,14 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		disputeRoutes.GET("/:id", disputeHandler.GetDispute)
 	}
 
-	disputeAdmin := router.Group("/api/v1/admin/disputes")
-	disputeAdmin.Use(middleware.AuthMiddleware())
+	disputeAdmin := router.Group("/api/v1/admin/disputes", middleware.AdminOnly()...)
 	{
 		disputeAdmin.GET("", disputeHandler.AdminListDisputes)
 		disputeAdmin.GET("/:id", disputeHandler.AdminGetDispute)
 		disputeAdmin.PUT("/:id/resolve", disputeHandler.AdminResolveDispute)
 	}
 
-	// Promotional offer admin routes
-	promoAdmin := router.Group("/api/v1/admin/promotions")
-	promoAdmin.Use(middleware.AuthMiddleware())
+	promoAdmin := router.Group("/api/v1/admin/promotions", middleware.AdminOnly()...)
 	{
 		promoAdmin.POST("", promotionHandler.CreateOffer)
 		promoAdmin.GET("", promotionHandler.ListOffers)
@@ -263,6 +235,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		authRoutes.POST("/reset-password", userHandler.ResetUserPassword)
 		authRoutes.POST("/register", userHandler.RegisterUser)
 		authRoutes.POST("/login", controllers.LoginController)
+		authRoutes.POST("/admin/login", controllers.AdminLoginController)
 		authRoutes.POST("/user/auth-token", controllers.GetUserAuthToken)
 		authRoutes.POST("/verify-user", userHandler.VerifyUser)
 		authRoutes.POST("/refresh", controllers.RefreshTokenController)
@@ -321,11 +294,13 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		publicRoutes.GET("/category/:id", controllers.GetCategoryByID)
 		publicRoutes.GET("/job/feed", jobPostHandler.JobFeedHandler)
 		publicRoutes.GET("/job/:id", controllers.GetJobDetail)
-		publicRoutes.PUT("/category/update/:id", controllers.UpdateCategory)
-		publicRoutes.PUT("/category/reorder", controllers.ReorderCategories)
-		publicRoutes.POST("/category/create", controllers.CreateCategory)
-		publicRoutes.DELETE("/category/delete/:id", controllers.DeleteCategory)
 		publicRoutes.GET("/banks", controllers.ListBanks)
+
+		categoryAdmin := publicRoutes.Group("/category", middleware.AdminOnly()...)
+		categoryAdmin.PUT("/update/:id", controllers.UpdateCategory)
+		categoryAdmin.PUT("/reorder", controllers.ReorderCategories)
+		categoryAdmin.POST("/create", controllers.CreateCategory)
+		categoryAdmin.DELETE("/delete/:id", controllers.DeleteCategory)
 	}
 
 	protected := router.Group("/")

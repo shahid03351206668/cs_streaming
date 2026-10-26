@@ -7,32 +7,21 @@ import (
 	"tasksy/models"
 )
 
-// JobFeedParams holds all query parameters for the job feed
 type JobFeedParams struct {
-	Category    []string
-	SearchQuery string
-	Page        int
-	Limit       int
-	Latitude    *float64 // nil means no location filter
-	Longitude   *float64
-	RadiusKM    float64
-	// PreferredCategoryIDs is applied when the user has feed preferences and
-	// no explicit Category filter was given. Empty = no preference filter.
-	PreferredCategoryIDs []string
-	// ExcludeReportedByUserID hides jobs this user has reported from their
-	// own feed. Empty = no exclusion (anonymous requests, or users with no reports).
+	Category                []string
+	SearchQuery             string
+	Page                    int
+	Limit                   int
+	Latitude                *float64 // nil means no location filter
+	Longitude               *float64
+	RadiusKM                float64
+	PreferredCategoryIDs    []string
 	ExcludeReportedByUserID string
-	// ExcludeBlockedUsersFor hides jobs posted by anyone in a block relationship
-	// with this user, in either direction. Empty = no exclusion.
-	ExcludeBlockedUsersFor string
-	// ViewerUserID marks AlreadyApplied on each returned job when this user has
-	// a proposal on it. Empty = no viewer (anonymous request), always false.
-	ViewerUserID string
+	ExcludeBlockedUsersFor  string
+	ViewerUserID            string
 }
 
-// Haversine SQL expression to calculate distance in km between two lat/lng points.
-// Uses the earth's mean radius of 6371 km.
-// haversineWhere uses ? placeholders for GORM's Where() parameter binding.
+// haversineWhere binds with ? placeholders; haversineSelect inlines values via Sprintf because GORM's Select() does.
 const haversineWhere = `
 	( 6371 * acos(
 		cos(radians(?)) * cos(radians(jpl.latitude)) *
@@ -41,7 +30,6 @@ const haversineWhere = `
 	) )
 `
 
-// haversineSelect uses %f for fmt.Sprintf since GORM Select() inlines the expression.
 const haversineSelect = `
 	( 6371 * acos(
 		cos(radians(%f)) * cos(radians(jpl.latitude)) *
@@ -154,7 +142,6 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 		}
 	}
 
-	// ----- Transform results -----
 	jobsArray := make([]JobPostValue, 0, len(jobResults))
 	for _, row := range jobResults {
 		post := row.JobPost
@@ -177,6 +164,8 @@ func (s *Service) GetJobFeed(params JobFeedParams) ([]JobPostValue, int64, error
 			Email:        post.CreatedBy.Email,
 			PhoneNumber:  post.CreatedBy.PhoneNumber,
 			ProfilePhoto: post.CreatedBy.ProfilePhoto,
+			Rating:       post.CreatedBy.Rating,
+			ReviewsCount: post.CreatedBy.ReviewsCount,
 		}
 		cat := TypeCategory{
 			ID:   post.Category.ID,

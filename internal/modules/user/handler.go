@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"tasksy/lib"
+	"tasksy/middleware"
 	"tasksy/models"
 	"tasksy/pkg/logger"
 
@@ -80,9 +81,6 @@ func (h *Handler) GetStripeConnectStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": status})
 }
 
-// SubmitStripeConnectRequirements lets the caller submit exactly the fields
-// GetStripeConnectStatus flagged as missing (name, phone, address) and get
-// back the refreshed status in the same request.
 func (h *Handler) SubmitStripeConnectRequirements(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
@@ -129,8 +127,7 @@ func (h *Handler) SubmitStripeConnectRequirements(c *gin.Context) {
 		case errors.Is(err, ErrNoConnectDetails):
 			c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
 		case errors.As(err, &stripeErr) && stripeErr.Type == stripe.ErrorTypeInvalidRequest:
-			// Stripe rejected the user's input (e.g. an invalid phone); show
-			// its message, not the raw error with internal request details.
+			// Show Stripe's message for invalid input, not the raw error with request details.
 			c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": stripeErr.Msg, "field": stripeErr.Param})
 		default:
 			c.JSON(http.StatusBadGateway, gin.H{"message": "error", "error": err.Error()})
@@ -152,7 +149,6 @@ func (h *Handler) UpdateUserFeedPreferences(c *gin.Context) {
 		return
 	}
 
-	// Validate every supplied category ID actually exists.
 	if len(req.Categories) > 0 {
 		ids := make([]string, 0, len(req.Categories))
 		for _, cat := range req.Categories {
@@ -170,7 +166,6 @@ func (h *Handler) UpdateUserFeedPreferences(c *gin.Context) {
 		}
 	}
 
-	// Marshal the slice into JSONB.
 	catJSON, err := json.Marshal(req.Categories)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": "failed to encode categories"})
@@ -182,7 +177,6 @@ func (h *Handler) UpdateUserFeedPreferences(c *gin.Context) {
 		Categories: datatypes.JSON(catJSON),
 	}
 
-	// Upsert: create if not exists, update Categories if exists.
 	result := h.service.db.
 		Where(models.UserFeedPreferences{UserID: user.ID}).
 		Assign(models.UserFeedPreferences{Categories: prefs.Categories}).
@@ -194,7 +188,6 @@ func (h *Handler) UpdateUserFeedPreferences(c *gin.Context) {
 		return
 	}
 
-	// If the row already existed, explicitly update categories.
 	if result.RowsAffected == 0 {
 		if err := h.service.db.Model(&prefs).Update("categories", prefs.Categories).Error; err != nil {
 			logger.Log.Error("failed to update feed preferences", zap.Error(err))
@@ -203,7 +196,6 @@ func (h *Handler) UpdateUserFeedPreferences(c *gin.Context) {
 		}
 	}
 
-	// Return the stored preferences hydrated with full category objects from DB.
 	categories, err := h.hydratePreferenceCategories(req.Categories)
 	if err != nil {
 		logger.Log.Warn("failed to hydrate categories after update", zap.Error(err))
@@ -219,8 +211,6 @@ func (h *Handler) UpdateUserFeedPreferences(c *gin.Context) {
 	})
 }
 
-// GetUserFeedPreferences returns the authenticated user's saved category preferences.
-// GET /api/v1/user/:id/feed/preferences
 func (h *Handler) GetUserFeedPreferences(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
@@ -228,7 +218,6 @@ func (h *Handler) GetUserFeedPreferences(c *gin.Context) {
 	err := h.service.db.Where("user_id = ?", user.ID).First(&prefs).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// No preferences saved yet — return empty list.
 			c.JSON(http.StatusOK, gin.H{
 				"message": "success",
 				"data": gin.H{
@@ -242,7 +231,6 @@ func (h *Handler) GetUserFeedPreferences(c *gin.Context) {
 		return
 	}
 
-	// Unmarshal stored JSON → []CategoryItem.
 	var stored []models.CategoryItem
 	if err := json.Unmarshal(prefs.Categories, &stored); err != nil || len(stored) == 0 {
 		c.JSON(http.StatusOK, gin.H{
@@ -255,7 +243,6 @@ func (h *Handler) GetUserFeedPreferences(c *gin.Context) {
 		return
 	}
 
-	// Re-fetch from DB so the response always reflects the current category name.
 	categories, err := h.hydratePreferenceCategories(stored)
 	if err != nil {
 		logger.Log.Warn("failed to hydrate preference categories", zap.Error(err))
@@ -271,8 +258,6 @@ func (h *Handler) GetUserFeedPreferences(c *gin.Context) {
 	})
 }
 
-// hydratePreferenceCategories fetches the current name for each stored category
-// from the DB and returns a merged slice. Missing IDs are silently dropped.
 func (h *Handler) hydratePreferenceCategories(stored []models.CategoryItem) ([]models.CategoryItem, error) {
 	if len(stored) == 0 {
 		return []models.CategoryItem{}, nil
@@ -432,7 +417,6 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 		})
 	}
 
-	// ✅ removed redundant rating recalculation — already computed in service
 	c.JSON(http.StatusOK, gin.H{
 		"user":           res.User, // already has Rating embedded
 		"certifications": userCertifications,
@@ -456,11 +440,13 @@ func (h *Handler) ResetUserPassword(c *gin.Context) {
 
 	}
 	var user models.User
-	if err := h.service.db.Where("phone_number = ? ", data.PhoneNumber).Find(&user).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": "error",
-			"error":   err.Error(),
-		})
+	if err := h.service.db.Where("phone_number = ? ", data.PhoneNumber).First(&user).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": "user not found"})
+		return
+	}
+
+	if middleware.HasRole(user.ID, "admin") {
+		c.JSON(http.StatusForbidden, gin.H{"message": "error", "error": "administrator passwords can't be reset here"})
 		return
 	}
 
@@ -597,7 +583,6 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 		"tokens": tokens,
 	}
 
-	// Include the user's own referral code
 	if userReferralCode != nil {
 		response["my_referral_code"] = map[string]any{
 			"code":                userReferralCode.Code,
@@ -1021,8 +1006,6 @@ func (h *Handler) DeleteCertification(c *gin.Context) {
 		"results": "certification deleted",
 	})
 }
-
-// ── Address handlers ──
 
 func (h *Handler) AddAddress(c *gin.Context) {
 	user := c.MustGet("user").(models.User)

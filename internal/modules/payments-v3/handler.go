@@ -27,7 +27,6 @@ func NewHandler(config *config.Config, service *Service) *Handler {
 func (h *Handler) HandleCreatePaymentIntent(c *gin.Context) {
 	client := c.MustGet("user").(models.User)
 
-	
 	var body struct {
 		ProposalID string `json:"proposal_id" binding:"required"`
 	}
@@ -171,8 +170,6 @@ func (h *Handler) HandleReleaseEscrow(c *gin.Context) {
 	respondRelease(c, released, err)
 }
 
-// HandleReleaseContract lets either party retry release by contract ID, e.g.
-// after auto-release failed or a dispute on a completed contract was resolved.
 func (h *Handler) HandleReleaseContract(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
@@ -211,9 +208,10 @@ func (h *Handler) HandleGetPayoutBalance(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"data": gin.H{
-			"currency":  PaymentCurrency,
-			"available": bal.Available.InexactFloat64(),
-			"pending":   bal.Pending.InexactFloat64(),
+			"currency":           PaymentCurrency,
+			"available":          bal.Available.InexactFloat64(),
+			"pending":            bal.Pending.InexactFloat64(),
+			"minimum_withdrawal": MinimumPayout.InexactFloat64(),
 		},
 	})
 }
@@ -221,8 +219,7 @@ func (h *Handler) HandleGetPayoutBalance(c *gin.Context) {
 func (h *Handler) HandleWithdraw(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
-	// Omit "amount" to withdraw everything available; omit "bank_account_id"
-	// to use the default bank account on Stripe.
+	// Omit amount to withdraw everything; omit bank_account_id for Stripe's default bank.
 	var body struct {
 		Amount        *float64 `json:"amount"`
 		BankAccountID string   `json:"bank_account_id"`
@@ -236,17 +233,23 @@ func (h *Handler) HandleWithdraw(c *gin.Context) {
 
 	withdrawal, err := h.service.Withdraw(&user, body.Amount, body.BankAccountID)
 	if err != nil {
-		status := http.StatusBadGateway
+		status, msg := http.StatusBadGateway, err.Error()
+		var rejected *PayoutRejectedError
 		switch {
 		case errors.Is(err, ErrBankAccountNotFound):
 			status = http.StatusNotFound
 		case errors.Is(err, ErrNoStripeAccount), errors.Is(err, ErrNoBankAccount),
 			errors.Is(err, ErrBankAccountNotLinked),
 			errors.Is(err, ErrNothingToWithdraw), errors.Is(err, ErrInvalidAmount),
-			errors.Is(err, ErrInsufficientBalance):
+			errors.Is(err, ErrInsufficientBalance), errors.Is(err, ErrBelowMinimumPayout):
 			status = http.StatusBadRequest
+		case errors.As(err, &rejected):
+			msg = rejected.UserMessage()
+			if rejected.Rejected() {
+				status = http.StatusBadRequest
+			}
 		}
-		c.JSON(status, gin.H{"message": "error", "error": err.Error()})
+		c.JSON(status, gin.H{"message": "error", "error": msg})
 		return
 	}
 
@@ -280,24 +283,31 @@ func (h *Handler) HandleGetWallet(c *gin.Context) {
 		"message": "success",
 		"data": gin.H{
 			"balance":               wallet.Balance,
-			"transactions":          wallet.Transactions,
-			"escrow_amount":         wallet.EscrowAmount,
-			"available_to_withdraw": wallet.AvailableToWithdraw,
+			"available_to_withdraw": wallet.Balance,
 			"pending_settlement":    wallet.PendingSettlement,
+			"total_balance":         wallet.TotalBalance,
+			"escrow_amount":         wallet.EscrowAmount,
+			"transactions":          wallet.Transactions,
+			"minimum_withdrawal":    MinimumPayout.InexactFloat64(),
 		},
 	})
 }
 
-// HandleRefund is admin-only (see router.go) and delegates to the same
-// escrow-aware refund logic as HandleAdminRefundContract: it refuses a
-// transaction that's already refunded and reverses the Stripe transfer first
-// if the escrow was already released to the freelancer.
+func refundAmount(v *float64) *decimal.Decimal {
+	if v == nil {
+		return nil
+	}
+	d := decimal.NewFromFloat(*v)
+	return &d
+}
+
 func (h *Handler) HandleRefund(c *gin.Context) {
 	admin := c.MustGet("user").(models.User)
 	transactionID := c.Param("id")
 
 	var body struct {
-		Reason string `json:"reason" binding:"required"`
+		Reason string   `json:"reason" binding:"required"`
+		Amount *float64 `json:"amount"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": "a reason for the refund is required"})
@@ -312,7 +322,7 @@ func (h *Handler) HandleRefund(c *gin.Context) {
 
 	stripe.Key = h.config.Stripe.SecretKey
 
-	refunded, err := h.service.AdminRefundContract(transaction.ContractID, admin.ID, body.Reason)
+	refunded, err := h.service.AdminRefundContract(transaction.ContractID, admin.ID, body.Reason, refundAmount(body.Amount))
 	if err != nil {
 		respondRefund(c, err)
 		return
@@ -331,6 +341,7 @@ func (h *Handler) HandleListTransactions(c *gin.Context) {
 		ToUserID        string    `json:"to_user_id"`
 		ContractID      string    `json:"contract_id"`
 		GrossAmount     float64   `json:"gross_amount"`
+		RefundedAmount  float64   `json:"refunded_amount"`
 		PlatformFee     float64   `json:"platform_fee"`
 		NetAmount       float64   `json:"net_amount"`
 		Currency        string    `json:"currency"`
@@ -341,7 +352,7 @@ func (h *Handler) HandleListTransactions(c *gin.Context) {
 	var paid []TxRow
 	h.service.db.Model(&models.PaymentTransactionV3{}).
 		Where("from_user_id = ?", user.ID).
-		Select("id, created_at as transaction_date, from_user_id, to_user_id, contract_id, gross_amount, platform_fee, net_amount, currency, status").
+		Select("id, created_at as transaction_date, from_user_id, to_user_id, contract_id, gross_amount, refunded_amount, platform_fee, net_amount, currency, status").
 		Order("created_at DESC").
 		Find(&paid)
 	for i := range paid {
@@ -351,7 +362,7 @@ func (h *Handler) HandleListTransactions(c *gin.Context) {
 	var received []TxRow
 	h.service.db.Model(&models.PaymentTransactionV3{}).
 		Where("to_user_id = ?", user.ID).
-		Select("id, created_at as transaction_date, from_user_id, to_user_id, contract_id, gross_amount, platform_fee, net_amount, currency, status").
+		Select("id, created_at as transaction_date, from_user_id, to_user_id, contract_id, gross_amount, refunded_amount, platform_fee, net_amount, currency, status").
 		Order("created_at DESC").
 		Find(&received)
 	for i := range received {
@@ -362,13 +373,17 @@ func (h *Handler) HandleListTransactions(c *gin.Context) {
 
 	var totalPaid, totalEarned, totalPlatformFees float64
 	for _, t := range paid {
-		if t.Status == "held" || t.Status == "released" {
+		switch t.Status {
+		case escrowHeld, escrowReleased:
 			totalPaid += t.GrossAmount
 			totalPlatformFees += t.PlatformFee
+		case escrowRefunded:
+			totalPaid += t.GrossAmount - t.RefundedAmount
+			totalPlatformFees += t.GrossAmount - t.RefundedAmount
 		}
 	}
 	for _, t := range received {
-		if t.Status == "released" {
+		if t.Status == escrowReleased {
 			totalEarned += t.NetAmount
 		}
 	}
@@ -512,6 +527,13 @@ func (h *Handler) HandleAdminGetTransaction(c *gin.Context) {
 	})
 }
 
+// A refunded payment still counts for what the platform kept, never for freelancer net.
+const (
+	volumeSQL = "COALESCE(SUM(gross_amount::numeric - refunded_amount::numeric), 0)"
+	feesSQL   = "COALESCE(SUM(CASE WHEN status = 'refunded' THEN gross_amount::numeric - refunded_amount::numeric ELSE platform_fee::numeric END), 0)"
+	netSQL    = "COALESCE(SUM(CASE WHEN status = 'refunded' THEN 0 ELSE net_amount::numeric END), 0)"
+)
+
 func (h *Handler) HandleAdminPaymentStats(c *gin.Context) {
 	days := 30
 	if d, err := strconv.Atoi(c.Query("days")); err == nil && d > 0 && d <= 365 {
@@ -529,8 +551,8 @@ func (h *Handler) HandleAdminPaymentStats(c *gin.Context) {
 	daily := make([]DailyRow, 0)
 	var query *gorm.DB = h.service.db.Model(&models.PaymentTransactionV3{})
 	query.
-		Select("TO_CHAR(created_at, 'YYYY-MM-DD') as date, COALESCE(SUM(gross_amount::numeric), 0) as gross_volume, COALESCE(SUM(platform_fee::numeric), 0) as platform_fee, COUNT(*) as count").
-		Where("created_at >= ? AND status != ?", since, escrowRefunded).
+		Select("TO_CHAR(created_at, 'YYYY-MM-DD') as date, "+volumeSQL+" as gross_volume, "+feesSQL+" as platform_fee, COUNT(*) as count").
+		Where("created_at >= ?", since).
 		Group("TO_CHAR(created_at, 'YYYY-MM-DD')").
 		Order("date ASC").
 		Scan(&daily)
@@ -547,15 +569,11 @@ func (h *Handler) HandleAdminPaymentStats(c *gin.Context) {
 		Scan(&statusBreakdown)
 
 	var totalVolume, totalFees, totalNet float64
-	h.service.db.Model(&models.PaymentTransactionV3{}).
-		Where("created_at >= ? AND status != ?", since, escrowRefunded).
-		Select("COALESCE(SUM(gross_amount::numeric), 0)").Scan(&totalVolume)
-	h.service.db.Model(&models.PaymentTransactionV3{}).
-		Where("created_at >= ? AND status != ?", since, escrowRefunded).
-		Select("COALESCE(SUM(platform_fee::numeric), 0)").Scan(&totalFees)
-	h.service.db.Model(&models.PaymentTransactionV3{}).
-		Where("created_at >= ? AND status != ?", since, escrowRefunded).
-		Select("COALESCE(SUM(net_amount::numeric), 0)").Scan(&totalNet)
+	for sqlExpr, dest := range map[string]*float64{volumeSQL: &totalVolume, feesSQL: &totalFees, netSQL: &totalNet} {
+		h.service.db.Model(&models.PaymentTransactionV3{}).
+			Where("created_at >= ?", since).
+			Select(sqlExpr).Scan(dest)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",

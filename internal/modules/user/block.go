@@ -30,9 +30,7 @@ func (s *Service) BlockUser(blockerID, blockedID string) (*models.UserBlock, err
 		return nil, ErrAlreadyBlocked
 	}
 
-	// A prior or current job connection (as client or freelancer, either
-	// direction) blocks the block — matches "if user has connection like
-	// job in working or previously done, so he can't block it".
+	// Users who share a current or past job (in either role) can't block each other.
 	var contractCount int64
 	s.db.Model(&models.Contract{}).
 		Where("(client_id = ? AND freelancer_id = ?) OR (client_id = ? AND freelancer_id = ?)",

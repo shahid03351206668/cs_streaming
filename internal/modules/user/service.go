@@ -102,8 +102,6 @@ func (s *Service) DeleteDeviceToken(userID, token string) error {
 	return nil
 }
 
-// service.go
-
 type UserProfileResponse struct {
 	User    UserProfile      `json:"user"`
 	Reviews []map[string]any `json:"reviews"` // was []models.Review
@@ -132,9 +130,10 @@ func (s *Service) GetUserProfile(id string) (*UserProfileResponse, error) {
 			"comment":    i.Comment,
 			"created_at": i.CreatedAt,
 			"reviewed_by": map[string]string{
-				"id":         i.Reviewer.ID,
-				"last_name":  i.Reviewer.LastName,
-				"first_name": i.Reviewer.FirstName,
+				"id":            i.Reviewer.ID,
+				"last_name":     i.Reviewer.LastName,
+				"first_name":    i.Reviewer.FirstName,
+				"profile_photo": i.Reviewer.ProfilePhoto,
 			},
 		})
 	}
@@ -186,17 +185,6 @@ func (s *Service) CreateUser(data UserData, file *multipart.FileHeader, clientIP
 	if file != nil {
 		image, _ := file.Open()
 		fileType := file.Header.Get("Content-Type")
-		// allowedTypes := map[string]bool{
-		// 	"image/jpeg": true,
-		// 	"image/jpg":  true,
-		// 	"image/png":  true,
-		// 	"image/webp": true,
-		// }
-
-		// fileType := file.Header.Get("Content-Type")
-		// if !allowedTypes[fileType] {
-		// 	return nil, errors.New("Invalid filetype for user profile image allowed types are [jpeg, jpg, png, webp]")
-		// }
 
 		url, _, err := s.s3Client.UploadFile(image, file.Filename, fileType, "", "")
 		if err != nil {
@@ -452,22 +440,6 @@ func (s *Service) RedeemCode(tx *gorm.DB, code string, UserID string) error {
 		return errors.New("cannot refer yourself")
 	}
 
-	// if err := tx.Model(&models.User{}).Where("id = ?", UserID).
-	// 	Update("referred_by_id", refCode.OwnerID).Error; err != nil {
-	// 	return err
-	// }
-
-	// usage := models.ReferralUsage{
-	// 	ReferralCodeID: refCode.ID,
-	// 	ReferrerID:     refCode.OwnerID,
-	// 	RefereeID:      UserID,
-	// 	RewardAmount:   refCode.,
-	// 	Status:         "pending",
-	// }
-	// if err := tx.Create(&usage).Error; err != nil {
-	// 	return err
-	// }
-
 	return tx.Model(&refCode).UpdateColumn("current_uses", gorm.Expr("current_uses + ?", 1)).Error
 }
 
@@ -636,8 +608,7 @@ func (s *Service) AddBankAccount(user *models.User, accountHolderName, sortCode,
 		return fmt.Errorf("failed to attach bank account: %w", err)
 	}
 
-	// Save a local row so the bank shows in the user's list and can be chosen
-	// as a withdrawal destination.
+	// Saved locally so the bank shows in the user's list and can be chosen for withdrawal.
 	var count int64
 	s.db.Model(&models.UserBankAccount{}).Where("user_id = ?", user.ID).Count(&count)
 	record := models.UserBankAccount{
@@ -695,9 +666,7 @@ func (s *Service) ChangePassword(user *models.User, currentPassword, newPassword
 	return s.db.Model(user).Update("password", string(hashed)).Error
 }
 
-// DeleteAccount disables the user's account rather than removing the row —
-// this preserves referential integrity with jobs, contracts, and payment
-// history while permanently blocking login.
+// Disables rather than deletes, preserving jobs, contracts and payment history.
 func (s *Service) DeleteAccount(user *models.User) error {
 	if err := s.db.Model(user).Update("disabled", true).Error; err != nil {
 		return err

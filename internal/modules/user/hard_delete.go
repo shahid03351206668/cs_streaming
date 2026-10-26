@@ -8,15 +8,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// HardDeleteAccount permanently removes a user and every row across the
-// schema that references them. Every model embeds BaseModel's soft-delete
-// (deleted_at), so a plain Delete() would only hide rows — Unscoped() is
-// required throughout to actually purge them. This is irreversible.
-//
-// Known limitation: uploaded files (S3 objects for profile photo, job media,
-// portfolio, certifications, chat/proposal attachments) are not removed from
-// storage — only their DB rows are. The user's Stripe Connect account (if
-// any) is also left untouched. Both would need separate cleanup.
+// Irreversible: every model soft-deletes, so Unscoped() is needed to purge rows; S3 files and the Stripe account are not cleaned up.
 func (s *Service) HardDeleteAccount(userID string) error {
 	var exists models.User
 	if err := s.db.First(&exists, "id = ?", userID).Error; err != nil {
@@ -49,8 +41,7 @@ func (s *Service) HardDeleteAccount(userID string) error {
 		var messageIDs []string
 		tx.Model(&models.ChatMessage{}).Where("sender_id = ?", userID).Pluck("id", &messageIDs)
 
-		// Reviews about to be deleted may leave someone else's target_id rating
-		// stale — collect those recipients now so we can recompute after commit.
+		// Deleted reviews can leave other users' ratings stale; collect them to recompute after commit.
 		var affectedRatingTargets []string
 		tx.Model(&models.Review{}).
 			Where("(reviewer_id = ? OR target_id = ? OR contract_id IN ?) AND target_id <> ?",
@@ -59,7 +50,6 @@ func (s *Service) HardDeleteAccount(userID string) error {
 			Pluck("target_id", &affectedRatingTargets)
 
 		steps := []func() error{
-			// Proposal attachments, then proposals on this user's own jobs / submitted by them.
 			func() error {
 				return tx.Unscoped().Where("proposal_id IN ?", orNilList(proposalIDs)).
 					Delete(&models.ProposalAttachment{}).Error
@@ -88,7 +78,6 @@ func (s *Service) HardDeleteAccount(userID string) error {
 					Where("filed_by_id = ? OR contract_id IN ?", userID, orNilList(contractIDs)).
 					Delete(&models.Dispute{}).Error
 			},
-			// Financial records mentioning this user — removed as requested; see doc comment.
 			func() error {
 				var txnIDs []string
 				tx.Model(&models.PaymentTransactionV3{}).
@@ -112,8 +101,7 @@ func (s *Service) HardDeleteAccount(userID string) error {
 			func() error {
 				return tx.Unscoped().Where("id IN ?", orNilList(jobPostIDs)).Delete(&models.JobPost{}).Error
 			},
-			// Chat: remove this user's own messages/attachments and their participant
-			// record, but leave the conversation shell (and the other party's history) intact.
+			// Remove this user's messages and participant row but keep the conversation for the other party.
 			func() error {
 				return tx.Unscoped().Where("message_id IN ?", orNilList(messageIDs)).
 					Delete(&models.ChatAttachment{}).Error
@@ -194,9 +182,6 @@ func (s *Service) HardDeleteAccount(userID string) error {
 	})
 }
 
-// recomputeRatingAggregate recalculates a user's denormalized rating and
-// reviews_count from the reviews table. Shared by review creation and by
-// hard-delete, which can remove reviews that belonged to other users.
 func recomputeRatingAggregate(db *gorm.DB, userID string) {
 	var agg struct {
 		Avg   float64

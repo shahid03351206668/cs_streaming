@@ -6,10 +6,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// DB gives the suite direct read access to payment state, so checks can
-// assert invariants the API doesn't expose (one payment row per contract,
-// exact stored amounts, no escrow stuck mid-transition). Its only write is
-// granting the admin role to the suite's own admin test user.
+// Direct DB access for invariants the API doesn't expose; its only write grants the admin role to the suite's admin user.
 type DB struct{ g *gorm.DB }
 
 func openDB(dsn string) (*DB, error) {
@@ -27,6 +24,14 @@ func (d *DB) grantAdmin(userID string) error {
 	return d.g.Exec(`INSERT INTO user_roles (user_id, role_name) VALUES (?, 'admin') ON CONFLICT DO NOTHING`, userID).Error
 }
 
+func (d *DB) revokeAdmin(userID string) error {
+	return d.g.Exec(`DELETE FROM user_roles WHERE user_id = ? AND role_name = 'admin'`, userID).Error
+}
+
+func (d *DB) setProfilePhoto(userID, url string) error {
+	return d.g.Exec(`UPDATE users SET profile_photo = ? WHERE id = ?`, url, userID).Error
+}
+
 type paymentRow struct {
 	ID                    string
 	Status                string
@@ -37,6 +42,7 @@ type paymentRow struct {
 	RefundedByAdminID     string
 	RefundReason          string
 	GrossAmount           float64
+	RefundedAmount        float64
 	ClientFee             float64
 	FreelancerFee         float64
 	PlatformFee           float64
@@ -58,7 +64,7 @@ func (d *DB) payments(contractID string) ([]paymentRow, error) {
 			COALESCE(stripe_reversal_id, '') AS stripe_reversal_id,
 			COALESCE(refunded_by_admin_id, '') AS refunded_by_admin_id,
 			COALESCE(refund_reason, '') AS refund_reason,
-			gross_amount::float8 AS gross_amount, client_fee::float8 AS client_fee,
+			gross_amount::float8 AS gross_amount, refunded_amount::float8 AS refunded_amount, client_fee::float8 AS client_fee,
 			freelancer_fee::float8 AS freelancer_fee, platform_fee::float8 AS platform_fee,
 			net_amount::float8 AS net_amount
 		FROM payment_transactions_v3 WHERE contract_id = ? AND deleted_at IS NULL ORDER BY created_at`, contractID).

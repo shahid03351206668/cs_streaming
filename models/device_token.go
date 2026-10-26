@@ -2,8 +2,6 @@ package models
 
 import "time"
 
-// DeviceToken stores an FCM device token for a user.
-// A user may have multiple tokens (multiple devices), but each token is globally unique.
 type DeviceToken struct {
 	BaseModel
 	UserID     string    `gorm:"not null;index" json:"user_id"`

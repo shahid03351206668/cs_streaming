@@ -82,7 +82,6 @@ func (Certification) TableName() string {
 	return "certifications"
 }
 
-// CategoryItem is a minimal {id, name} pair stored in feed preferences.
 type CategoryItem struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`

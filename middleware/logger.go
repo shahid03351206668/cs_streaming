@@ -47,7 +47,6 @@ func LoggerMiddleware() gin.HandlerFunc {
 		case status >= 400:
 			logger.Log.Warn("client error", fields...)
 		default:
-			// logger.Log.Info("request completed", fields...)
 		}
 	}
 }

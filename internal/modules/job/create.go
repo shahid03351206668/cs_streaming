@@ -38,12 +38,14 @@ type TypeMedia struct {
 }
 
 type TypeUser struct {
-	ID           string `json:"id"`
-	FirstName    string `json:"first_name"`
-	LastName     string `json:"last_name"`
-	Email        string `json:"email"`
-	PhoneNumber  string `json:"phone_number"`
-	ProfilePhoto string `json:"profile_photo,omitempty"`
+	ID           string  `json:"id"`
+	FirstName    string  `json:"first_name"`
+	LastName     string  `json:"last_name"`
+	Email        string  `json:"email"`
+	PhoneNumber  string  `json:"phone_number"`
+	ProfilePhoto string  `json:"profile_photo,omitempty"`
+	Rating       float64 `json:"rating"`
+	ReviewsCount int     `json:"reviews_count"`
 }
 
 type JobPostLocation struct {
@@ -231,18 +233,11 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 		return nil, err
 	}
 
-	// New job posts affect the public feed; ensure cached feed pages refresh quickly.
 	s.InvalidateJobFeedCache()
 
 	if s.notifier != nil && jobPost.Status == models.JobStatusOpen {
-		// go func(post models.JobPost, loc models.JobPostLocation) {
-		// ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		// defer cancel()
-		// _ = s.notifier.NotifyNewJobPostedToInterestedUsers(ctx, &post, &loc)
-		// }(jobPost, jobLocation)
 	}
 
-	// Upload video files and queue for processing (after transaction commits)
 	for _, f := range videos {
 		fileType := f.Header.Get("Content-Type")
 		rawKey := fmt.Sprintf("raw/%s/%s", jobPost.ID, f.Filename)
@@ -273,9 +268,6 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 	return &jobPost, nil
 }
 
-// DeleteJobPost removes a job post owned by userID, provided the job is not
-// in progress and has no active/disputed contract. Associated S3 media is
-// cleaned up before the database row is deleted.
 func (s *Service) DeleteJobPost(jobID string, userID string) error {
 	var job models.JobPost
 	if err := s.db.First(&job, "id = ?", jobID).Error; err != nil {
@@ -289,7 +281,6 @@ func (s *Service) DeleteJobPost(jobID string, userID string) error {
 		return ErrJobNotOwned
 	}
 
-	// Block deletion when the job itself is in an active work state.
 	blocked := map[string]bool{
 		models.JobStatusInProgress: true,
 	}
@@ -297,7 +288,6 @@ func (s *Service) DeleteJobPost(jobID string, userID string) error {
 		return ErrJobCannotBeDeleted
 	}
 
-	// Block deletion when a live contract exists for this job.
 	var activeContracts int64
 	s.db.Model(&models.Contract{}).
 		Where("job_post_id = ? AND status IN ?", jobID, []string{
@@ -310,7 +300,7 @@ func (s *Service) DeleteJobPost(jobID string, userID string) error {
 		return ErrJobCannotBeDeleted
 	}
 
-	// Collect S3 keys before deleting DB rows (CASCADE will remove JobMedia rows).
+	// Collect S3 keys first; the cascade removes the media rows.
 	var media []models.JobMedia
 	s.db.Where("job_id = ?", jobID).Find(&media)
 
@@ -318,7 +308,7 @@ func (s *Service) DeleteJobPost(jobID string, userID string) error {
 		return fmt.Errorf("deleting job: %w", err)
 	}
 
-	// Best-effort S3 cleanup — log failures but don't fail the request.
+	// Best-effort: log failures but don't fail the request.
 	for _, m := range media {
 		if m.ObjectKey != "" {
 			if err := s.s3Client.DeleteObject(m.ObjectKey); err != nil {

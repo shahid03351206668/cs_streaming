@@ -5,9 +5,6 @@ import (
 	"strconv"
 )
 
-// Helpers for navigating the map[string]any shapes from encoding/json, so
-// response handling doesn't need a struct per endpoint.
-
 func dig(m map[string]any, path ...string) any {
 	var cur any = m
 	for _, p := range path {
@@ -30,8 +27,7 @@ func getStr(m map[string]any, path ...string) string {
 	return v
 }
 
-// getNum reads a JSON number, or a numeric string — decimal.Decimal fields
-// (amounts on withdrawals, payment rows) marshal as strings.
+// decimal.Decimal fields marshal as strings, so numeric strings are accepted.
 func getNum(m map[string]any, path ...string) float64 {
 	switch v := dig(m, path...).(type) {
 	case float64:
@@ -76,7 +72,6 @@ func getRows(m map[string]any, path ...string) []map[string]any {
 	return out
 }
 
-// brief renders any value as a short single-line string for failure messages.
 func brief(v any) string {
 	s := fmt.Sprint(v)
 	if len(s) > 140 {

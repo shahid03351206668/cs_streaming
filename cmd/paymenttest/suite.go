@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-// Stripe test payment methods.
 const (
 	pmVisa          = "pm_card_visa"
 	pmBypassPending = "pm_card_bypassPending" // funds land in the available balance immediately
@@ -29,6 +28,7 @@ type Suite struct {
 	catID      string
 
 	inProgressJobID string // a job whose proposal was accepted; must refuse new proposals
+	webhookSecret   string // the server's webhook signing secret; enables signed replay checks
 }
 
 type TestUser struct {
@@ -39,12 +39,12 @@ type TestUser struct {
 	AccessToken     string
 	StripeAccountID string
 	Phone           string // phone submitted to Stripe via the requirements endpoint
+	LoginPhone      string // phone the account registered with
 	BankID          string // local id of the default bank account
 	BankStripeID    string
 	Ledger          *Ledger
 }
 
-// Flow is one job -> proposal -> contract -> payment.
 type Flow struct {
 	Label           string
 	Client          *TestUser
@@ -74,7 +74,6 @@ func randomUKPhone() string {
 	return fmt.Sprintf("+4477%08d", rand.Intn(100000000))
 }
 
-// expect turns a status/response pair into an error unless the status is one of want.
 func expect(status int, resp map[string]any, want ...int) error {
 	for _, w := range want {
 		if status == w {
@@ -84,8 +83,6 @@ func expect(status int, resp map[string]any, want ...int) error {
 	return fmt.Errorf("status %d (want %v): %s", status, want, errMsg(resp))
 }
 
-// expectRefused passes for any 4xx and fails for 2xx/5xx — a refusal must be
-// a deliberate client error, never a crash or a silent success.
 func expectRefused(status int, resp map[string]any, mustContain string) (string, error) {
 	if status < 400 || status >= 500 {
 		return "", fmt.Errorf("expected a 4xx refusal, got %d: %s", status, brief(resp))
@@ -114,9 +111,6 @@ func pollUntil(timeout time.Duration, fn func() (string, bool, error)) (string, 
 	return "", fmt.Errorf("timed out after %s (last: %s)", timeout, last)
 }
 
-// --- users ----------------------------------------------------------------
-
-// register posts urlencoded form data, matching /api/auth/register's `form:` binding.
 func (s *Suite) register(u *TestUser, first, last string) (string, error) {
 	form := url.Values{
 		"first_name":   {first},
@@ -134,6 +128,7 @@ func (s *Suite) register(u *TestUser, first, last string) (string, error) {
 	}
 	u.AccessToken = getStr(resp, "tokens", "access_token")
 	u.ID = getStr(resp, "user", "id")
+	u.LoginPhone = form.Get("phone_number")
 	u.StripeAccountID = getStr(resp, "user", "stripe_connect_account_id")
 	if u.AccessToken == "" || u.ID == "" {
 		return "", fmt.Errorf("missing token/id in response: %v", resp)
@@ -164,6 +159,9 @@ func (s *Suite) login(u *TestUser) (string, error) {
 	if id := getStr(resp, "user", "stripe_connect_account_id"); id != "" {
 		u.StripeAccountID = id
 	}
+	if u.LoginPhone == "" {
+		u.LoginPhone = getStr(resp, "user", "phone_number")
+	}
 	return "logged in", nil
 }
 
@@ -179,9 +177,6 @@ func (s *Suite) verifyIdentity(u *TestUser) (string, error) {
 	return "identity_verified=true", err
 }
 
-// --- jobs, proposals, contracts --------------------------------------------
-
-// createJob posts urlencoded form data, matching /api/job/create's `form:` binding.
 func (s *Suite) createJob(owner *TestUser, title string, budget float64) (string, error) {
 	form := url.Values{
 		"category_id": {s.catID},
@@ -237,7 +232,6 @@ func (s *Suite) createContract(token, proposalID string, amount float64, start, 
 	}, nil)
 }
 
-// setupFlow creates job -> proposal -> acceptance -> contract, aborting on failure.
 func (s *Suite) setupFlow(label string, client, freelancer *TestUser, bid float64) *Flow {
 	f := &Flow{Label: label, Client: client, Freelancer: freelancer, Fees: computeFees(bid, s.settings)}
 	s.r.MustCheck(label+": client posts job", func() (string, error) {
@@ -277,8 +271,6 @@ func (s *Suite) setupFlow(label string, client, freelancer *TestUser, bid float6
 	return f
 }
 
-// --- payments ---------------------------------------------------------------
-
 func (s *Suite) createIntent(token, proposalID string, extra map[string]any) (int, map[string]any, error) {
 	body := map[string]any{"proposal_id": proposalID}
 	for k, v := range extra {
@@ -294,7 +286,6 @@ func (s *Suite) confirmIntent(piID, pm string) (map[string]any, error) {
 	}, "")
 }
 
-// contractTransactions returns every payment row the client sees for a contract.
 func (s *Suite) contractTransactions(token, contractID string) ([]map[string]any, map[string]any, error) {
 	status, resp, err := s.api.Do("GET", "/api/v3/payments/transactions", token, nil, nil)
 	if err != nil {
@@ -329,8 +320,6 @@ func (s *Suite) waitForStatus(token, contractID, want string, timeout time.Durat
 	return found, err
 }
 
-// payFlow creates the intent and confirms it with pm, then waits for the
-// charge.succeeded webhook to record exactly one held payment.
 func (s *Suite) payFlow(f *Flow, pm string) {
 	s.r.MustCheck(f.Label+": client creates payment intent", func() (string, error) {
 		status, resp, err := s.createIntent(f.Client.AccessToken, f.ProposalID, nil)
@@ -378,9 +367,6 @@ func (s *Suite) releaseContract(u *TestUser, contractID string) (int, map[string
 	return s.api.Do("POST", "/api/v3/escrow/contracts/"+contractID+"/release", u.AccessToken, nil, nil)
 }
 
-// --- stripe verification ------------------------------------------------------
-
-// verifyTransfer checks the Stripe transfer for a released flow end to end.
 func (s *Suite) verifyTransfer(f *Flow) {
 	s.r.Check(f.Label+": stripe transfer matches escrow exactly", func() (string, error) {
 		list, err := s.sc.Get("/transfers?limit=10&transfer_group="+f.ContractID, "")
@@ -422,10 +408,6 @@ func (s *Suite) noTransfer(f *Flow) {
 	})
 }
 
-// --- DB invariants --------------------------------------------------------------
-
-// checkPaymentRow asserts the stored payment + escrow for a flow: exactly one
-// of each, amounts exactly as computed, both in the expected status.
 func (s *Suite) checkPaymentRow(f *Flow, wantStatus string) {
 	name := f.Label + ": DB has exactly one payment+escrow, status " + wantStatus
 	if s.db == nil {
@@ -488,19 +470,17 @@ func (s *Suite) checkPaymentRow(f *Flow, wantStatus string) {
 	})
 }
 
-// --- wallet model ----------------------------------------------------------------
-
-// Ledger is the suite's own model of what a user's wallet must show.
 type Ledger struct {
 	held        map[string]float64 // contract -> freelancer net, still in escrow
 	released    map[string]float64 // contract -> freelancer net, transferred
 	withdrawals []float64
 	paid        map[string]float64 // transaction -> client total (client side)
 	refunded    map[string]bool    // transaction -> refunded (client side)
+	kept        map[string]float64 // transaction -> amount the platform kept after a partial refund
 }
 
 func newLedger() *Ledger {
-	return &Ledger{held: map[string]float64{}, released: map[string]float64{}, paid: map[string]float64{}, refunded: map[string]bool{}}
+	return &Ledger{held: map[string]float64{}, released: map[string]float64{}, paid: map[string]float64{}, refunded: map[string]bool{}, kept: map[string]float64{}}
 }
 
 func (l *Ledger) hold(contract string, net float64) { l.held[contract] = net }
@@ -508,11 +488,12 @@ func (l *Ledger) release(contract string) {
 	l.released[contract] = l.held[contract]
 	delete(l.held, contract)
 }
-func (l *Ledger) dropHeld(contract string)     { delete(l.held, contract) }
-func (l *Ledger) dropReleased(contract string) { delete(l.released, contract) }
-func (l *Ledger) withdraw(amount float64)      { l.withdrawals = append(l.withdrawals, amount) }
-func (l *Ledger) pay(tx string, total float64) { l.paid[tx] = total }
-func (l *Ledger) refund(tx string)             { l.refunded[tx] = true }
+func (l *Ledger) dropHeld(contract string)       { delete(l.held, contract) }
+func (l *Ledger) dropReleased(contract string)   { delete(l.released, contract) }
+func (l *Ledger) withdraw(amount float64)        { l.withdrawals = append(l.withdrawals, amount) }
+func (l *Ledger) pay(tx string, total float64)   { l.paid[tx] = total }
+func (l *Ledger) refund(tx string)               { l.refunded[tx] = true }
+func (l *Ledger) keep(tx string, amount float64) { l.kept[tx] = amount }
 
 func sum(m map[string]float64) float64 {
 	t := 0.0
@@ -555,8 +536,6 @@ func sameAmounts(got, want []float64) bool {
 	return true
 }
 
-// checkWallet compares GET /api/v3/wallet against the ledger: totals, every
-// transaction line, no duplicate lines, and the live Stripe balance.
 func (s *Suite) checkWallet(u *TestUser, when string) {
 	l := u.Ledger
 	var wallet map[string]any
@@ -570,8 +549,8 @@ func (s *Suite) checkWallet(u *TestUser, when string) {
 		}
 		wallet = getMap(resp, "data")
 		var problems []string
-		if got, want := getNum(wallet, "balance"), l.balance(); !eq(got, want) {
-			problems = append(problems, fmt.Sprintf("balance=%.2f want %.2f", got, want))
+		if got, want := getNum(wallet, "total_balance"), l.balance(); !eq(got, want) {
+			problems = append(problems, fmt.Sprintf("total_balance=%.2f want %.2f", got, want))
 		}
 		if got, want := getNum(wallet, "escrow_amount"), sum(l.held); !eq(got, want) {
 			problems = append(problems, fmt.Sprintf("escrow_amount=%.2f want %.2f", got, want))
@@ -618,10 +597,7 @@ func (s *Suite) checkWallet(u *TestUser, when string) {
 	if u.StripeAccountID == "" || wallet == nil {
 		return
 	}
-	// The regression for the "available balance £0.80 but withdrawal refused"
-	// report: the withdrawable figure must come from Stripe, agree with the
-	// payout-balance endpoint, and Stripe's total must equal the ledger.
-	s.r.Check(u.Label+" wallet "+when+": available_to_withdraw is Stripe's real balance", func() (string, error) {
+	s.r.Check(u.Label+" wallet "+when+": balance is only what Stripe lets out; the rest is in process", func() (string, error) {
 		status, resp, err := s.api.Do("GET", "/api/v3/wallet/payout-balance", u.AccessToken, nil, nil)
 		if err != nil {
 			return "", err
@@ -634,13 +610,16 @@ func (s *Suite) checkWallet(u *TestUser, when string) {
 			return "", fmt.Errorf("wallet response has no available_to_withdraw field")
 		}
 		wAvail, wPending := getNum(wallet, "available_to_withdraw"), getNum(wallet, "pending_settlement")
+		if !eq(getNum(wallet, "balance"), wAvail) {
+			return "", fmt.Errorf("balance=%.2f but available_to_withdraw=%.2f: balance must be the withdrawable amount only", getNum(wallet, "balance"), wAvail)
+		}
 		if !eq(wAvail, pbAvail) || !eq(wPending, pbPending) {
 			return "", fmt.Errorf("wallet says available=%.2f pending=%.2f, payout-balance says %.2f/%.2f", wAvail, wPending, pbAvail, pbPending)
 		}
 		if total := round2(wAvail + wPending); !eq(total, l.balance()) {
 			return "", fmt.Errorf("stripe holds %.2f (available %.2f + pending %.2f) but ledger balance is %.2f", total, wAvail, wPending, l.balance())
 		}
-		return fmt.Sprintf("available=%.2f pending=%.2f == ledger %.2f", wAvail, wPending, l.balance()), nil
+		return fmt.Sprintf("balance=available=%.2f, in process=%.2f, total=%.2f", wAvail, wPending, l.balance()), nil
 	})
 }
 

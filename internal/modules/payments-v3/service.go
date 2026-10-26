@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"tasksy/models"
+	"tasksy/pkg/logger"
 
 	"github.com/shopspring/decimal"
 	"github.com/stripe/stripe-go/v84"
@@ -16,6 +17,7 @@ import (
 	"github.com/stripe/stripe-go/v84/customer"
 	"github.com/stripe/stripe-go/v84/paymentintent"
 	"github.com/stripe/stripe-go/v84/token"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -34,11 +36,11 @@ type TypeWalletTransaction struct {
 }
 
 type UserWalletVal struct {
-	Balance             float64
-	Transactions        []TypeWalletTransaction
-	EscrowAmount        float64
-	AvailableToWithdraw float64
-	PendingSettlement   float64
+	Balance           float64
+	TotalBalance      float64
+	PendingSettlement float64
+	EscrowAmount      float64
+	Transactions      []TypeWalletTransaction
 }
 
 type Service struct {
@@ -70,9 +72,6 @@ var (
 )
 
 func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposal *models.Proposal) (*stripe.PaymentIntent, *FeeBreakdown, error) {
-	// if proposal.Status != models.ProposalStatusAccepted {
-	// 	return nil, nil, ErrProposalNotAccepted
-	// }
 
 	if freelancer.StripeConnectAccountID == "" {
 		return nil, nil, errors.New("freelancer does not have a stripe account")
@@ -119,27 +118,46 @@ func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposal 
 
 	params.IdempotencyKey = stripe.String("v3-intent-" + proposal.ID)
 	intent, err := paymentintent.New(params)
+	// Concurrent double taps share a key; retry until the first request finishes and returns its intent.
+	for wait := 300 * time.Millisecond; isIdempotencyKeyInUse(err) && wait <= 2400*time.Millisecond; wait *= 2 {
+		time.Sleep(wait)
+		intent, err = paymentintent.New(params)
+	}
 	if err != nil {
 		return nil, nil, err
+	}
+	if err := s.db.Model(&models.Proposal{}).Where("id = ?", proposal.ID).
+		Update("stripe_payment_intent_id", intent.ID).Error; err != nil {
+		return nil, nil, fmt.Errorf("failed to save payment intent on proposal: %w", err)
 	}
 	return intent, &fees, nil
 }
 
-// ensureStripeCustomer returns the client's Stripe Customer ID, creating one
-// on first use so charges show up linked to a customer in the Dashboard
-// (and so saved payment methods are possible later).
+func isIdempotencyKeyInUse(err error) bool {
+	var se *stripe.Error
+	return errors.As(err, &se) && se.Code == stripe.ErrorCodeIdempotencyKeyInUse
+}
+
+// Created on first use so charges link to a customer in the Dashboard.
 func (s *Service) ensureStripeCustomer(client *models.User) (string, error) {
 	if client.StripeCustomerID != "" {
 		return client.StripeCustomerID, nil
 	}
 
-	cust, err := customer.New(&stripe.CustomerParams{
+	params := &stripe.CustomerParams{
 		Email: stripe.String(client.Email),
 		Name:  stripe.String(strings.TrimSpace(client.FirstName + " " + client.LastName)),
 		Metadata: map[string]string{
 			"user_id": client.ID,
 		},
-	})
+	}
+	// Per-user key so a double-tapped first payment can't create two customers.
+	params.SetIdempotencyKey("v3-customer-" + client.ID)
+	cust, err := customer.New(params)
+	for wait := 300 * time.Millisecond; isIdempotencyKeyInUse(err) && wait <= 2400*time.Millisecond; wait *= 2 {
+		time.Sleep(wait)
+		cust, err = customer.New(params)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -282,8 +300,7 @@ func (s *Service) DeleteBankAccount(user *models.User, bankAccountID string) err
 	hasNext := s.db.Where("user_id = ? AND id != ?", user.ID, bankAccountID).
 		Order("created_at DESC").First(&next).Error == nil
 
-	// Stripe refuses to delete an external account that is still the default
-	// for its currency, so another account must take over that status first.
+	// Stripe refuses to delete a currency's default bank account, so promote another first.
 	if oldBA.DefaultForCurrency && hasNext {
 		if _, err := bankaccount.Update(next.StripeBankAccountID, &stripe.BankAccountParams{
 			Account:            stripe.String(user.StripeConnectAccountID),
@@ -358,11 +375,7 @@ func (s *Service) GetUserWallet(user *models.User) (*UserWalletVal, error) {
 				ID:          p.ID,
 			})
 		} else if p.ToUserID == user.ID && p.Status == escrowHeld {
-			// Only shown while still held. Once released, the releasedEscrows
-			// loop below adds the definitive credit entry for the same money —
-			// including both would double-count it in the transaction list.
-			// If instead refunded, the freelancer never received it, so nothing
-			// is shown at all.
+
 			transactions = append(transactions, TypeWalletTransaction{
 				Amount:      net,
 				Type:        "credit",
@@ -393,7 +406,6 @@ func (s *Service) GetUserWallet(user *models.User) (*UserWalletVal, error) {
 		})
 	}
 
-	// Withdrawals leave the wallet unless Stripe failed/canceled them.
 	var withdrawals []models.WithdrawalV3
 	if err := s.db.Where("user_id = ? AND status NOT IN ?", user.ID,
 		[]string{string(stripe.PayoutStatusFailed), string(stripe.PayoutStatusCanceled)}).
@@ -418,28 +430,20 @@ func (s *Service) GetUserWallet(user *models.User) (*UserWalletVal, error) {
 
 	escrowAmount, _ := totalPending.Float64()
 
-	// Balance above is our ledger total (sum of released escrows) — it goes
-	// up the instant a contract releases. Stripe holds that money for days
-	// before it's actually withdrawable, so a withdrawal for the full
-	// "balance" can fail with insufficient funds even though the ledger
-	// says it's there. availableToWithdraw/pendingSettlement reflect what
-	// Stripe will actually let through right now; a client should drive the
-	// withdraw screen off these, not off balance.
-	availableToWithdraw := balance
-	pendingSettlement := 0.0
+	// Stripe holds released money until the card payment settles; if it can't be reached, claim nothing as withdrawable.
+	available, pending := 0.0, balance
 	if user.StripeConnectAccountID != "" {
 		if bal, err := s.connectBalance(user.StripeConnectAccountID); err == nil {
-			availableToWithdraw = bal.Available.InexactFloat64()
-			pendingSettlement = bal.Pending.InexactFloat64()
+			available, pending = bal.Available.InexactFloat64(), bal.Pending.InexactFloat64()
 		}
 	}
 
 	return &UserWalletVal{
-		Balance:             balance,
-		Transactions:        transactions,
-		EscrowAmount:        escrowAmount,
-		AvailableToWithdraw: availableToWithdraw,
-		PendingSettlement:   pendingSettlement,
+		Balance:           available,
+		TotalBalance:      balance,
+		PendingSettlement: pending,
+		EscrowAmount:      escrowAmount,
+		Transactions:      transactions,
 	}, nil
 }
 
@@ -457,9 +461,56 @@ func (s *Service) handleChargeSucceededV3(event *stripe.Event) error {
 		return err
 	}
 
+	// Errors while there is no contract so Stripe retries; RecordProposalPayment records it once the contract exists.
+	return s.recordCharge(&charge, event.ID)
+}
+
+var ErrContractNotCreatedYet = errors.New("no contract for this proposal yet; the payment will be recorded when the contract is created")
+
+func (s *Service) paymentRecorded(paymentIntentID string) bool {
+	var n int64
+	s.db.Model(&models.PaymentTransactionV3{}).Where("stripe_payment_intent_id = ?", paymentIntentID).Count(&n)
+	return n > 0
+}
+
+// Records a payment made before the contract existed (the webhook couldn't); no-op if absent or already recorded.
+func (s *Service) RecordProposalPayment(proposalID string) error {
+	var proposal models.Proposal
+	if err := s.db.Select("id", "stripe_payment_intent_id").First(&proposal, "id = ?", proposalID).Error; err != nil {
+		return err
+	}
+	if proposal.StripePaymentIntentID == "" || s.paymentRecorded(proposal.StripePaymentIntentID) {
+		return nil
+	}
+
+	params := &stripe.PaymentIntentParams{}
+	params.AddExpand("latest_charge")
+	pi, err := paymentintent.Get(proposal.StripePaymentIntentID, params)
+	if err != nil {
+		return fmt.Errorf("failed to fetch payment intent: %w", err)
+	}
+	if pi.Status != stripe.PaymentIntentStatusSucceeded || pi.LatestCharge == nil {
+		return nil
+	}
+	if pi.LatestCharge.PaymentIntent == nil {
+		pi.LatestCharge.PaymentIntent = &stripe.PaymentIntent{ID: pi.ID}
+	}
+	return s.recordCharge(pi.LatestCharge, "reconciled:"+pi.LatestCharge.ID)
+}
+
+// Idempotent per PaymentIntent so webhook retries and RecordProposalPayment can't record twice.
+func (s *Service) recordCharge(charge *stripe.Charge, eventID string) error {
 	proposalID := charge.Metadata["proposal_id"]
 	if proposalID == "" {
 		return fmt.Errorf("proposal id is not found in the meta data")
+	}
+
+	stripePaymentIntentID := ""
+	if charge.PaymentIntent != nil {
+		stripePaymentIntentID = charge.PaymentIntent.ID
+	}
+	if stripePaymentIntentID != "" && s.paymentRecorded(stripePaymentIntentID) {
+		return nil
 	}
 
 	fromUserID := charge.Metadata["from_user_id"]
@@ -467,12 +518,13 @@ func (s *Service) handleChargeSucceededV3(event *stripe.Event) error {
 
 	var contract models.Contract
 	if err := s.db.Where("proposal_id = ?", proposalID).First(&contract).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrContractNotCreatedYet
+		}
 		return err
 	}
 
-	// Use the split captured on the PaymentIntent (what the client was shown and
-	// charged). Intents created before fee_version 2 fall back to recomputing
-	// from the proposal bid with current settings.
+	// Use the split stored on the intent; older intents recompute from the bid with current settings.
 	fees, ok := FeesFromMetadata(charge.Metadata)
 	if !ok {
 		var proposal models.Proposal
@@ -499,15 +551,10 @@ func (s *Service) handleChargeSucceededV3(event *stripe.Event) error {
 		}
 	}()
 
-	stripePaymentIntentID := ""
-	if charge.PaymentIntent != nil {
-		stripePaymentIntentID = charge.PaymentIntent.ID
-	}
-
 	transaction := models.PaymentTransactionV3{
 		StripePaymentIntentID: stripePaymentIntentID,
 		StripeChargeID:        charge.ID,
-		StripeEventID:         event.ID,
+		StripeEventID:         eventID,
 		FromUserID:            fromUserID,
 		ToUserID:              toUserID,
 		ContractID:            contract.ID,
@@ -523,6 +570,10 @@ func (s *Service) handleChargeSucceededV3(event *stripe.Event) error {
 
 	if err := tx.Create(&transaction).Error; err != nil {
 		tx.Rollback()
+		// The webhook and RecordProposalPayment can race; the unique payment-intent index lets one win.
+		if stripePaymentIntentID != "" && s.paymentRecorded(stripePaymentIntentID) {
+			return nil
+		}
 		return fmt.Errorf("failed to create v3 transaction: %w", err)
 	}
 
@@ -550,8 +601,7 @@ func (s *Service) handleTransferPaidV3(event *stripe.Event) error {
 		return err
 	}
 
-	// Match by transfer ID, or by escrow_id metadata when the release call
-	// created the transfer but failed to record it.
+	// Match by transfer ID, or by escrow_id metadata when we created the transfer but failed to record it.
 	var escrow models.EscrowTransactionV3
 	err := s.db.Where("stripe_transfer_id = ?", tr.ID).First(&escrow).Error
 	if err != nil && tr.Metadata["escrow_id"] != "" {
@@ -603,6 +653,14 @@ func (s *Service) handleChargeRefundedV3(event *stripe.Event) error {
 		return nil
 	}
 
+	// charge.refunded also fires for partial refunds; only a full refund ends the escrow.
+	if !charge.Refunded {
+		logger.Log.Warn("partial refund made outside the app; escrow left held",
+			zap.String("transaction_id", transaction.ID), zap.String("charge_id", charge.ID),
+			zap.Int64("amount_refunded_pence", charge.AmountRefunded))
+		return nil
+	}
+
 	tx := s.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -610,7 +668,10 @@ func (s *Service) handleChargeRefundedV3(event *stripe.Event) error {
 		}
 	}()
 
-	if err := tx.Model(&transaction).Update("status", "refunded").Error; err != nil {
+	if err := tx.Model(&transaction).Updates(map[string]any{
+		"status":          escrowRefunded,
+		"refunded_amount": transaction.GrossAmount,
+	}).Error; err != nil {
 		tx.Rollback()
 		return err
 	}

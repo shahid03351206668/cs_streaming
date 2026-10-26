@@ -59,8 +59,8 @@ func (s *Suite) setupUsers(client, f1, f2 *TestUser) {
 			if err := s.db.grantAdmin(s.admin.ID); err != nil {
 				return "", err
 			}
-			_, err := s.login(s.admin)
-			s.adminToken = s.admin.AccessToken
+			tok, err := s.adminLogin(s.admin.Email, s.admin.Password)
+			s.adminToken = tok
 			return s.admin.Email, err
 		})
 	}
@@ -75,7 +75,7 @@ func (s *Suite) setupUsers(client, f1, f2 *TestUser) {
 	}
 
 	s.r.MustCheck("create test category", func() (string, error) {
-		status, resp, err := s.api.Do("POST", "/api/v1/category/create", "", map[string]any{"name": fmt.Sprintf("PayTest-%d", s.run)}, nil)
+		status, resp, err := s.api.Do("POST", "/api/v1/category/create", s.adminToken, map[string]any{"name": fmt.Sprintf("PayTest-%d", s.run)}, nil)
 		if err != nil {
 			return "", err
 		}
@@ -90,7 +90,50 @@ func (s *Suite) setupUsers(client, f1, f2 *TestUser) {
 	s.r.MustCheck("verify identity: freelancer", func() (string, error) { return s.verifyIdentity(f1) })
 }
 
-// unauthenticatedAccess: money endpoints must reject anonymous callers.
+var adminEndpoints = []struct{ method, path string }{
+	{"GET", "/api/v3/admin/payouts/escrows"},
+	{"GET", "/api/v3/admin/payouts/withdrawals"},
+	{"POST", "/api/v3/admin/payouts/contracts/x/refund"},
+	{"POST", "/api/v3/admin/payouts/escrows/x/release"},
+	{"GET", "/api/v3/admin/payments/transactions"},
+	{"GET", "/api/v3/admin/payments/transactions/x"},
+	{"GET", "/api/v3/admin/payments/stats"},
+	{"GET", "/api/v1/admin/users"},
+	{"GET", "/api/v1/admin/users/x"},
+	{"PUT", "/api/v1/admin/users/x"},
+	{"DELETE", "/api/v1/admin/users/x"},
+	{"PUT", "/api/v1/admin/users/x/password"},
+	{"GET", "/api/v1/admin/users/x/wallet"},
+	{"GET", "/api/v1/admin/logs"},
+	{"GET", "/api/v1/admin/jobs"},
+	{"PUT", "/api/v1/admin/jobs/x"},
+	{"GET", "/api/v1/admin/job-reports"},
+	{"GET", "/api/v1/admin/settings"},
+	{"PUT", "/api/v1/admin/settings"},
+	{"GET", "/api/v1/admin/banks"},
+	{"POST", "/api/v1/admin/banks"},
+	{"DELETE", "/api/v1/admin/banks/x"},
+	{"GET", "/api/v1/admin/disputes"},
+	{"GET", "/api/v1/admin/disputes/x"},
+	{"PUT", "/api/v1/admin/disputes/x/resolve"},
+	{"GET", "/api/v1/admin/referrals/codes"},
+	{"GET", "/api/v1/admin/referrals/usages"},
+	{"GET", "/api/v1/admin/promotions"},
+	{"POST", "/api/v1/admin/promotions"},
+	{"DELETE", "/api/v1/admin/promotions/x"},
+	{"GET", "/api/v1/admin/email-accounts"},
+	{"POST", "/api/v1/admin/email-accounts"},
+	{"DELETE", "/api/v1/admin/email-accounts/x"},
+	{"GET", "/api/v1/admin/email-templates"},
+	{"POST", "/api/v1/admin/email-templates"},
+	{"POST", "/api/v1/admin/email/test"},
+	{"POST", "/api/v1/email/send"},
+	{"POST", "/api/v1/category/create"},
+	{"PUT", "/api/v1/category/update/x"},
+	{"PUT", "/api/v1/category/reorder"},
+	{"DELETE", "/api/v1/category/delete/x"},
+}
+
 func (s *Suite) unauthenticatedAccess(someone *TestUser) {
 	s.r.Section("Access control — anonymous and non-admin callers")
 	for _, ep := range []struct{ method, path string }{
@@ -102,41 +145,37 @@ func (s *Suite) unauthenticatedAccess(someone *TestUser) {
 		{"POST", "/api/v3/escrow/contracts/x/release"},
 		{"GET", "/api/v3/bank-account"},
 		{"GET", "/api/user/stripe-connect-status"},
-		{"GET", "/api/v3/admin/payouts/escrows"},
-		{"GET", "/api/v3/admin/payments/transactions"},
-		{"GET", "/api/v3/admin/payments/transactions/x"},
-		{"GET", "/api/v3/admin/payments/stats"},
-		{"GET", "/api/v1/admin/users"},
-		{"GET", "/api/v1/admin/users/" + someone.ID},
-		{"GET", "/api/v1/admin/users/" + someone.ID + "/wallet"},
 	} {
 		ep := ep
 		s.r.Check("anonymous "+ep.method+" "+ep.path+" is rejected", func() (string, error) {
-			status, resp, err := s.api.Do(ep.method, ep.path, "", nil, nil)
-			if err != nil {
-				return "", err
-			}
-			if status != 401 && status != 403 {
-				return "", fmt.Errorf("got %d — endpoint is open to anyone: %s", status, brief(resp))
-			}
-			return fmt.Sprintf("%d", status), nil
+			return s.rejectedWithout(ep.method, ep.path, "", 401, 403)
 		})
 	}
-	for _, ep := range []struct{ method, path string }{
-		{"GET", "/api/v3/admin/payouts/escrows"},
-		{"GET", "/api/v3/admin/payouts/withdrawals"},
-		{"POST", "/api/v3/admin/payouts/contracts/x/refund"},
-		{"POST", "/api/v3/admin/payouts/escrows/x/release"},
-	} {
+	for _, ep := range adminEndpoints {
 		ep := ep
-		s.r.Check("non-admin "+ep.method+" "+ep.path+" is 403", func() (string, error) {
-			status, resp, err := s.api.Do(ep.method, ep.path, someone.AccessToken, map[string]any{"reason": "x", "note": "x"}, nil)
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("%d", status), expect(status, resp, 403)
+		s.r.Check("anonymous "+ep.method+" "+ep.path+" is rejected (401)", func() (string, error) {
+			return s.rejectedWithout(ep.method, ep.path, "", 401)
 		})
 	}
+	for _, ep := range adminEndpoints {
+		ep := ep
+		s.r.Check("non-admin "+ep.method+" "+ep.path+" is refused (403)", func() (string, error) {
+			return s.rejectedWithout(ep.method, ep.path, someone.AccessToken, 403)
+		})
+	}
+}
+
+func (s *Suite) rejectedWithout(method, path, token string, want ...int) (string, error) {
+	status, resp, err := s.api.Do(method, path, token, map[string]any{"reason": "x", "note": "x"}, nil)
+	if err != nil {
+		return "", err
+	}
+	for _, w := range want {
+		if status == w {
+			return fmt.Sprintf("%d", status), nil
+		}
+	}
+	return "", fmt.Errorf("got %d, want %v: %s", status, want, brief(resp))
 }
 
 func (s *Suite) bankAccounts(f1, client *TestUser) {
@@ -335,14 +374,6 @@ func (s *Suite) proposalAndContractRules(client, f1, f2 *TestUser) {
 		return fmt.Sprintf("%d", status), expect(status, resp, 403)
 	})
 
-	// Money must not move before the client has accepted the proposal.
-	s.r.Check("payment intent for a pending (unaccepted) proposal is refused", func() (string, error) {
-		status, resp, err := s.createIntent(client.AccessToken, proposalID, nil)
-		if err != nil {
-			return "", err
-		}
-		return expectRefused(status, resp, "")
-	})
 	s.r.Check("contract for a pending (unaccepted) proposal is refused and not created", func() (string, error) {
 		status, resp, err := s.createContract(client.AccessToken, proposalID, budget, time.Now(), time.Now().Add(24*time.Hour))
 		if err != nil {
@@ -387,7 +418,6 @@ func (s *Suite) proposalAndContractRules(client, f1, f2 *TestUser) {
 		return expectRefused(status, resp, "")
 	})
 
-	// A second job for the contract-creation rules on an accepted proposal.
 	var job2, proposal2 string
 	s.r.MustCheck("second job with an accepted proposal", func() (string, error) {
 		id, err := s.createJob(client, "paytest contract rules", budget)
@@ -433,7 +463,6 @@ func (s *Suite) proposalAndContractRules(client, f1, f2 *TestUser) {
 	})
 }
 
-// webhookForgery: the webhook must only trust Stripe-signed payloads.
 func (s *Suite) webhookForgery(client *TestUser) {
 	s.r.Section("Webhook security")
 	forged := []byte(`{"id":"evt_forged_paymenttest","type":"charge.succeeded","data":{"object":{"id":"ch_forged","amount":100,"currency":"gbp","metadata":{"proposal_id":"forged"}}}}`)

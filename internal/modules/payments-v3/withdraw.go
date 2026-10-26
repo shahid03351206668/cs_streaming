@@ -25,10 +25,13 @@ var (
 	ErrNothingToWithdraw    = errors.New("no available balance to withdraw")
 	ErrInvalidAmount        = errors.New("withdrawal amount must be greater than zero")
 	ErrInsufficientBalance  = errors.New("amount exceeds your available balance")
+	ErrBelowMinimumPayout   = errors.New("the minimum withdrawal is £1.00")
 )
 
-// ManualPayoutSettings puts a Connect account on a manual payout schedule so
-// money stays in the Stripe balance until the tasker taps Withdraw.
+// MinimumPayout is Stripe's smallest GBP payout; Stripe rejects anything lower.
+var MinimumPayout = decimal.NewFromInt(1)
+
+// Money stays in the Stripe balance until the tasker taps Withdraw.
 func ManualPayoutSettings() *stripe.AccountSettingsParams {
 	return &stripe.AccountSettingsParams{
 		Payouts: &stripe.AccountSettingsPayoutsParams{
@@ -39,9 +42,7 @@ func ManualPayoutSettings() *stripe.AccountSettingsParams {
 	}
 }
 
-// ensureManualPayouts migrates accounts created before manual payouts were
-// introduced (new accounts get the setting at creation), and returns the
-// account so callers can inspect its attached bank accounts.
+// Migrates accounts created before manual payouts existed and returns the account.
 func (s *Service) ensureManualPayouts(accountID string) (*stripe.Account, error) {
 	acc, err := account.GetByID(accountID, nil)
 	if err != nil {
@@ -54,7 +55,6 @@ func (s *Service) ensureManualPayouts(accountID string) (*stripe.Account, error)
 	return account.Update(accountID, &stripe.AccountParams{Settings: ManualPayoutSettings()})
 }
 
-// stripeBankAccounts returns the GBP bank accounts attached to a Connect account.
 func stripeBankAccounts(acc *stripe.Account) []*stripe.BankAccount {
 	var banks []*stripe.BankAccount
 	if acc == nil || acc.ExternalAccounts == nil {
@@ -73,8 +73,6 @@ type PayoutBalance struct {
 	Pending   decimal.Decimal
 }
 
-// GetPayoutBalance reads the tasker's live Stripe Connect balance. Released
-// payments sit in Pending until the underlying card charge settles.
 func (s *Service) GetPayoutBalance(user *models.User) (*PayoutBalance, error) {
 	if user.StripeConnectAccountID == "" {
 		return &PayoutBalance{}, nil
@@ -109,9 +107,7 @@ func (s *Service) connectBalance(accountID string) (*PayoutBalance, error) {
 	return &PayoutBalance{Available: sum(bal.Available), Pending: sum(bal.Pending)}, nil
 }
 
-// Withdraw pays out `amount` (or the full available balance when nil) from the
-// tasker's Connect balance. bankAccountID selects one of the user's saved bank
-// accounts; empty means Stripe's default GBP bank account.
+// A nil amount withdraws everything available; an empty bankAccountID means Stripe's default GBP bank.
 func (s *Service) Withdraw(user *models.User, amount *float64, bankAccountID string) (*models.WithdrawalV3, error) {
 	if user.StripeConnectAccountID == "" {
 		return nil, ErrNoStripeAccount
@@ -123,8 +119,7 @@ func (s *Service) Withdraw(user *models.User, amount *float64, bankAccountID str
 		return nil, fmt.Errorf("failed to prepare payout account: %w", err)
 	}
 
-	// Stripe, not our DB, decides where money can go: some bank accounts were
-	// attached directly on Stripe without a local row.
+	// Stripe, not our DB, decides where money can go: some banks were attached on Stripe without a local row.
 	banks := stripeBankAccounts(acc)
 	if len(banks) == 0 {
 		return nil, ErrNoBankAccount
@@ -169,6 +164,9 @@ func (s *Service) Withdraw(user *models.User, amount *float64, bankAccountID str
 	if !amt.IsPositive() {
 		return nil, ErrNothingToWithdraw
 	}
+	if amt.LessThan(MinimumPayout) {
+		return nil, fmt.Errorf("%w (you asked for £%s)", ErrBelowMinimumPayout, amt.StringFixed(2))
+	}
 	if amt.GreaterThan(bal.Available) {
 		return nil, ErrInsufficientBalance
 	}
@@ -207,11 +205,30 @@ func (s *Service) Withdraw(user *models.User, amount *float64, bankAccountID str
 			"status":          string(stripe.PayoutStatusFailed),
 			"failure_message": err.Error(),
 		})
-		return nil, fmt.Errorf("stripe payout failed: %w", err)
+		return nil, &PayoutRejectedError{err: err}
 	}
 
 	s.applyPayout(&withdrawal, p)
 	return &withdrawal, nil
+}
+
+// UserMessage hides Stripe's raw error (request ids, dashboard links) from app users.
+type PayoutRejectedError struct{ err error }
+
+func (e *PayoutRejectedError) Error() string { return "stripe payout failed: " + e.err.Error() }
+func (e *PayoutRejectedError) Unwrap() error { return e.err }
+
+func (e *PayoutRejectedError) Rejected() bool {
+	var se *stripe.Error
+	return errors.As(e.err, &se) && se.HTTPStatusCode >= 400 && se.HTTPStatusCode < 500
+}
+
+func (e *PayoutRejectedError) UserMessage() string {
+	var se *stripe.Error
+	if errors.As(e.err, &se) && se.Msg != "" {
+		return "withdrawal failed: " + se.Msg
+	}
+	return "withdrawal failed; please try again later"
 }
 
 func (s *Service) ListWithdrawals(userID string) ([]models.WithdrawalV3, error) {
@@ -239,7 +256,6 @@ func (s *Service) applyPayout(w *models.WithdrawalV3, p *stripe.Payout) {
 	}
 }
 
-// handlePayoutEventV3 syncs withdrawal status from payout.* Connect events.
 func (s *Service) handlePayoutEventV3(event *stripe.Event) error {
 	var p stripe.Payout
 	if err := json.Unmarshal(event.Data.Raw, &p); err != nil {

@@ -25,11 +25,7 @@ type ExpectedFees struct {
 	PlatformEarnings float64
 }
 
-// computeFees re-derives the server's fee formula independently, so the
-// suite verifies the server's arithmetic instead of echoing it back.
-//
-//	client pays:     bid + client commission + platform fee
-//	freelancer gets: bid - freelancer commission - platform fee
+// Re-derives the server's fee formula independently, so the suite checks the server's arithmetic instead of echoing it.
 func computeFees(bid float64, s SystemSettings) ExpectedFees {
 	clientCommission := round2(bid * s.ClientCommissionPct / 100)
 	freelancerCommission := round2(bid * s.FreelancerCommissionPct / 100)

@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-// APIClient talks to the running Tasksy server.
 type APIClient struct {
 	baseURL string
 	http    *http.Client
@@ -21,7 +20,6 @@ func NewAPIClient(baseURL string) *APIClient {
 	return &APIClient{baseURL: strings.TrimRight(baseURL, "/"), http: &http.Client{Timeout: 60 * time.Second}}
 }
 
-// Do sends a JSON request (body may be nil) and decodes the JSON response into out (may be nil).
 func (c *APIClient) Do(method, path, token string, body any, out any) (int, map[string]any, error) {
 	var reader io.Reader
 	if body != nil {
@@ -68,8 +66,6 @@ func (c *APIClient) Do(method, path, token string, body any, out any) (int, map[
 	return resp.StatusCode, generic, nil
 }
 
-// PostForm sends a multipart/form-data-free, urlencoded form POST (used for a couple
-// of legacy endpoints that bind with `form:` tags instead of JSON).
 func (c *APIClient) PostForm(path, token string, form url.Values, out any) (int, map[string]any, error) {
 	req, err := http.NewRequest(http.MethodPost, c.baseURL+path, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -102,7 +98,6 @@ func (c *APIClient) PostForm(path, token string, form url.Values, out any) (int,
 	return resp.StatusCode, generic, nil
 }
 
-// DoRaw posts a raw body with custom headers (used to forge webhook calls).
 func (c *APIClient) DoRaw(path string, body []byte, headers map[string]string) (int, map[string]any, error) {
 	req, err := http.NewRequest(http.MethodPost, c.baseURL+path, bytes.NewReader(body))
 	if err != nil {
@@ -129,8 +124,7 @@ func truncate(b []byte, n int) string {
 	return string(b[:n]) + "..."
 }
 
-// StripeClient makes raw form-encoded calls to the Stripe API. Kept dependency-free
-// (no stripe-go) since this tool only needs a handful of endpoints.
+// Raw form-encoded Stripe calls; no stripe-go dependency, since only a few endpoints are needed.
 type StripeClient struct {
 	secretKey string
 	http      *http.Client
@@ -177,8 +171,36 @@ func (s *StripeClient) call(method, path string, form url.Values, connectedAccou
 	return out, nil
 }
 
+// Exact response bytes, so webhook payloads can be re-signed.
+func (s *StripeClient) GetRaw(path string) ([]byte, error) {
+	req, err := http.NewRequest(http.MethodGet, "https://api.stripe.com/v1"+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.SetBasicAuth(s.secretKey, "")
+	resp, err := s.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("stripe GET %s: status %d", path, resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+// Retries transient network failures; POSTs are never retried.
 func (s *StripeClient) Get(path string, connectedAccount string) (map[string]any, error) {
-	return s.call(http.MethodGet, path, nil, connectedAccount)
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		out, err := s.call(http.MethodGet, path, nil, connectedAccount)
+		if err == nil || out != nil { // out != nil: Stripe answered (possibly with an API error)
+			return out, err
+		}
+		lastErr = err
+		time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+	}
+	return nil, lastErr
 }
 
 func (s *StripeClient) Post(path string, form url.Values, connectedAccount string) (map[string]any, error) {

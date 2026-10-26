@@ -48,8 +48,7 @@ func (h *Handler) HandleStripeWebhookV3(c *gin.Context) {
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 
-	// Payout events come from connected accounts — the webhook endpoint must
-	// have "Listen to events on Connected accounts" enabled in Stripe.
+	// Payout events come from connected accounts; the endpoint needs "Listen to events on Connected accounts".
 	case "payout.paid", "payout.failed", "payout.canceled", "payout.updated":
 		if err := h.service.handlePayoutEventV3(&event); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})

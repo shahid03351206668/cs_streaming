@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"tasksy/internal/modules/notifications"
+	paymentsv3 "tasksy/internal/modules/payments-v3"
 	"tasksy/models"
 	aws_services "tasksy/pkg"
 	"tasksy/pkg/logger"
@@ -134,10 +135,11 @@ type Service struct {
 	db       *gorm.DB
 	notif    *notifications.Service
 	s3Client *aws_services.S3Client
+	payments *paymentsv3.Service
 }
 
 func NewService(db *gorm.DB, notif *notifications.Service, s3Client *aws_services.S3Client) *Service {
-	return &Service{db: db, notif: notif, s3Client: s3Client}
+	return &Service{db: db, notif: notif, s3Client: s3Client, payments: paymentsv3.NewService(db)}
 }
 
 func (s *Service) CreateDispute(
@@ -295,7 +297,6 @@ func (s *Service) ListMyDisputes(userID string, page, limit int, status string) 
 	return result, total, nil
 }
 
-// GetDispute returns a single dispute, restricted to parties of the contract.
 func (s *Service) GetDispute(id, userID string) (*DisputeVal, error) {
 	var dispute models.Dispute
 	err := s.db.
@@ -322,7 +323,6 @@ func (s *Service) GetDispute(id, userID string) (*DisputeVal, error) {
 	return &val, nil
 }
 
-// AdminGetDispute returns a single dispute by ID without access restriction.
 func (s *Service) AdminGetDispute(id string) (*models.Dispute, error) {
 	var dispute models.Dispute
 	err := s.db.
@@ -340,7 +340,6 @@ func (s *Service) AdminGetDispute(id string) (*models.Dispute, error) {
 	return &dispute, nil
 }
 
-// AdminListDisputes returns all disputes with optional status/contract filter.
 func (s *Service) AdminListDisputes(page, limit int, status, contractID string) ([]models.Dispute, int64, error) {
 	if page < 1 {
 		page = 1
@@ -377,9 +376,19 @@ func (s *Service) AdminListDisputes(page, limit int, status, contractID string) 
 	return disputes, total, err
 }
 
-// AdminResolveDispute marks a dispute as resolved and re-activates the contract if no
-// other open disputes remain.
-func (s *Service) AdminResolveDispute(id, resolvedByID, resolution string) (*models.Dispute, error) {
+var ErrInvalidOutcome = errors.New("outcome must be one of: none, freelancer, client")
+
+// outcome "freelancer" pays out and completes the job, "client" refunds and cancels it, "none" only reopens the contract; money moves first so a failure leaves the dispute open.
+func (s *Service) AdminResolveDispute(id, resolvedByID, resolution, outcome string, refundFees bool) (*models.Dispute, error) {
+	if outcome == "" {
+		outcome = models.DisputeOutcomeNone
+	}
+	switch outcome {
+	case models.DisputeOutcomeNone, models.DisputeOutcomeFreelancer, models.DisputeOutcomeClient:
+	default:
+		return nil, ErrInvalidOutcome
+	}
+
 	var dispute models.Dispute
 	if err := s.db.Preload("Contract").First(&dispute, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -391,6 +400,11 @@ func (s *Service) AdminResolveDispute(id, resolvedByID, resolution string) (*mod
 		return nil, errors.New("dispute is already resolved")
 	}
 
+	payoutAction, err := s.payments.SettleDispute(dispute.ContractID, resolvedByID, resolution, outcome, refundFees)
+	if err != nil {
+		return nil, err
+	}
+
 	now := time.Now()
 	tx := s.db.Begin()
 	updates := map[string]any{
@@ -398,22 +412,18 @@ func (s *Service) AdminResolveDispute(id, resolvedByID, resolution string) (*mod
 		"resolved_by_id": resolvedByID,
 		"resolution":     resolution,
 		"resolved_at":    now,
+		"outcome":        outcome,
+		"refund_fees":    refundFees,
+		"payout_action":  payoutAction,
 	}
 	if err := tx.Model(&dispute).Updates(updates).Error; err != nil {
 		tx.Rollback()
 		return nil, err
 	}
 
-	var openCount int64
-	tx.Model(&models.Dispute{}).
-		Where("contract_id = ? AND status = ? AND id != ?", dispute.ContractID, models.DisputeStatusOpen, id).
-		Count(&openCount)
-	if openCount == 0 {
-		if err := tx.Model(&models.Contract{}).Where("id = ?", dispute.ContractID).
-			Update("status", models.ContractStatusActive).Error; err != nil {
-			tx.Rollback()
-			return nil, err
-		}
+	if err := applyContractOutcome(tx, &dispute, outcome, now); err != nil {
+		tx.Rollback()
+		return nil, err
 	}
 
 	if err := tx.Commit().Error; err != nil {
@@ -441,7 +451,40 @@ func (s *Service) AdminResolveDispute(id, resolvedByID, resolution string) (*mod
 	return &dispute, nil
 }
 
-// mimeFromName returns a basic MIME type derived from a file's extension.
+func applyContractOutcome(tx *gorm.DB, dispute *models.Dispute, outcome string, now time.Time) error {
+	switch outcome {
+	case models.DisputeOutcomeFreelancer:
+		if err := tx.Model(&models.Contract{}).Where("id = ?", dispute.ContractID).Updates(map[string]any{
+			"status":               models.ContractStatusCompleted,
+			"client_completed":     true,
+			"freelancer_completed": true,
+			"completed_at":         now,
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.JobPost{}).Where("id = ?", dispute.Contract.JobPostID).
+			Update("status", models.JobStatusCompleted).Error
+
+	case models.DisputeOutcomeClient:
+		if err := tx.Model(&models.Contract{}).Where("id = ?", dispute.ContractID).
+			Update("status", models.ContractStatusCancelled).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.JobPost{}).Where("id = ?", dispute.Contract.JobPostID).
+			Update("status", models.JobStatusCancelled).Error
+	}
+
+	var openCount int64
+	tx.Model(&models.Dispute{}).
+		Where("contract_id = ? AND status = ? AND id != ?", dispute.ContractID, models.DisputeStatusOpen, dispute.ID).
+		Count(&openCount)
+	if openCount == 0 {
+		return tx.Model(&models.Contract{}).Where("id = ?", dispute.ContractID).
+			Update("status", models.ContractStatusActive).Error
+	}
+	return nil
+}
+
 func mimeFromName(name string) string {
 	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {

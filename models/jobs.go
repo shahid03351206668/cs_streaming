@@ -6,6 +6,10 @@ const (
 	DisputeStatusOpen     = "open"
 	DisputeStatusResolved = "resolved"
 	DisputeStatusClosed   = "closed"
+
+	DisputeOutcomeNone       = "none"
+	DisputeOutcomeFreelancer = "freelancer"
+	DisputeOutcomeClient     = "client"
 )
 
 const (
@@ -111,19 +115,21 @@ func (JobReport) TableName() string {
 
 type Proposal struct {
 	BaseModel
-	JobPostID        string     `gorm:"not null;index" json:"job_post_id"`
-	JobPost          JobPost    `gorm:"foreignKey:JobPostID;constraint:OnDelete:CASCADE" json:"job_post"`
-	FreelancerID     string     `gorm:"not null;index" json:"freelancer_id"`
-	Freelancer       User       `gorm:"foreignKey:FreelancerID;constraint:OnDelete:CASCADE" json:"freelancer"`
-	CoverLetter      string     `gorm:"type:text;not null" json:"cover_letter"`
-	BidAmount        float64    `gorm:"type:decimal(10,2);not null" json:"bid_amount"`
-	Duration         int        `gorm:"not null" json:"duration"`
-	AvailabilityDate *time.Time `gorm:"column:availability_date" json:"availability_date"`
+	JobPostID           string     `gorm:"not null;index" json:"job_post_id"`
+	JobPost             JobPost    `gorm:"foreignKey:JobPostID;constraint:OnDelete:CASCADE" json:"job_post"`
+	FreelancerID        string     `gorm:"not null;index" json:"freelancer_id"`
+	Freelancer          User       `gorm:"foreignKey:FreelancerID;constraint:OnDelete:CASCADE" json:"freelancer"`
+	CoverLetter         string     `gorm:"type:text;not null" json:"cover_letter"`
+	BidAmount           float64    `gorm:"type:decimal(10,2);not null" json:"bid_amount"`
+	Duration            int        `gorm:"not null" json:"duration"`
+	AvailabilityDate    *time.Time `gorm:"column:availability_date" json:"availability_date"`
 	AvailabilityDateEnd *time.Time `gorm:"column:availability_date_end" json:"availability_date_end"`
-	
-	Status           string     `gorm:"type:varchar(50);default:'pending';index" json:"status"`
+
+	Status string `gorm:"type:varchar(50);default:'pending';index" json:"status"`
 	// Status: pending, shortlisted, accepted, rejected, withdrawn
 	ProposalAttachments []ProposalAttachment `gorm:"foreignKey:ProposalID;constraint:OnDelete:CASCADE" json:"attachments,omitempty"`
+	// Set at intent creation so a payment made before the contract exists can be recorded later.
+	StripePaymentIntentID string `gorm:"type:varchar(100);index" json:"-"`
 }
 
 type ProposalAttachment struct {
@@ -168,12 +174,10 @@ type Contract struct {
 	FreelancerCompleted bool       `gorm:"default:false" json:"freelancer_completed"`
 	CompletedAt         *time.Time `json:"completed_at,omitempty"`
 
-	// Escrow fields
 	EscrowPaymentIntentID string `gorm:"type:varchar(100)" json:"escrow_payment_intent_id,omitempty"`
 	EscrowStatus          string `gorm:"type:varchar(20);default:'pending'" json:"escrow_status"`
 	EscrowAmount          int64  `gorm:"default:0" json:"escrow_amount"`
 
-	// Payments []Payment `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"payments,omitempty"`
 	Reviews  []Review  `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"reviews,omitempty"`
 	Disputes []Dispute `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"disputes,omitempty"`
 }
@@ -186,14 +190,12 @@ type Review struct {
 	BaseModel
 	ContractID string   `gorm:"not null;index:idx_review_contract_reviewer" json:"contract_id"`
 	Contract   Contract `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"-"`
-	// author
-	ReviewerID string `gorm:"not null;index:idx_review_contract_reviewer" json:"reviewer_id"`
-	Reviewer   User   `gorm:"foreignKey:ReviewerID;constraint:OnDelete:CASCADE" json:"reviewer"`
-	// the user who get the review
-	TargetID   string `gorm:"not null;index" json:"target_id"`
-	TargetUser User   `gorm:"foreignKey:TargetID;constraint:OnDelete:CASCADE" json:"target_user"`
-	Rating     int    `gorm:"not null;check:rating >= 1 AND rating <= 5" json:"rating"`
-	Comment    string `gorm:"type:text" json:"comment"`
+	ReviewerID string   `gorm:"not null;index:idx_review_contract_reviewer" json:"reviewer_id"`
+	Reviewer   User     `gorm:"foreignKey:ReviewerID;constraint:OnDelete:CASCADE" json:"reviewer"`
+	TargetID   string   `gorm:"not null;index" json:"target_id"`
+	TargetUser User     `gorm:"foreignKey:TargetID;constraint:OnDelete:CASCADE" json:"target_user"`
+	Rating     int      `gorm:"not null;check:rating >= 1 AND rating <= 5" json:"rating"`
+	Comment    string   `gorm:"type:text" json:"comment"`
 }
 
 func (Review) TableName() string {
@@ -202,22 +204,22 @@ func (Review) TableName() string {
 
 type Dispute struct {
 	BaseModel
-	ContractID string   `gorm:"not null;index" json:"contract_id"`
-	Contract   Contract `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"contract,omitempty"`
-	FiledByID  string   `gorm:"not null;index" json:"filed_by_id"`
-	FiledBy    User     `gorm:"foreignKey:FiledByID;constraint:OnDelete:CASCADE" json:"filed_by"`
-	// FiledByRole stores whether the filer is "client" or "freelancer" on the contract
-	FiledByRole string `gorm:"type:varchar(20);not null;default:'client'" json:"filed_by_role"`
-	Reason      string `gorm:"type:varchar(255);not null" json:"reason"`
-	Description string `gorm:"type:text;not null" json:"description"`
-	Status      string `gorm:"type:varchar(50);default:'open';index" json:"status"`
-	// Resolution fields (populated by admin)
+	ContractID   string     `gorm:"not null;index" json:"contract_id"`
+	Contract     Contract   `gorm:"foreignKey:ContractID;constraint:OnDelete:CASCADE" json:"contract,omitempty"`
+	FiledByID    string     `gorm:"not null;index" json:"filed_by_id"`
+	FiledBy      User       `gorm:"foreignKey:FiledByID;constraint:OnDelete:CASCADE" json:"filed_by"`
+	FiledByRole  string     `gorm:"type:varchar(20);not null;default:'client'" json:"filed_by_role"`
+	Reason       string     `gorm:"type:varchar(255);not null" json:"reason"`
+	Description  string     `gorm:"type:text;not null" json:"description"`
+	Status       string     `gorm:"type:varchar(50);default:'open';index" json:"status"`
 	ResolvedByID *string    `gorm:"type:string;index" json:"resolved_by_id,omitempty"`
 	ResolvedBy   *User      `gorm:"foreignKey:ResolvedByID" json:"resolved_by,omitempty"`
 	Resolution   string     `gorm:"type:text" json:"resolution,omitempty"`
 	ResolvedAt   *time.Time `json:"resolved_at,omitempty"`
-	// Attachments are stored in the files table via EntityID=dispute.ID, EntityType="disputes".
-	// No FK constraint is created because the files table is shared across multiple entity types.
+	Outcome      string     `gorm:"type:varchar(20)" json:"outcome,omitempty"`
+	RefundFees   bool       `gorm:"default:true" json:"refund_fees"`
+	PayoutAction string     `gorm:"type:varchar(30)" json:"payout_action,omitempty"`
+	// The files table is shared across entity types, so there is no FK constraint.
 	Attachments []File `gorm:"foreignKey:EntityID;references:ID" json:"attachments,omitempty"`
 }
 

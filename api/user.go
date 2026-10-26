@@ -75,15 +75,6 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 
-	// newPhotoPath, err := saveProfileImage(c)
-	// if err != nil {
-	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload image"})
-	// 	return
-	// }
-	// if newPhotoPath != "" {
-	// 	user.ProfilePhoto = newPhotoPath
-	// }
-
 	user.FirstName = form.FirstName
 	user.LastName = form.LastName
 	user.Email = form.Email

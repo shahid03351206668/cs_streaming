@@ -1,14 +1,17 @@
 package dispute
 
 import (
+	"errors"
 	"math"
 	"mime/multipart"
 	"net/http"
 	"strconv"
 
+	paymentsv3 "tasksy/internal/modules/payments-v3"
 	"tasksy/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stripe/stripe-go/v84"
 )
 
 type Handler struct {
@@ -49,7 +52,6 @@ func (h *Handler) CreateDispute(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"message": "success", "data": dispute})
 }
 
-// GET /api/v1/disputes
 func (h *Handler) ListMyDisputes(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
@@ -75,7 +77,6 @@ func (h *Handler) ListMyDisputes(c *gin.Context) {
 	})
 }
 
-// GET /api/v1/disputes/:id
 func (h *Handler) GetDispute(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 	id := c.Param("id")
@@ -96,8 +97,6 @@ func (h *Handler) GetDispute(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": dispute})
 }
 
-// GET /api/v1/admin/disputes/:id
-
 func (h *Handler) AdminGetDispute(c *gin.Context) {
 	id := c.Param("id")
 
@@ -114,7 +113,6 @@ func (h *Handler) AdminGetDispute(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": dispute})
 }
 
-// GET /api/v1/admin/disputes
 func (h *Handler) AdminListDisputes(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
@@ -139,28 +137,42 @@ func (h *Handler) AdminListDisputes(c *gin.Context) {
 	})
 }
 
-// PUT /api/v1/admin/disputes/:id/resolve
 func (h *Handler) AdminResolveDispute(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 	id := c.Param("id")
 
 	var body struct {
 		Resolution string `json:"resolution" binding:"required,min=5"`
+		Outcome    string `json:"outcome"`
+		RefundFees *bool  `json:"refund_fees"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
 
-	dispute, err := h.service.AdminResolveDispute(id, user.ID, body.Resolution)
+	refundFees := body.RefundFees == nil || *body.RefundFees
+
+	dispute, err := h.service.AdminResolveDispute(id, user.ID, body.Resolution, body.Outcome, refundFees)
 	if err != nil {
-		if err.Error() == "dispute not found" {
-			c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": err.Error()})
-			return
+		status := http.StatusBadRequest
+		switch {
+		case err.Error() == "dispute not found":
+			status = http.StatusNotFound
+		case errors.Is(err, paymentsv3.ErrRefundStateChanged), errors.Is(err, paymentsv3.ErrAlreadyRefunded),
+			errors.Is(err, paymentsv3.ErrContractClosed):
+			status = http.StatusConflict
+		case isStripeFailure(err):
+			status = http.StatusBadGateway
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		c.JSON(status, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": dispute})
+}
+
+func isStripeFailure(err error) bool {
+	var se *stripe.Error
+	return errors.As(err, &se)
 }

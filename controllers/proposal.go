@@ -16,9 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// proposalFieldName maps a Go struct field to the JSON key clients actually
-// send, so validation errors are readable by whatever's showing them to a
-// user instead of leaking Go/validator internals.
+// Maps Go struct fields to the JSON keys clients send, so validation errors don't leak Go internals.
 var proposalFieldName = map[string]string{
 	"JobPostID":   "job_post_id",
 	"CoverLetter": "cover_letter",
@@ -26,8 +24,6 @@ var proposalFieldName = map[string]string{
 	"Duration":    "duration",
 }
 
-// friendlyBindError turns a ShouldBindJSON error into a plain-language
-// message: which field, and what's wrong with it.
 func friendlyBindError(err error) string {
 	var ve validator.ValidationErrors
 	if errors.As(err, &ve) {
@@ -58,16 +54,13 @@ func friendlyBindError(err error) string {
 	return "invalid request body"
 }
 
-// dateTimeLayouts covers every format this API has been sent in practice:
-// date-only, space-separated date+time (no timezone), and full RFC3339.
+// Formats this API has been sent in practice: date, date and time without timezone, RFC3339.
 var dateTimeLayouts = []string{
 	"2006-01-02",
 	"2006-01-02 15:04:05",
 	time.RFC3339,
 }
 
-// parseFlexibleDateTime returns nil for an empty string (field omitted), or a
-// clear error naming the accepted formats if none of them match.
 func parseFlexibleDateTime(value string) (*time.Time, error) {
 	if value == "" {
 		return nil, nil
@@ -98,7 +91,6 @@ func CreateProposal(c *gin.Context) {
 
 		BidAmount float64 `json:"bid_amount" binding:"required,gt=0"`
 		Duration  int     `json:"duration" binding:"required,gt=0"`
-		// Attachments      []string `json:"attachments"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -174,7 +166,6 @@ func CreateProposal(c *gin.Context) {
 		return
 	}
 
-	// Create proposal
 	proposal := models.Proposal{
 		JobPostID:        body.JobPostID,
 		FreelancerID:     user.ID,
@@ -197,23 +188,6 @@ func CreateProposal(c *gin.Context) {
 		})
 		return
 	}
-
-	// if len(body.Attachments) > 0 {
-	// 	for _, attachmentURL := range body.Attachments {
-	// 		attachment := models.ProposalAttachment{
-	// 			ProposalID: proposal.ID,
-	// 			URL:        attachmentURL,
-	// 		}
-	// 		if err := tx.Create(&attachment).Error; err != nil {
-	// 			tx.Rollback()
-	// 			c.JSON(http.StatusInternalServerError, gin.H{
-	// 				"message": "error",
-	// 				"error":   "failed to add attachments",
-	// 			})
-	// 			return
-	// 		}
-	// 	}
-	// }
 
 	if err := tx.Commit().Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -245,7 +219,6 @@ func CreateProposal(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		if notificationService != nil {
-			// _ = notificationService.NotifyProposalSent(ctx, actor.ID, p.JobPost.Title, p.ID, p.JobPostID)
 			_ = notificationService.NotifyProposalReceived(ctx, p.JobPost.CreatedByID, p.JobPost.Title, p.ID, p.JobPostID)
 		}
 		if emailService != nil && p.JobPost.CreatedBy.Email != "" {
@@ -352,7 +325,6 @@ func UpdateProposal(c *gin.Context) {
 		return
 	}
 
-	// Update proposal
 	if len(updates) > 0 {
 		if err := db.DB.Model(&proposal).Updates(updates).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -363,7 +335,6 @@ func UpdateProposal(c *gin.Context) {
 		}
 	}
 
-	// Reload with associations
 	if err := db.DB.Preload("JobPost").
 		Preload("Freelancer").
 		Preload("ProposalAttachments").
@@ -392,7 +363,6 @@ func WithdrawProposal(c *gin.Context) {
 		return
 	}
 
-	// Find proposal
 	proposal := models.Proposal{}
 	if err := db.DB.Where("id = ?", proposalID).First(&proposal).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -443,7 +413,6 @@ func WithdrawProposal(c *gin.Context) {
 	})
 }
 
-// DeleteProposal - Hard delete a proposal (only if pending/withdrawn)
 func DeleteProposal(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
@@ -456,7 +425,6 @@ func DeleteProposal(c *gin.Context) {
 		return
 	}
 
-	// Find proposal
 	proposal := models.Proposal{}
 	if err := db.DB.Where("id = ?", proposalID).First(&proposal).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -473,7 +441,6 @@ func DeleteProposal(c *gin.Context) {
 		return
 	}
 
-	// Check ownership
 	if proposal.FreelancerID != user.ID {
 		c.JSON(http.StatusForbidden, gin.H{
 			"message": "error",
@@ -482,7 +449,6 @@ func DeleteProposal(c *gin.Context) {
 		return
 	}
 
-	// Only allow deletion of pending or withdrawn proposals
 	if proposal.Status != models.ProposalStatusPending &&
 		proposal.Status != models.ProposalStatusWithdrawn {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -492,7 +458,6 @@ func DeleteProposal(c *gin.Context) {
 		return
 	}
 
-	// Delete proposal (cascade will delete attachments)
 	if err := db.DB.Delete(&proposal).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "error",
@@ -744,27 +709,6 @@ func ManageProposalDecision(c *gin.Context) {
 			return
 		}
 
-		// startDate := time.Now()
-		// endDate := startDate.AddDate(0, 0, proposal.Duration)
-		// contract := models.Contract{
-		//     JobPostID:    proposal.JobPostID,
-		//     ProposalID:   proposal.ID,
-		//     ClientID:     user.ID,
-		//     FreelancerID: proposal.FreelancerID,
-		//     Title:        proposal.JobPost.Title,
-		//     Description:  proposal.CoverLetter,
-		//     TotalAmount:  proposal.BidAmount,
-		//     StartDate:    startDate,
-		//     EndDate:      endDate,
-		//     Status:       models.ContractStatusActive,
-		// }
-
-		// if err := tx.Create(&contract).Error; err != nil {
-		//     tx.Rollback()
-		//     c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate contract"})
-		//     return
-		// }
-
 		if err := tx.Commit().Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Transaction failed"})
 			return
@@ -785,9 +729,8 @@ func ManageProposalDecision(c *gin.Context) {
 		}(proposal)
 
 		c.JSON(http.StatusOK, gin.H{
-			"message": "Proposal accepted and contract created",
-			"status":  models.ProposalStatusAccepted,
-			// "contract_id":  contract.ID,
+			"message":    "Proposal accepted and contract created",
+			"status":     models.ProposalStatusAccepted,
 			"job_status": models.JobStatusInProgress,
 		})
 		return

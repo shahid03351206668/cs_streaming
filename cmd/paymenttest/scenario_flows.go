@@ -16,10 +16,6 @@ func (s *Suite) ensureEscrowID(f *Flow) {
 	}
 }
 
-// unpayableFreelancerFlow reproduces the live incident: a contract completes
-// while the freelancer's Connect account can't receive transfers. Release
-// must fail without losing or misreporting money, and succeed once the
-// freelancer finishes onboarding.
 func (s *Suite) unpayableFreelancerFlow(client, f2 *TestUser) *Flow {
 	s.r.Section("Unpayable freelancer — release fails safely, then recovers")
 	s.r.MustCheck("verify identity: freelancer2", func() (string, error) { return s.verifyIdentity(f2) })
@@ -110,15 +106,24 @@ func (s *Suite) unpayableFreelancerFlow(client, f2 *TestUser) *Flow {
 	s.r.Section("Stripe Connect onboarding — freelancer2 (recovery)")
 	s.onboard(f2, "Test", "Freelancer2", "")
 
+	// Stripe can take a moment after the capability shows active before it accepts transfers.
 	s.r.MustCheck("after onboarding, retrying release pays out", func() (string, error) {
-		status, resp, err := s.releaseContract(f2, d.ContractID)
-		if err != nil {
-			return "", err
-		}
-		if err := expect(status, resp, 200); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("released=%v", resp["released"]), nil
+		tries := 0
+		return pollUntil(90*time.Second, func() (string, bool, error) {
+			tries++
+			status, resp, err := s.releaseContract(f2, d.ContractID)
+			if err != nil {
+				return "", false, err
+			}
+			if status == 200 {
+				return fmt.Sprintf("released=%v on retry %d", resp["released"], tries), true, nil
+			}
+			if !strings.Contains(errMsg(resp), "capabilit") {
+				return "", false, fmt.Errorf("status %d: %s", status, errMsg(resp))
+			}
+			time.Sleep(5 * time.Second)
+			return fmt.Sprintf("retry %d: still capability error", tries), false, nil
+		})
 	})
 	f2.Ledger.release(d.ContractID)
 	s.checkPaymentRow(d, "released")
@@ -126,6 +131,98 @@ func (s *Suite) unpayableFreelancerFlow(client, f2 *TestUser) *Flow {
 	s.checkWallet(f2, "after recovery")
 	d.FinalStatus = "released"
 	return d
+}
+
+func (s *Suite) payBeforeContractFlow(client, freelancer *TestUser) *Flow {
+	s.r.Section("Mobile order — client pays before the contract exists")
+	f := &Flow{Label: "F", Client: client, Freelancer: freelancer, Fees: computeFees(6, s.settings)}
+	s.r.MustCheck("F: client posts job, freelancer proposes, client accepts", func() (string, error) {
+		id, err := s.createJob(client, "paytest pay-before-contract", 6)
+		if err != nil {
+			return "", err
+		}
+		f.JobID = id
+		status, resp, err := s.sendProposal(freelancer, f.JobID, 6, nil)
+		if err != nil {
+			return "", err
+		}
+		if err := expect(status, resp, 200, 201); err != nil {
+			return "", err
+		}
+		f.ProposalID = getStr(resp, "data", "id")
+		status, resp, err = s.decide(client.AccessToken, f.ProposalID, "accepted")
+		if err != nil {
+			return "", err
+		}
+		return f.ProposalID, expect(status, resp, 200)
+	})
+	s.r.MustCheck("F: client pays before creating the contract", func() (string, error) {
+		status, resp, err := s.createIntent(client.AccessToken, f.ProposalID, nil)
+		if err != nil {
+			return "", err
+		}
+		if err := expect(status, resp, 200); err != nil {
+			return "", err
+		}
+		f.PaymentIntentID = getStr(resp, "data", "payment_intent_id")
+		pi, err := s.confirmIntent(f.PaymentIntentID, pmVisa)
+		if err != nil {
+			return "", err
+		}
+		if getStr(pi, "status") != "succeeded" {
+			return "", fmt.Errorf("status %s", getStr(pi, "status"))
+		}
+		f.ChargeID = getStr(pi, "latest_charge")
+		time.Sleep(5 * time.Second) // let the charge.succeeded webhook arrive while there is no contract
+		return "paid " + f.PaymentIntentID + ", no contract yet", nil
+	})
+	s.r.MustCheck("F: client creates the contract after paying", func() (string, error) {
+		status, resp, err := s.createContract(client.AccessToken, f.ProposalID, 6, time.Now(), time.Now().Add(24*time.Hour))
+		if err != nil {
+			return "", err
+		}
+		if err := expect(status, resp, 200, 201); err != nil {
+			return "", err
+		}
+		f.ContractID = getStr(resp, "contract", "id")
+		return f.ContractID, nil
+	})
+	s.r.MustCheck("F: payment is recorded as held once the contract exists", func() (string, error) {
+		tx, err := s.waitForStatus(client.AccessToken, f.ContractID, "held", 10*time.Second)
+		if err != nil {
+			return "", fmt.Errorf("client paid but no payment was recorded: %w", err)
+		}
+		f.TransactionID = getStr(tx, "id")
+		return "transaction=" + f.TransactionID, nil
+	})
+	freelancer.Ledger.hold(f.ContractID, f.Fees.FreelancerNet)
+	client.Ledger.pay(f.TransactionID, f.Fees.ClientTotal)
+	s.checkPaymentRow(f, "held")
+	s.checkWallet(freelancer, "after pay-before-contract")
+	s.checkWallet(client, "after pay-before-contract")
+
+	s.r.MustCheck("F: both complete; escrow releases", func() (string, error) {
+		if status, resp, err := s.complete(freelancer, f.ContractID); err != nil || status != 200 {
+			return "", fmt.Errorf("freelancer complete: %d %v %s", status, err, errMsg(resp))
+		}
+		status, resp, err := s.complete(client, f.ContractID)
+		if err != nil {
+			return "", err
+		}
+		if err := expect(status, resp, 200); err != nil {
+			return "", err
+		}
+		if st := getStr(resp, "payment_release", "status"); st != "released" {
+			return "", fmt.Errorf("payment_release=%v", resp["payment_release"])
+		}
+		return "released", nil
+	})
+	freelancer.Ledger.release(f.ContractID)
+	f.FinalStatus = "released"
+	s.checkPaymentRow(f, "released")
+	s.verifyTransfer(f)
+	s.checkWallet(freelancer, "after pay-before-contract release")
+	return f
 }
 
 func (s *Suite) disputeFlow(client, f1 *TestUser, a *Flow) *Flow {
@@ -436,8 +533,6 @@ func (s *Suite) refundHeldFlow(client, f1 *TestUser) *Flow {
 	return e
 }
 
-// refundReleasedFlows covers refunds after money already moved: C (released,
-// still in the freelancer's Stripe balance) and A (released and withdrawn).
 func (s *Suite) refundReleasedFlows(client, f1 *TestUser, c, a *Flow) {
 	s.r.Section("Admin refund after release (transfer reversal)")
 	if !s.requireAdmin("refund after release") || c.FinalStatus != "released" {
@@ -569,6 +664,7 @@ func (s *Suite) finalInvariants(client, f1, f2 *TestUser, flows []*Flow) {
 			if !client.Ledger.refunded[tx] {
 				want += total
 			}
+			want += client.Ledger.kept[tx]
 		}
 		if got := getNum(resp, "summary", "total_paid"); !eq(got, round2(want)) {
 			return "", fmt.Errorf("total_paid=%.2f want %.2f", got, want)

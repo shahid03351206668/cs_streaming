@@ -82,7 +82,6 @@ func (c *jobFeedCache) Set(key string, jobs []JobPostValue, total int64) {
 	c.mu.Lock()
 	c.cleanupLocked(now)
 	if len(c.entries) >= jobFeedCacheMaxEntries {
-		// Simple backstop to avoid unbounded growth.
 		c.entries = make(map[string]jobFeedCacheEntry)
 	}
 	c.entries[key] = entry
@@ -116,7 +115,6 @@ func jobFeedCacheKey(params JobFeedParams) string {
 		lng = strconv.FormatFloat(*params.Longitude, 'f', 6, 64)
 	}
 
-	// Keep the key stable and explicit.
 	return fmt.Sprintf(
 		"v1|cat=%s|q=%s|page=%d|limit=%d|lat=%s|lng=%s|radius=%.2f|excl=%s|block=%s|viewer=%s",
 		params.Category,

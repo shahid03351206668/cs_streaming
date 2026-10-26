@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	// "tasksy/config"
 	"tasksy/db"
 	paymentsv3 "tasksy/internal/modules/payments-v3"
 	"tasksy/lib"
@@ -56,12 +55,14 @@ type JobMediaResponse struct {
 }
 
 type UserResponse struct {
-	ID           string `json:"id"`
-	FirstName    string `json:"first_name"`
-	LastName     string `json:"last_name"`
-	Email        string `json:"email"`
-	PhoneNumber  string `json:"phone_number"`
-	ProfilePhoto string `json:"profile_photo,omitempty"`
+	ID           string  `json:"id"`
+	FirstName    string  `json:"first_name"`
+	LastName     string  `json:"last_name"`
+	Email        string  `json:"email"`
+	PhoneNumber  string  `json:"phone_number"`
+	ProfilePhoto string  `json:"profile_photo,omitempty"`
+	Rating       float64 `json:"rating"`
+	ReviewsCount int     `json:"reviews_count"`
 }
 
 type CategoryResponse struct {
@@ -117,6 +118,8 @@ func serializeJobPost(job models.JobPost) JobPostResponse {
 		Email:        job.CreatedBy.Email,
 		PhoneNumber:  job.CreatedBy.PhoneNumber,
 		ProfilePhoto: job.CreatedBy.ProfilePhoto,
+		Rating:       job.CreatedBy.Rating,
+		ReviewsCount: job.CreatedBy.ReviewsCount,
 	}
 
 	var location *JobLocation
@@ -132,7 +135,6 @@ func serializeJobPost(job models.JobPost) JobPostResponse {
 		}
 	}
 
-	// Serialize category
 	category := CategoryResponse{
 		ID:   fmt.Sprintf("%v", job.Category.ID),
 		Name: job.Category.Name,
@@ -403,7 +405,6 @@ func CreateJob(c *gin.Context) {
 			return
 		}
 
-		// Ensure media directory exists
 		if err := os.MkdirAll(MEDIA_FILE_PATH, 0755); err != nil {
 			tx.Rollback()
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -527,7 +528,6 @@ func UpdateJob(c *gin.Context) {
 		return
 	}
 
-	// Validate status if provided
 	if body.Status != "" {
 		validStatuses := []string{
 			models.JobStatusDraft,
@@ -575,7 +575,6 @@ func UpdateJob(c *gin.Context) {
 		}
 	}
 
-	// Prepare updates map
 	updates := make(map[string]interface{})
 
 	if body.Title != "" {
@@ -597,7 +596,6 @@ func UpdateJob(c *gin.Context) {
 	}
 
 	if body.Status != "" {
-		// Prevent changing status of completed jobs
 		if jobPost.Status == models.JobStatusCompleted && body.Status != models.JobStatusCompleted {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"message": "error",
@@ -605,21 +603,6 @@ func UpdateJob(c *gin.Context) {
 			})
 			return
 		}
-
-		// Uncomment when Contract model is implemented
-		// if body.Status == models.JobStatusCancelled {
-		// 	var activeContracts int64
-		// 	db.DB.Model(&models.Contract{}).
-		// 		Where("job_post_id = ? AND status = ?", id, models.ContractStatusActive).
-		// 		Count(&activeContracts)
-		// 	if activeContracts > 0 {
-		// 		c.JSON(http.StatusBadRequest, gin.H{
-		// 			"message": "error",
-		// 			"error":   "cannot cancel job with active contracts",
-		// 		})
-		// 		return
-		// 	}
-		// }
 
 		updates["status"] = body.Status
 	}
@@ -636,7 +619,6 @@ func UpdateJob(c *gin.Context) {
 		return
 	}
 
-	// Update the job post
 	if err := db.DB.Model(&jobPost).Updates(updates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"message": "error",
@@ -645,7 +627,6 @@ func UpdateJob(c *gin.Context) {
 		return
 	}
 
-	// jobResponse =
 	if err := db.DB.Preload("Category").
 		Preload("CreatedBy").
 		Preload("JobMedia").
@@ -745,6 +726,13 @@ func CreateContract(c *gin.Context) {
 	}
 
 	DB.Model(&proposal.JobPost).Update("status", models.JobStatusInProgress)
+
+	// A payment made before the contract existed couldn't be recorded by the webhook, so record it now.
+	if err := paymentsv3.NewService(db.DB).RecordProposalPayment(proposal.ID); err != nil {
+		logger.Log.Error("failed to record payment made before contract creation",
+			zap.String("proposal_id", proposal.ID), zap.String("contract_id", contract.ID), zap.Error(err))
+	}
+
 	DB.Preload("JobPost").Preload("Proposal").Preload("Client").Preload("Freelancer").
 		First(&contract, contract.ID)
 
@@ -754,18 +742,6 @@ func CreateContract(c *gin.Context) {
 	})
 }
 
-// haversineDistance calculates the distance between two lat/lng points in meters.
-// func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
-// 	const earthRadiusM = 6371000.0
-// 	toRad := func(deg float64) float64 { return deg * (3.14159265358979323846 / 180.0) }
-// 	dLat := toRad(lat2 - lat1)
-// 	dLon := toRad(lon2 - lon1)
-// 	a := (dLat / 2 * dLat / 2) + (toRad(lat1) * toRad(lat2) * (dLon / 2 * dLon / 2))
-// 	// simplified approximation sufficient for ≤ 1km checks
-// 	return earthRadiusM * 2 * (a + (1-a)*0) // see note below
-// }
-
-// haversineDistanceAccurate returns the distance in meters using the full haversine formula.
 func haversineDistanceAccurate(lat1, lon1, lat2, lon2 float64) float64 {
 	const earthRadiusM = 6371000.0
 	const pi = 3.14159265358979323846
@@ -864,7 +840,6 @@ func CompleteContract(c *gin.Context) {
 		return
 	}
 
-	//
 	var openDisputeCount int64
 	if err := tx.Model(&models.Dispute{}).
 		Where("contract_id = ? AND status = ?", contractID, models.DisputeStatusOpen).
@@ -945,9 +920,7 @@ func CompleteContract(c *gin.Context) {
 		return
 	}
 
-	// Auto-release escrow once both parties have confirmed. A failed release
-	// doesn't undo completion — escrow stays held and can be retried via
-	// POST /api/v3/escrow/contracts/:id/release.
+	// A failed release doesn't undo completion; escrow stays held and can be retried via the release endpoint.
 	paymentRelease := gin.H{"status": "not_applicable"}
 	fundsReleased := false
 	if contract.ClientCompleted && contract.FreelancerCompleted {
@@ -1030,8 +1003,6 @@ func CompleteContract(c *gin.Context) {
 	})
 }
 
-// func GetContracts
-
 func GetContracts(c *gin.Context) {
 	dbConn := db.DB
 	user := c.MustGet("user").(models.User)
@@ -1053,7 +1024,7 @@ func GetContracts(c *gin.Context) {
 	var contracts []models.Contract
 	var total int64
 
-	// Build base scoped query (security: only contracts this user is party to)
+	// Only contracts this user is party to.
 	query := dbConn.Model(&models.Contract{})
 
 	switch queryParams.Role {

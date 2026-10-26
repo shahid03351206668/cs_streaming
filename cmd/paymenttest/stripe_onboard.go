@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-// Labels the status endpoint uses for fields POST /api/user/stripe-connect-status submits.
 var submittableLabels = []string{"Add your address", "Add your legal first name", "Add your legal last name", "Add a valid phone number"}
 
 func (s *Suite) connectStatus(u *TestUser) (map[string]any, error) {
@@ -21,10 +20,7 @@ func (s *Suite) connectStatus(u *TestUser) (map[string]any, error) {
 	return getMap(resp, "data"), nil
 }
 
-// onboard takes a user's Connect account from restricted to transfers-active
-// through the app's own endpoints, so a broken endpoint fails here instead of
-// being bypassed. Only identity documents go to Stripe directly — the app has
-// no upload endpoint for them.
+// Only identity documents go to Stripe directly; the app has no upload endpoint for them.
 func (s *Suite) onboard(u *TestUser, first, last string, otherUserPhone string) {
 	p := u.Label + ": "
 
@@ -93,8 +89,7 @@ func (s *Suite) onboard(u *TestUser, first, last string, otherUserPhone string) 
 		if err := expect(status, resp, 200); err != nil {
 			return "", err
 		}
-		// The response is the refreshed status; Stripe can lag a moment, so
-		// re-read until the submitted fields are gone.
+		// Stripe can lag a moment, so re-read until the submitted fields are gone.
 		return pollUntil(20*time.Second, func() (string, bool, error) {
 			st, err := s.connectStatus(u)
 			if err != nil {
@@ -149,9 +144,7 @@ func (s *Suite) onboard(u *TestUser, first, last string, otherUserPhone string) 
 		return personID, nil
 	})
 
-	// Both documents up front: the keyed-identity check can fail even when
-	// the primary document passes, and additional_document is Stripe's
-	// documented alternate path for that case.
+	// Both documents up front: the keyed-identity check can fail even if the primary passes, and additional_document is Stripe's alternate path.
 	s.r.MustCheck(p+"upload identity documents (stripe test tokens)", func() (string, error) {
 		_, err := s.sc.Post("/accounts/"+u.StripeAccountID+"/persons/"+personID, url.Values{
 			"verification[document][front]":            {"file_identity_document_success"},

@@ -30,14 +30,13 @@ type PaymentTransactionV3 struct {
 	Status        string          `gorm:"default:held" json:"status"`
 	FlowVersion   string          `gorm:"default:v3" json:"flow_version"`
 
-	// Refund audit trail. StripeReversalID is set only when the escrow had
-	// already been released, meaning the freelancer's transfer had to be
-	// pulled back before the original charge could be refunded.
-	StripeRefundID    string     `gorm:"type:varchar(100)" json:"stripe_refund_id,omitempty"`
-	StripeReversalID  string     `gorm:"type:varchar(100)" json:"stripe_reversal_id,omitempty"`
-	RefundedByAdminID string     `gorm:"type:varchar(64)" json:"refunded_by_admin_id,omitempty"`
-	RefundReason      string     `gorm:"type:text" json:"refund_reason,omitempty"`
-	RefundedAt        *time.Time `json:"refunded_at,omitempty"`
+	// StripeReversalID is set only when a released transfer had to be pulled back first.
+	RefundedAmount    decimal.Decimal `gorm:"default:0" json:"refunded_amount"`
+	StripeRefundID    string          `gorm:"type:varchar(100)" json:"stripe_refund_id,omitempty"`
+	StripeReversalID  string          `gorm:"type:varchar(100)" json:"stripe_reversal_id,omitempty"`
+	RefundedByAdminID string          `gorm:"type:varchar(64)" json:"refunded_by_admin_id,omitempty"`
+	RefundReason      string          `gorm:"type:text" json:"refund_reason,omitempty"`
+	RefundedAt        *time.Time      `json:"refunded_at,omitempty"`
 }
 
 func (PaymentTransactionV3) TableName() string {
@@ -58,11 +57,9 @@ type EscrowTransactionV3 struct {
 	Status               string               `gorm:"default:held" json:"status"`
 	HeldAt               time.Time            `json:"held_at"`
 	ReleasedAt           *time.Time           `json:"released_at"`
-	// Audit trail for admin-forced releases; empty for automatic releases.
 	ReleasedBy  string `gorm:"type:varchar(64)" json:"released_by,omitempty"`
 	ReleaseNote string `gorm:"type:text" json:"release_note,omitempty"`
-	// Bumped each time Stripe definitively rejects a transfer, so the next
-	// release attempt uses a fresh idempotency key.
+	// Bumped when Stripe rejects a transfer so the next attempt uses a fresh idempotency key.
 	TransferAttempt int `gorm:"default:0" json:"-"`
 }
 
@@ -70,8 +67,7 @@ func (EscrowTransactionV3) TableName() string {
 	return "escrow_transactions_v3"
 }
 
-// WithdrawalV3 is a tasker-initiated Stripe payout from their Connect balance
-// to their bank. Status mirrors Stripe: pending, in_transit, paid, failed, canceled.
+// A tasker-initiated Stripe payout; status mirrors Stripe: pending, in_transit, paid, failed, canceled.
 type WithdrawalV3 struct {
 	BaseModel
 
@@ -83,7 +79,6 @@ type WithdrawalV3 struct {
 	Status          string          `gorm:"type:varchar(20);default:pending;index" json:"status"`
 	FailureMessage  string          `gorm:"type:text" json:"failure_message,omitempty"`
 	ArrivalDate     *time.Time      `json:"arrival_date,omitempty"`
-	// Bank the payout went to. BankAccountID is empty when Stripe's default was used.
 	BankAccountID string `gorm:"type:varchar(64)" json:"bank_account_id,omitempty"`
 	DestinationID string `gorm:"type:varchar(100)" json:"destination_id,omitempty"`
 	BankLast4     string `gorm:"type:varchar(4)" json:"bank_last4,omitempty"`

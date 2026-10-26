@@ -135,6 +135,27 @@ func ApplyMigrations() error {
 		return err
 	}
 
+	backfillDerivedColumns()
+
 	applogger.Log.Info("database migrations applied successfully")
 	return nil
+}
+
+// backfillDerivedColumns repairs denormalised columns that older code never
+// filled in. Each statement only touches rows that are wrong, so it is cheap
+// and safe to run on every start.
+func backfillDerivedColumns() {
+	statements := []string{
+		`UPDATE payment_transactions_v3 SET refunded_amount = gross_amount
+			WHERE status = 'refunded' AND refunded_amount::numeric = 0`,
+		`UPDATE users u SET rating = r.avg, reviews_count = r.cnt
+			FROM (SELECT target_id, AVG(rating) AS avg, COUNT(*) AS cnt
+				FROM reviews WHERE deleted_at IS NULL GROUP BY target_id) r
+			WHERE r.target_id = u.id AND (u.reviews_count <> r.cnt OR ABS(u.rating - r.avg) > 0.005)`,
+	}
+	for _, stmt := range statements {
+		if err := DB.Exec(stmt).Error; err != nil {
+			applogger.Log.Error("backfill failed", zap.Error(err))
+		}
+	}
 }

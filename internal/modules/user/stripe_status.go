@@ -11,9 +11,6 @@ import (
 	"github.com/stripe/stripe-go/v84/account"
 )
 
-// StripeConnectStatus is a plain-language summary of where a user's Stripe
-// Connect account stands, for a client app to show directly to the user
-// without needing to understand Stripe's requirements payload itself.
 type StripeConnectStatus struct {
 	AccountID      string   `json:"account_id"`
 	Connected      bool     `json:"connected"`
@@ -24,10 +21,7 @@ type StripeConnectStatus struct {
 	Message        string   `json:"message"`
 }
 
-// requirementLabels maps Stripe's requirement keys to plain-language prompts.
-// Unrecognized keys fall back to a readable version of the key itself, so a
-// new requirement Stripe introduces still produces a sensible message rather
-// than silently being dropped.
+// Unrecognised Stripe keys fall back to a readable form of the key, so new requirements still show a message.
 var requirementLabels = map[string]string{
 	"external_account":                 "Add a bank account",
 	"individual.dob.day":               "Add your date of birth",
@@ -48,15 +42,12 @@ func friendlyRequirement(key string) string {
 	if label, ok := requirementLabels[key]; ok {
 		return label
 	}
-	// individual.verification.additional_document -> "verification additional document"
 	cleaned := strings.TrimPrefix(key, "individual.")
 	cleaned = strings.ReplaceAll(cleaned, ".", " ")
 	cleaned = strings.ReplaceAll(cleaned, "_", " ")
 	return "Please provide: " + cleaned
 }
 
-// dedupeFriendly collapses e.g. three separate dob.day/month/year entries
-// down to one "Add your date of birth" message.
 func dedupeFriendly(keys []string) []string {
 	seen := make(map[string]bool)
 	out := make([]string, 0, len(keys))
@@ -173,8 +164,7 @@ func (s *Service) SubmitConnectRequirements(user *models.User, in ConnectRequire
 		return nil, fmt.Errorf("stripe rejected these details: %w", err)
 	}
 
-	// Persist locally so a later profile/address edit doesn't clobber this
-	// with stale blanks via the fire-and-forget sync.
+	// Persisted locally so a later profile/address edit doesn't clobber this with stale blanks via the background sync.
 	updates := map[string]any{}
 	if in.FirstName != "" {
 		updates["first_name"] = in.FirstName

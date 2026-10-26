@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-// mainFlow: contract -> payment (declined first, then paid) -> wallet ->
-// release -> withdrawal, with every refusal path along the way.
 func (s *Suite) mainFlow(client, f1, outsider *TestUser) *Flow {
 	s.r.Section("Main flow — contract and payment intent")
 	a := s.setupFlow("A", client, f1, 20)
@@ -313,6 +311,7 @@ func (s *Suite) withdrawalRules(f1, client *TestUser, a *Flow) {
 		})
 	}
 	refused("withdraw 0 is refused", f1, map[string]any{"amount": 0}, "greater than zero")
+	refused("withdraw below Stripe's £1.00 minimum is refused clearly", f1, map[string]any{"amount": 0.8}, "minimum withdrawal is £1.00")
 	refused("negative withdraw is refused", f1, map[string]any{"amount": -5}, "greater than zero")
 	refused("withdraw more than available_to_withdraw is refused", f1, map[string]any{"amount": round2(avail + 0.01)}, "exceeds")
 	refused("withdraw to another user's bank account is refused", f1, map[string]any{"amount": 1, "bank_account_id": client.BankID}, "not found")

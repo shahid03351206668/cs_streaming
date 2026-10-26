@@ -27,9 +27,7 @@ var (
 	ErrNotContractParty     = errors.New("you are not a party to this contract")
 )
 
-// ReleaseContractFunds transfers every held escrow on a contract to the
-// freelancer's Connect account. It checks the completion flags rather than
-// contract.status, because dispute resolution can reset status to "active".
+// Checks completion flags, not contract.status, because dispute resolution can reset status to "active".
 func (s *Service) ReleaseContractFunds(contractID string) (int, error) {
 	var contract models.Contract
 	if err := s.db.First(&contract, "id = ?", contractID).Error; err != nil {
@@ -61,9 +59,7 @@ func (s *Service) ReleaseContractFunds(contractID string) (int, error) {
 	return released, nil
 }
 
-// checkReleasable applies the release rules. requireCompletion is false only
-// for an admin override, which may release before both parties confirm but
-// never while a dispute is open or the contract is cancelled/terminated.
+// requireCompletion is false only for the admin override; disputes and closed contracts always block.
 func (s *Service) checkReleasable(contract *models.Contract, requireCompletion bool) error {
 	if contract.Status == models.ContractStatusCancelled || contract.Status == models.ContractStatusTerminated {
 		return ErrContractClosed
@@ -91,8 +87,6 @@ func (s *Service) openDisputeCount(contractID string) (int64, error) {
 	return n, err
 }
 
-// AdminReleaseEscrow force-releases one escrow on an admin's decision (e.g. a
-// client who never confirms completion). A note is required for the audit trail.
 func (s *Service) AdminReleaseEscrow(escrowID, adminID, note string) error {
 	var escrow models.EscrowTransactionV3
 	if err := s.db.First(&escrow, "id = ?", escrowID).Error; err != nil {
@@ -109,21 +103,21 @@ func (s *Service) AdminReleaseEscrow(escrowID, adminID, note string) error {
 	if err := s.checkReleasable(&contract, false); err != nil {
 		return err
 	}
+	return s.releaseHeld(&escrow, &contract, adminID, note)
+}
 
-	ok, err := s.releaseEscrow(&escrow, &contract)
+func (s *Service) releaseHeld(escrow *models.EscrowTransactionV3, contract *models.Contract, adminID, note string) error {
+	ok, err := s.releaseEscrow(escrow, contract)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return ErrNothingToRelease
 	}
-
 	return s.db.Model(&models.EscrowTransactionV3{}).Where("id = ?", escrow.ID).
 		Updates(map[string]any{"released_by": adminID, "release_note": note}).Error
 }
 
-// ReleaseEscrow is the manual/retry entry point by escrow ID; either contract
-// party may trigger it, and the same completion/dispute rules apply.
 func (s *Service) ReleaseEscrow(escrowID, requestingUserID string) (int, error) {
 	var escrow models.EscrowTransactionV3
 	if err := s.db.First(&escrow, "id = ?", escrowID).Error; err != nil {
@@ -143,9 +137,7 @@ func (s *Service) ReleaseForParty(contractID, requestingUserID string) (int, err
 	return s.ReleaseContractFunds(contractID)
 }
 
-// releaseEscrow moves one escrow held -> releasing -> released. The conditional
-// claim means only one concurrent caller can create the transfer, and the
-// per-escrow idempotency key stops a retry from paying twice.
+// held -> releasing -> released; the conditional claim and per-escrow idempotency key prevent a double payout.
 func (s *Service) releaseEscrow(e *models.EscrowTransactionV3, contract *models.Contract) (bool, error) {
 	claim := s.db.Model(&models.EscrowTransactionV3{}).
 		Where("id = ? AND status = ?", e.ID, escrowHeld).
@@ -179,8 +171,7 @@ func (s *Service) releaseEscrow(e *models.EscrowTransactionV3, contract *models.
 		return false, fmt.Errorf("payment transaction not found: %w", err)
 	}
 
-	// A transfer may already exist (created, but our DB write failed and the
-	// webhook was missed) — record it rather than paying a second time.
+	// A transfer may exist already (our DB write failed, webhook missed); record it instead of paying twice.
 	if existing := findEscrowTransfer(contract.ID, e.ID); existing != "" {
 		if err := s.markReleased(e.ID, e.PaymentTransactionID, existing); err != nil {
 			return false, fmt.Errorf("transfer %s exists but failed to record release: %w", existing, err)
@@ -198,8 +189,7 @@ func (s *Service) releaseEscrow(e *models.EscrowTransactionV3, contract *models.
 			"contract_id": contract.ID,
 		},
 	}
-	// Tie the transfer to the original charge so it doesn't depend on the
-	// platform's available balance while card funds are still pending.
+	// Tie the transfer to the charge so it doesn't depend on the platform's available balance.
 	if payment.StripeChargeID != "" {
 		params.SourceTransaction = stripe.String(payment.StripeChargeID)
 	}
@@ -209,8 +199,7 @@ func (s *Service) releaseEscrow(e *models.EscrowTransactionV3, contract *models.
 		params.SetIdempotencyKey(transferIdempotencyKey(e.ID, attempt))
 		tr, err := transfer.New(params)
 		if err == nil {
-			// If this write fails the escrow stays "releasing"; the
-			// transfer.created webhook reconciles it via escrow_id metadata.
+			// If this write fails the escrow stays "releasing" and the transfer.created webhook reconciles it.
 			if err := s.markReleased(e.ID, e.PaymentTransactionID, tr.ID); err != nil {
 				return false, fmt.Errorf("transfer %s created but failed to record release: %w", tr.ID, err)
 			}
@@ -219,10 +208,7 @@ func (s *Service) releaseEscrow(e *models.EscrowTransactionV3, contract *models.
 
 		rejected, replayed := rejectedByStripe(err)
 		if rejected {
-			// Stripe caches a rejected request's response under its
-			// idempotency key for 24h. Without a new key, a retry after the
-			// cause is fixed (e.g. the freelancer finishing onboarding) would
-			// replay the old rejection.
+			// Stripe replays a rejected request under the same idempotency key for 24h, so use a new key.
 			attempt++
 			s.db.Model(&models.EscrowTransactionV3{}).Where("id = ?", e.ID).Update("transfer_attempt", attempt)
 			if replayed && tries == 0 {
@@ -234,8 +220,7 @@ func (s *Service) releaseEscrow(e *models.EscrowTransactionV3, contract *models.
 	}
 }
 
-// transferIdempotencyKey is stable across retries of one attempt, so a call
-// that timed out after Stripe created the transfer can't pay twice.
+// Stable per attempt so a timed-out call that Stripe completed can't pay twice.
 func transferIdempotencyKey(escrowID string, attempt int) string {
 	if attempt == 0 {
 		return "v3-transfer-" + escrowID
@@ -243,9 +228,7 @@ func transferIdempotencyKey(escrowID string, attempt int) string {
 	return fmt.Sprintf("v3-transfer-%s-%d", escrowID, attempt)
 }
 
-// rejectedByStripe reports a 4xx from Stripe — the request was refused and
-// no transfer exists, so a new idempotency key is safe — and whether that
-// response was a replay of an earlier request under the same key.
+// Reports a 4xx (no transfer exists, so a new key is safe) and whether it replayed an earlier request.
 func rejectedByStripe(err error) (rejected, replayed bool) {
 	var se *stripe.Error
 	if !errors.As(err, &se) || se.HTTPStatusCode < 400 || se.HTTPStatusCode >= 500 {

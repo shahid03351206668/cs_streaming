@@ -33,7 +33,6 @@ func (r *Runner) run(fn func() (string, error)) (string, error, time.Duration) {
 	return detail, err, time.Since(start).Round(time.Millisecond)
 }
 
-// Check runs a step; a failure is recorded and the run continues.
 func (r *Runner) Check(name string, fn func() (string, error)) bool {
 	r.total++
 	detail, err, elapsed := r.run(fn)
@@ -47,8 +46,6 @@ func (r *Runner) Check(name string, fn func() (string, error)) bool {
 	return false
 }
 
-// Warn is for steps whose outcome depends on Stripe timing or on a business
-// decision rather than a defect; reported, never fatal.
 func (r *Runner) Warn(name string, fn func() (string, error)) bool {
 	r.total++
 	detail, err, elapsed := r.run(fn)
@@ -62,7 +59,6 @@ func (r *Runner) Warn(name string, fn func() (string, error)) bool {
 	return false
 }
 
-// MustCheck aborts the run on failure, for steps everything later depends on.
 func (r *Runner) MustCheck(name string, fn func() (string, error)) {
 	if !r.Check(name, fn) {
 		r.Summary()

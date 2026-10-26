@@ -256,15 +256,6 @@ func (r *chatRepository) SaveMessage(msg *models.ChatMessage) error {
 	return tx.Commit().Error
 }
 
-//	func (r *chatRepository) GetHistory(conversationID string, limit, offset int) ([]models.ChatMessage, error) {
-//		var msgs []models.ChatMessage
-//		err := r.db.Where("conversation_id = ?", conversationID).
-//			Preload("Attachments").Preload("Sender").
-//			Order("created_at DESC").Limit(limit).Offset(offset).
-//			Find(&msgs).Error
-//		return msgs, err
-//	}
-
 func (r *chatRepository) GetUserConversations(userID string) ([]models.ChatConversation, error) {
 	var chats []models.ChatConversation
 	err := r.db.
