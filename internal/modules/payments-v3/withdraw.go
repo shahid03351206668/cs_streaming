@@ -113,13 +113,11 @@ func (s *Service) Withdraw(user *models.User, amount *float64, bankAccountID str
 		return nil, ErrNoStripeAccount
 	}
 
-	// Stripe rejects manual payouts while the account is on an automatic schedule.
 	acc, err := s.ensureManualPayouts(user.StripeConnectAccountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare payout account: %w", err)
 	}
 
-	// Stripe, not our DB, decides where money can go: some banks were attached on Stripe without a local row.
 	banks := stripeBankAccounts(acc)
 	if len(banks) == 0 {
 		return nil, ErrNoBankAccount

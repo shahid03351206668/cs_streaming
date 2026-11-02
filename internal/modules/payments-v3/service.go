@@ -453,15 +453,15 @@ func (s *Service) handleChargeSucceededV3(event *stripe.Event) error {
 	var existingPayment *models.PaymentTransactionV3
 	if err := s.db.Where("stripe_event_id = ?", event.ID).First(&existingPayment).Error; err == nil {
 		return nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
 	}
+	//  else if !errors.Is(err, gorm.ErrRecordNotFound) {
+	// 	return err
+	// }
 
 	if err := json.Unmarshal(event.Data.Raw, &charge); err != nil {
 		return err
 	}
 
-	// Errors while there is no contract so Stripe retries; RecordProposalPayment records it once the contract exists.
 	return s.recordCharge(&charge, event.ID)
 }
 
@@ -498,7 +498,6 @@ func (s *Service) RecordProposalPayment(proposalID string) error {
 	return s.recordCharge(pi.LatestCharge, "reconciled:"+pi.LatestCharge.ID)
 }
 
-// Idempotent per PaymentIntent so webhook retries and RecordProposalPayment can't record twice.
 func (s *Service) recordCharge(charge *stripe.Charge, eventID string) error {
 	proposalID := charge.Metadata["proposal_id"]
 	if proposalID == "" {
@@ -524,7 +523,6 @@ func (s *Service) recordCharge(charge *stripe.Charge, eventID string) error {
 		return err
 	}
 
-	// Use the split stored on the intent; older intents recompute from the bid with current settings.
 	fees, ok := FeesFromMetadata(charge.Metadata)
 	if !ok {
 		var proposal models.Proposal
@@ -597,11 +595,11 @@ func (s *Service) recordCharge(charge *stripe.Charge, eventID string) error {
 
 func (s *Service) handleTransferPaidV3(event *stripe.Event) error {
 	var tr stripe.Transfer
+
 	if err := json.Unmarshal(event.Data.Raw, &tr); err != nil {
 		return err
 	}
 
-	// Match by transfer ID, or by escrow_id metadata when we created the transfer but failed to record it.
 	var escrow models.EscrowTransactionV3
 	err := s.db.Where("stripe_transfer_id = ?", tr.ID).First(&escrow).Error
 	if err != nil && tr.Metadata["escrow_id"] != "" {

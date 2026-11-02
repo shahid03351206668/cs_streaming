@@ -219,19 +219,19 @@ func (h *Handler) HandleGetPayoutBalance(c *gin.Context) {
 func (h *Handler) HandleWithdraw(c *gin.Context) {
 	user := c.MustGet("user").(models.User)
 
-	// Omit amount to withdraw everything; omit bank_account_id for Stripe's default bank.
 	var body struct {
 		Amount        *float64 `json:"amount"`
 		BankAccountID string   `json:"bank_account_id"`
 	}
+
 	if err := c.ShouldBindJSON(&body); err != nil && !errors.Is(err, io.EOF) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
 
 	stripe.Key = h.config.Stripe.SecretKey
-
 	withdrawal, err := h.service.Withdraw(&user, body.Amount, body.BankAccountID)
+
 	if err != nil {
 		status, msg := http.StatusBadGateway, err.Error()
 		var rejected *PayoutRejectedError

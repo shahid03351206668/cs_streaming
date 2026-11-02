@@ -12,6 +12,7 @@ import (
 func (h *Handler) HandleStripeWebhookV3(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, int64(65536))
 	payload, err := io.ReadAll(c.Request.Body)
+
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"message": "error"})
 		return
@@ -48,7 +49,6 @@ func (h *Handler) HandleStripeWebhookV3(c *gin.Context) {
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 
-	// Payout events come from connected accounts; the endpoint needs "Listen to events on Connected accounts".
 	case "payout.paid", "payout.failed", "payout.canceled", "payout.updated":
 		if err := h.service.handlePayoutEventV3(&event); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
