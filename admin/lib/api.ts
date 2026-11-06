@@ -44,7 +44,7 @@ export default api;
 
 // Auth
 export const login = (email: string, password: string) =>
-  api.post<{ token: string }>("/api/auth/login", { email, password });
+  api.post<{ token: string }>("/api/auth/admin/login", { email, password });
 
 // Users (admin)
 export const getUsers = () => api.get("/api/v1/admin/users");
@@ -415,9 +415,30 @@ export interface Dispute {
   resolved_by?: DisputeUser;
   resolution?: string;
   resolved_at?: string;
+  outcome?: DisputeOutcome;
+  refund_fees?: boolean;
+  payout_action?: string;
   attachments?: DisputeAttachment[];
   created_at: string;
   updated_at: string;
+}
+
+export type DisputeOutcome = "none" | "freelancer" | "client";
+
+/** What the client paid for the contract and how much an admin can still refund. */
+export interface DisputePayment {
+  has_payment: boolean;
+  payment_id?: string;
+  status?: string;
+  currency?: string;
+  client_paid: number;
+  bid: number;
+  freelancer_net: number;
+  platform_fees: number;
+  already_refunded: number;
+  max_refundable: number;
+  escrow_status?: string;
+  can_refund: boolean;
 }
 
 export interface DisputeListMeta {
@@ -444,10 +465,25 @@ export const adminListDisputes = (params: {
 };
 
 export const adminGetDispute = (id: string) =>
-  api.get<{ message: string; data: Dispute }>(`/api/v1/admin/disputes/${id}`);
+  api.get<{ message: string; data: Dispute; payment: DisputePayment }>(`/api/v1/admin/disputes/${id}`);
 
-export const adminResolveDispute = (id: string, resolution: string) =>
-  api.put<{ message: string; data: Dispute }>(`/api/v1/admin/disputes/${id}/resolve`, { resolution });
+export interface ResolveDisputeParams {
+  resolution: string;
+  /** Whose favour: "client" refunds, "freelancer" pays out, "none" only records the remarks. */
+  outcome?: DisputeOutcome;
+  /** With outcome "client": false keeps the commission and platform fee as a penalty. */
+  refund_fees?: boolean;
+}
+
+export const adminResolveDispute = (id: string, params: ResolveDisputeParams) =>
+  api.put<{ message: string; data: Dispute }>(`/api/v1/admin/disputes/${id}/resolve`, params);
+
+/** Refunds the client and resolves the dispute in their favour; omit amount to refund everything they paid. */
+export const adminRefundDispute = (id: string, reason: string, amount?: number) =>
+  api.post<{ message: string; data: Dispute; payment: DisputePayment }>(
+    `/api/v1/admin/disputes/${id}/refund`,
+    amount === undefined ? { reason } : { reason, amount }
+  );
 
 // Email Accounts
 export interface EmailAccount {

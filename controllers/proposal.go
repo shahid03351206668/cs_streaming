@@ -9,10 +9,12 @@ import (
 	"tasksy/db"
 	paymentsv3 "tasksy/internal/modules/payments-v3"
 	"tasksy/models"
+	"tasksy/pkg/logger"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -404,6 +406,8 @@ func WithdrawProposal(c *gin.Context) {
 		return
 	}
 
+	refundClosedProposal(proposal.ID)
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"data": gin.H{
@@ -668,6 +672,8 @@ func ManageProposalDecision(c *gin.Context) {
 			return
 		}
 
+		refundClosedProposal(proposal.ID)
+
 		go func(p models.Proposal) {
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 			defer cancel()
@@ -734,5 +740,13 @@ func ManageProposalDecision(c *gin.Context) {
 			"job_status": models.JobStatusInProgress,
 		})
 		return
+	}
+}
+
+// refundClosedProposal returns the client's money if they had already paid
+// for a proposal that is now rejected or withdrawn.
+func refundClosedProposal(proposalID string) {
+	if err := paymentsv3.NewService(db.DB).RefundUnrecordedProposalPayment(proposalID); err != nil {
+		logger.Log.Error("failed to refund payment for a closed proposal", zap.String("proposal_id", proposalID), zap.Error(err))
 	}
 }

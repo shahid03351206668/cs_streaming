@@ -78,6 +78,7 @@ func main() {
 	s.webhookForgery(client)
 
 	flows := append([]*Flow{a, c, d, e, pf, g, h, ij[0], ij[1], k, l}, dispFlows...)
+	flows = append(flows, s.extraFlows...)
 	s.finalInvariants(client, f1, f2, flows)
 
 	s.r.Summary()

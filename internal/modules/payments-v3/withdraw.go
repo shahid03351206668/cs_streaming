@@ -15,6 +15,7 @@ import (
 	"github.com/stripe/stripe-go/v84/balance"
 	"github.com/stripe/stripe-go/v84/payout"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 var (
@@ -152,36 +153,55 @@ func (s *Service) Withdraw(user *models.User, amount *float64, bankAccountID str
 		return nil, err
 	}
 
-	amt := bal.Available
-	if amount != nil {
-		amt = decimal.NewFromFloat(*amount).Round(2)
-		if !amt.IsPositive() {
-			return nil, ErrInvalidAmount
-		}
-	}
-	if !amt.IsPositive() {
-		return nil, ErrNothingToWithdraw
-	}
-	if amt.LessThan(MinimumPayout) {
-		return nil, fmt.Errorf("%w (you asked for £%s)", ErrBelowMinimumPayout, amt.StringFixed(2))
-	}
-	if amt.GreaterThan(bal.Available) {
-		return nil, ErrInsufficientBalance
-	}
-
 	withdrawal := models.WithdrawalV3{
 		UserID:          user.ID,
 		StripeAccountID: user.StripeConnectAccountID,
-		Amount:          amt,
 		Currency:        PaymentCurrency,
 		Status:          string(stripe.PayoutStatusPending),
 		BankAccountID:   bankRowID,
 		DestinationID:   destination,
 		BankLast4:       last4,
 	}
-	if err := s.db.Create(&withdrawal).Error; err != nil {
-		return nil, fmt.Errorf("failed to record withdrawal: %w", err)
+
+	// The user row lock serialises withdrawals: each one sees the earlier
+	// pending rows in the balance, so simultaneous requests can't overdraw.
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`SELECT id FROM users WHERE id = ? FOR UPDATE`, user.ID).Error; err != nil {
+			return err
+		}
+		ledger, err := ledgerBalance(tx, user.ID)
+		if err != nil {
+			return fmt.Errorf("failed to compute balance: %w", err)
+		}
+		available := withdrawableNow(ledger, bal.Available)
+
+		amt := available
+		if amount != nil {
+			amt = decimal.NewFromFloat(*amount).Round(2)
+			if !amt.IsPositive() {
+				return ErrInvalidAmount
+			}
+		}
+		if !amt.IsPositive() {
+			return ErrNothingToWithdraw
+		}
+		if amt.LessThan(MinimumPayout) {
+			return fmt.Errorf("%w (you asked for £%s)", ErrBelowMinimumPayout, amt.StringFixed(2))
+		}
+		if amt.GreaterThan(available) {
+			return ErrInsufficientBalance
+		}
+
+		withdrawal.Amount = amt
+		if err := tx.Create(&withdrawal).Error; err != nil {
+			return fmt.Errorf("failed to record withdrawal: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
+	amt := withdrawal.Amount
 
 	params := &stripe.PayoutParams{
 		Amount:   stripe.Int64(ToPence(amt)),
@@ -229,7 +249,30 @@ func (e *PayoutRejectedError) UserMessage() string {
 	return "withdrawal failed; please try again later"
 }
 
+// syncWithdrawalStatuses re-checks unfinished payouts with Stripe, so a missed
+// payout.* webhook can't leave a withdrawal stuck as pending.
+func (s *Service) syncWithdrawalStatuses(userID string) {
+	var open []models.WithdrawalV3
+	if err := s.db.Where("user_id = ? AND stripe_payout_id <> '' AND status IN ?", userID,
+		[]string{string(stripe.PayoutStatusPending), string(stripe.PayoutStatusInTransit)}).Find(&open).Error; err != nil {
+		return
+	}
+	for i := range open {
+		params := &stripe.PayoutParams{}
+		params.SetStripeAccount(open[i].StripeAccountID)
+		p, err := payout.Get(open[i].StripePayoutID, params)
+		if err != nil {
+			logger.Log.Warn("failed to refresh payout status", zap.String("payout_id", open[i].StripePayoutID), zap.Error(err))
+			continue
+		}
+		if string(p.Status) != open[i].Status {
+			s.applyPayout(&open[i], p)
+		}
+	}
+}
+
 func (s *Service) ListWithdrawals(userID string) ([]models.WithdrawalV3, error) {
+	s.syncWithdrawalStatuses(userID)
 	withdrawals := make([]models.WithdrawalV3, 0)
 	err := s.db.Where("user_id = ?", userID).Order("created_at DESC").Find(&withdrawals).Error
 	return withdrawals, err

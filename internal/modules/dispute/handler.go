@@ -11,6 +11,7 @@ import (
 	"tasksy/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 	"github.com/stripe/stripe-go/v84"
 )
 
@@ -110,7 +111,13 @@ func (h *Handler) AdminGetDispute(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": dispute})
+	payment, err := h.service.PaymentSummary(dispute.ContractID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": dispute, "payment": payment})
 }
 
 func (h *Handler) AdminListDisputes(c *gin.Context) {
@@ -160,7 +167,7 @@ func (h *Handler) AdminResolveDispute(c *gin.Context) {
 		case err.Error() == "dispute not found":
 			status = http.StatusNotFound
 		case errors.Is(err, paymentsv3.ErrRefundStateChanged), errors.Is(err, paymentsv3.ErrAlreadyRefunded),
-			errors.Is(err, paymentsv3.ErrContractClosed):
+			errors.Is(err, paymentsv3.ErrContractClosed), errors.Is(err, paymentsv3.ErrChargebackOpen):
 			status = http.StatusConflict
 		case isStripeFailure(err):
 			status = http.StatusBadGateway
@@ -170,6 +177,44 @@ func (h *Handler) AdminResolveDispute(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": dispute})
+}
+
+func (h *Handler) AdminRefundDispute(c *gin.Context) {
+	user := c.MustGet("user").(models.User)
+
+	var body struct {
+		Reason string   `json:"reason" binding:"required,min=5"`
+		Amount *float64 `json:"amount"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	var amount *decimal.Decimal
+	if body.Amount != nil {
+		d := decimal.NewFromFloat(*body.Amount)
+		amount = &d
+	}
+
+	dispute, err := h.service.AdminRefundDispute(c.Param("id"), user.ID, body.Reason, amount)
+	if err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case err.Error() == "dispute not found":
+			status = http.StatusNotFound
+		case errors.Is(err, paymentsv3.ErrRefundStateChanged), errors.Is(err, paymentsv3.ErrAlreadyRefunded),
+			errors.Is(err, paymentsv3.ErrChargebackOpen):
+			status = http.StatusConflict
+		case isStripeFailure(err):
+			status = http.StatusBadGateway
+		}
+		c.JSON(status, gin.H{"message": "error", "error": err.Error()})
+		return
+	}
+
+	payment, _ := h.service.PaymentSummary(dispute.ContractID)
+	c.JSON(http.StatusOK, gin.H{"message": "client refunded", "data": dispute, "payment": payment})
 }
 
 func isStripeFailure(err error) bool {

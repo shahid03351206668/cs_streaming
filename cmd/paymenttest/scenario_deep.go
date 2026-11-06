@@ -314,18 +314,59 @@ func (s *Suite) dashboardRefundFlows(client, fr *TestUser) []*Flow {
 		j.FinalStatus = "refunded"
 	}
 	s.checkWallet(fr, "after Stripe partial refund")
+
+	x := s.setupFlow("X", client, fr, 6)
+	s.payFlow(x, pmBypassPending)
+	s.r.MustCheck("X: job completed and the freelancer paid", func() (string, error) {
+		st, err := s.completeBoth(x)
+		if err != nil {
+			return "", err
+		}
+		return st, expectEqual("payment_release", st, "released")
+	})
+	fr.Ledger.release(x.ContractID)
+	s.verifyTransfer(x)
+	s.r.Check("X: a full refund made in Stripe after release pulls the freelancer's transfer back", func() (string, error) {
+		if _, err := s.sc.Post("/refunds", url.Values{"payment_intent": {x.PaymentIntentID}}, ""); err != nil {
+			return "", err
+		}
+		if _, err := s.waitForStatus(client.AccessToken, x.ContractID, "refunded", 30*time.Second); err != nil {
+			return "", err
+		}
+		t, err := s.sc.Get("/transfers/"+x.TransferID, "")
+		if err != nil {
+			return "", err
+		}
+		if !getBool(t, "reversed") || int64(getNum(t, "amount_reversed")) != pence(x.Fees.FreelancerNet) {
+			return "", fmt.Errorf("transfer reversed=%v amount_reversed=%v", getBool(t, "reversed"), getNum(t, "amount_reversed"))
+		}
+		return fmt.Sprintf("%dp reversed", pence(x.Fees.FreelancerNet)), nil
+	})
+	fr.Ledger.dropReleased(x.ContractID)
+	client.Ledger.refund(x.TransactionID)
+	x.FinalStatus = "refunded"
+	s.extraFlows = append(s.extraFlows, x)
+	s.checkWallet(fr, "after a Stripe refund of a released payment")
 	s.checkWallet(client, "after Stripe refunds")
 	return []*Flow{i, j}
 }
 
-func (s *Suite) chargebackFlow(client, fr *TestUser) *Flow {
-	s.r.Section("Deep — chargeback (card dispute)")
-	k := s.setupFlow("K", client, fr, 5)
-	s.payFlow(k, pmCreateDispute)
-	k.FinalStatus = "held"
-	s.r.MustCheck("Stripe opens a chargeback on the payment", func() (string, error) {
+func (s *Suite) escrowStatus(contractID string) string {
+	if s.db == nil {
+		return ""
+	}
+	escs, err := s.db.escrows(contractID)
+	if err != nil || len(escs) != 1 {
+		return ""
+	}
+	return escs[0].Status
+}
+
+func (s *Suite) openChargeback(f *Flow) string {
+	var disputeID string
+	s.r.MustCheck(f.Label+": Stripe opens a chargeback on the payment", func() (string, error) {
 		return pollUntil(60*time.Second, func() (string, bool, error) {
-			list, err := s.sc.Get("/disputes?limit=5&payment_intent="+k.PaymentIntentID, "")
+			list, err := s.sc.Get("/disputes?limit=5&payment_intent="+f.PaymentIntentID, "")
 			if err != nil {
 				return "", false, err
 			}
@@ -333,11 +374,46 @@ func (s *Suite) chargebackFlow(client, fr *TestUser) *Flow {
 			if len(rows) == 0 {
 				return "no dispute yet", false, nil
 			}
-			return fmt.Sprintf("%s status=%s", getStr(rows[0], "id"), getStr(rows[0], "status")), true, nil
+			disputeID = getStr(rows[0], "id")
+			return fmt.Sprintf("%s status=%s", disputeID, getStr(rows[0], "status")), true, nil
 		})
 	})
-	s.r.Check("escrow is not released while the client's bank disputes the payment", func() (string, error) {
-		time.Sleep(3 * time.Second)
+	s.r.Check(f.Label+": the held payment is frozen while the bank disputes it", func() (string, error) {
+		return pollUntil(30*time.Second, func() (string, bool, error) {
+			st := s.escrowStatus(f.ContractID)
+			return "escrow=" + st, st == "chargeback", nil
+		})
+	})
+	return disputeID
+}
+
+func (s *Suite) closeChargeback(f *Flow, disputeID, evidence, want string) {
+	s.r.MustCheck(fmt.Sprintf("%s: the chargeback closes as %s", f.Label, want), func() (string, error) {
+		if _, err := s.sc.Post("/disputes/"+disputeID, url.Values{
+			"evidence[uncategorized_text]": {evidence},
+			"submit":                       {"true"},
+		}, ""); err != nil {
+			return "", err
+		}
+		return pollUntil(90*time.Second, func() (string, bool, error) {
+			d, err := s.sc.Get("/disputes/"+disputeID, "")
+			if err != nil {
+				return "", false, err
+			}
+			return "status=" + getStr(d, "status"), getStr(d, "status") == want, nil
+		})
+	})
+}
+
+func (s *Suite) chargebackFlow(client, fr *TestUser) *Flow {
+	s.r.Section("Deep — chargeback (card dispute)")
+	k := s.setupFlow("K", client, fr, 5)
+	k.CardDisputed = true
+	s.payFlow(k, pmCreateDispute)
+	k.FinalStatus = "held"
+	disputeID := s.openChargeback(k)
+
+	s.r.Check("K: completing the job while the bank disputes the payment releases nothing", func() (string, error) {
 		st, err := s.completeBoth(k)
 		if err != nil {
 			return "", err
@@ -345,11 +421,73 @@ func (s *Suite) chargebackFlow(client, fr *TestUser) *Flow {
 		if st == "released" {
 			fr.Ledger.release(k.ContractID)
 			k.FinalStatus = "released"
-			return "", fmt.Errorf("released £%.2f to the freelancer while the £%.2f charge is being clawed back by the bank — the platform loses both", k.Fees.FreelancerNet, k.Fees.ClientTotal)
+			return "", fmt.Errorf("released £%.2f to the freelancer while the bank is clawing back £%.2f", k.Fees.FreelancerNet, k.Fees.ClientTotal)
 		}
 		return "payment_release=" + st, nil
 	})
-	s.checkWallet(fr, "after chargeback")
+	if s.adminToken != "" {
+		s.r.Check("K: an admin refund during the chargeback is refused with a clear reason", func() (string, error) {
+			status, resp, err := s.adminRefund(k.ContractID, "trying to refund during a chargeback")
+			if err != nil {
+				return "", err
+			}
+			if err := expect(status, resp, 409); err != nil {
+				return "", err
+			}
+			return errMsg(resp), nil
+		})
+	}
+	s.checkWallet(fr, "during chargeback")
+
+	s.closeChargeback(k, disputeID, "winning_evidence", "won")
+	s.r.Check("K: a won chargeback puts the money back in escrow", func() (string, error) {
+		return pollUntil(30*time.Second, func() (string, bool, error) {
+			st := s.escrowStatus(k.ContractID)
+			return "escrow=" + st, st == "held", nil
+		})
+	})
+	s.r.Check("K: the completed job can now be paid out", func() (string, error) {
+		status, resp, err := s.releaseContract(fr, k.ContractID)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("released=%v", resp["released"]), expect(status, resp, 200)
+	})
+	if s.escrowStatus(k.ContractID) == "released" {
+		fr.Ledger.release(k.ContractID)
+		k.FinalStatus = "released"
+	}
+	s.checkWallet(fr, "after a won chargeback")
+
+	k2 := s.setupFlow("K2", client, fr, 5)
+	k2.CardDisputed = true
+	s.payFlow(k2, pmCreateDispute)
+	k2.FinalStatus = "held"
+	d2 := s.openChargeback(k2)
+	s.closeChargeback(k2, d2, "losing_evidence", "lost")
+	s.r.Check("K2: a lost chargeback marks the payment refunded and never pays the freelancer", func() (string, error) {
+		if _, err := pollUntil(30*time.Second, func() (string, bool, error) {
+			st := s.escrowStatus(k2.ContractID)
+			return "escrow=" + st, st == "refunded", nil
+		}); err != nil {
+			return "", err
+		}
+		st, err := s.completeBoth(k2)
+		if err != nil {
+			return "", err
+		}
+		if st == "released" {
+			return "", fmt.Errorf("money the bank took back was released to the freelancer")
+		}
+		return "refunded; completion released nothing", nil
+	})
+	fr.Ledger.dropHeld(k2.ContractID)
+	client.Ledger.refund(k2.TransactionID)
+	k2.FinalStatus = "refunded"
+	s.noTransfer(k2)
+	s.checkWallet(fr, "after a lost chargeback")
+	s.checkWallet(client, "after a lost chargeback")
+	s.extraFlows = append(s.extraFlows, k2)
 	return k
 }
 
@@ -397,29 +535,61 @@ func (s *Suite) payBeforeAcceptFlows(client, fr *TestUser) *Flow {
 	l.FinalStatus = "held"
 	s.checkPaymentRow(l, "held")
 
-	m := s.proposalOnly("M", client, fr, 5, false)
-	s.r.Warn("paying, then rejecting the proposal, leaves the money unaccounted for", func() (string, error) {
-		status, resp, err := s.createIntent(client.AccessToken, m.ProposalID, nil)
+	payPending := func(f *Flow) (string, error) {
+		status, resp, err := s.createIntent(client.AccessToken, f.ProposalID, nil)
 		if err != nil || status != 200 {
 			return "", fmt.Errorf("intent: %d %v %s", status, err, errMsg(resp))
 		}
 		piID := getStr(resp, "data", "payment_intent_id")
-		if _, err := s.confirmIntent(piID, pmVisa); err != nil {
+		_, err = s.confirmIntent(piID, pmVisa)
+		return piID, err
+	}
+	waitRefunded := func(piID string, f *Flow) (string, error) {
+		return pollUntil(20*time.Second, func() (string, bool, error) {
+			refunds, err := s.stripeRefunds(piID)
+			if err != nil {
+				return "", false, err
+			}
+			if len(refunds) == 1 && int64(getNum(refunds[0], "amount")) == pence(f.Fees.ClientTotal) {
+				return "refunded " + getStr(refunds[0], "id"), true, nil
+			}
+			return fmt.Sprintf("%d refunds", len(refunds)), false, nil
+		})
+	}
+
+	m := s.proposalOnly("M", client, fr, 5, false)
+	s.r.Check("M: client pays, then rejects the proposal; the payment is refunded automatically", func() (string, error) {
+		piID, err := payPending(m)
+		if err != nil {
 			return "", err
 		}
 		if status, resp, err := s.decide(client.AccessToken, m.ProposalID, "rejected"); err != nil || status != 200 {
 			return "", fmt.Errorf("reject: %d %v %s", status, err, errMsg(resp))
 		}
-		time.Sleep(4 * time.Second)
-		refunds, err := s.stripeRefunds(piID)
+		return waitRefunded(piID, m)
+	})
+	s.r.Check("M: a rejected proposal can't be paid for again", func() (string, error) {
+		status, resp, err := s.createIntent(client.AccessToken, m.ProposalID, nil)
 		if err != nil {
 			return "", err
 		}
-		if len(refunds) > 0 {
-			return "payment was refunded on rejection", nil
+		return errMsg(resp), expect(status, resp, 409)
+	})
+
+	w := s.proposalOnly("W", client, fr, 5, false)
+	s.r.Check("W: client pays, then the freelancer withdraws the proposal; the payment is refunded", func() (string, error) {
+		piID, err := payPending(w)
+		if err != nil {
+			return "", err
 		}
-		_, _ = s.sc.Post("/refunds", url.Values{"payment_intent": {piID}}, "")
-		return "", fmt.Errorf("client was charged £%.2f for a rejected proposal; no contract, no escrow, no refund (refunded manually by the suite)", computeFees(5, s.settings).ClientTotal)
+		status, resp, err := s.api.Do("POST", "/api/proposals/"+w.ProposalID+"/withdraw", fr.AccessToken, nil, nil)
+		if err != nil {
+			return "", err
+		}
+		if err := expect(status, resp, 200); err != nil {
+			return "", err
+		}
+		return waitRefunded(piID, w)
 	})
 	return l
 }
@@ -495,6 +665,32 @@ func (s *Suite) webhookReplays(flows map[string]*Flow) {
 			return fmt.Sprintf("200, still 1 row, status %s", before), nil
 		})
 	}
+	s.r.Check("a charge that isn't a Tasksy payment is acknowledged (200), not retried forever", func() (string, error) {
+		pi, err := s.sc.Post("/payment_intents", url.Values{
+			"amount": {"150"}, "currency": {"gbp"}, "payment_method": {pmVisa}, "confirm": {"true"},
+			"automatic_payment_methods[enabled]": {"true"}, "automatic_payment_methods[allow_redirects]": {"never"},
+		}, "")
+		if err != nil {
+			return "", err
+		}
+		chargeID := getStr(pi, "latest_charge")
+		var status int
+		if _, err := pollUntil(30*time.Second, func() (string, bool, error) {
+			st, err := s.replay("charge.succeeded", chargeID)
+			if err != nil {
+				return err.Error(), false, nil
+			}
+			status = st
+			return fmt.Sprint(st), true, nil
+		}); err != nil {
+			return "", err
+		}
+		if status != 200 {
+			return "", fmt.Errorf("webhook answered %d", status)
+		}
+		_, _ = s.sc.Post("/refunds", url.Values{"payment_intent": {getStr(pi, "id")}}, "")
+		return "200", nil
+	})
 	if c := flows["C"]; c != nil && c.TransferID != "" {
 		s.r.Check("replayed transfer.created doesn't revive a reversed+refunded escrow", func() (string, error) {
 			status, err := s.replay("transfer.created", c.TransferID)

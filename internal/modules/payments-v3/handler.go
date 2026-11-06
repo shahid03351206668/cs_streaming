@@ -57,7 +57,7 @@ func (h *Handler) HandleCreatePaymentIntent(c *gin.Context) {
 	intent, fees, err := h.service.CreatePaymentIntent(&client, &freelancer, &proposal)
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, ErrAlreadyPaid) {
+		if errors.Is(err, ErrAlreadyPaid) || errors.Is(err, ErrProposalClosed) {
 			status = http.StatusConflict
 		}
 		c.JSON(status, gin.H{"message": "error", "error": err.Error()})
@@ -185,7 +185,8 @@ func respondRelease(c *gin.Context, released int, err error) {
 		switch {
 		case errors.Is(err, ErrNotContractParty):
 			status = http.StatusForbidden
-		case errors.Is(err, ErrContractDisputed), errors.Is(err, ErrContractNotCompleted), errors.Is(err, ErrNothingToRelease):
+		case errors.Is(err, ErrContractDisputed), errors.Is(err, ErrContractNotCompleted), errors.Is(err, ErrNothingToRelease),
+			errors.Is(err, ErrChargebackOpen):
 			status = http.StatusConflict
 		}
 		c.JSON(status, gin.H{"message": "error", "error": err.Error(), "released": released})
@@ -284,9 +285,12 @@ func (h *Handler) HandleGetWallet(c *gin.Context) {
 		"data": gin.H{
 			"balance":               wallet.Balance,
 			"available_to_withdraw": wallet.Balance,
+			"in_process":            wallet.InProcess,
 			"pending_settlement":    wallet.PendingSettlement,
-			"total_balance":         wallet.TotalBalance,
 			"escrow_amount":         wallet.EscrowAmount,
+			"total_balance":         wallet.TotalBalance,
+			"total_earned":          wallet.TotalEarned,
+			"total_withdrawn":       wallet.TotalWithdrawn,
 			"transactions":          wallet.Transactions,
 			"minimum_withdrawal":    MinimumPayout.InexactFloat64(),
 		},

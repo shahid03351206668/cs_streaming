@@ -213,6 +213,8 @@ func respondRefund(c *gin.Context, err error) {
 		status = http.StatusConflict
 	case errors.Is(err, ErrInvalidRefundAmount):
 		status = http.StatusBadRequest
+	case errors.Is(err, ErrChargebackOpen):
+		status = http.StatusConflict
 	}
 	c.JSON(status, gin.H{"message": "error", "error": err.Error()})
 }

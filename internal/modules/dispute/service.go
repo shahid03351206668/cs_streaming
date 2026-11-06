@@ -14,6 +14,7 @@ import (
 	aws_services "tasksy/pkg"
 	"tasksy/pkg/logger"
 
+	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -380,6 +381,15 @@ var ErrInvalidOutcome = errors.New("outcome must be one of: none, freelancer, cl
 
 // outcome "freelancer" pays out and completes the job, "client" refunds and cancels it, "none" only reopens the contract; money moves first so a failure leaves the dispute open.
 func (s *Service) AdminResolveDispute(id, resolvedByID, resolution, outcome string, refundFees bool) (*models.Dispute, error) {
+	return s.resolve(id, resolvedByID, resolution, outcome, refundFees, nil)
+}
+
+// AdminRefundDispute refunds the client (all of it, or amount) and resolves the dispute in their favour.
+func (s *Service) AdminRefundDispute(id, adminID, reason string, amount *decimal.Decimal) (*models.Dispute, error) {
+	return s.resolve(id, adminID, reason, models.DisputeOutcomeClient, true, amount)
+}
+
+func (s *Service) resolve(id, resolvedByID, resolution, outcome string, refundFees bool, amount *decimal.Decimal) (*models.Dispute, error) {
 	if outcome == "" {
 		outcome = models.DisputeOutcomeNone
 	}
@@ -400,7 +410,7 @@ func (s *Service) AdminResolveDispute(id, resolvedByID, resolution, outcome stri
 		return nil, errors.New("dispute is already resolved")
 	}
 
-	payoutAction, err := s.payments.SettleDispute(dispute.ContractID, resolvedByID, resolution, outcome, refundFees)
+	payoutAction, err := s.payments.SettleDispute(dispute.ContractID, resolvedByID, resolution, outcome, refundFees, amount)
 	if err != nil {
 		return nil, err
 	}
@@ -509,4 +519,8 @@ func mimeFromName(name string) string {
 	default:
 		return "application/octet-stream"
 	}
+}
+
+func (s *Service) PaymentSummary(contractID string) (*paymentsv3.DisputePayment, error) {
+	return s.payments.DisputePaymentSummary(contractID)
 }

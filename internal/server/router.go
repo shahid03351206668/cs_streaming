@@ -183,7 +183,6 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	}
 
 	router.GET("/api/v1/get-settings", controllers.GetSystemSettings)
-	router.GET("/api/v1/admin/settings", controllers.GetSystemSettings)
 	adminRoutes := router.Group("/api/v1/admin", middleware.AdminOnly()...)
 	{
 		adminRoutes.GET("/users", controllers.AdminUserListController)
@@ -199,6 +198,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		adminRoutes.GET("/job-reports", controllers.AdminListJobReportsController)
 		adminRoutes.PUT("/job-reports/:id", controllers.AdminUpdateJobReportController)
 
+		adminRoutes.GET("/settings", controllers.GetSystemSettings)
 		adminRoutes.PUT("/settings", controllers.UpdateSystemSettings)
 		adminRoutes.GET("/banks", controllers.AdminListBanks)
 		adminRoutes.POST("/banks", controllers.AdminCreateBank)
@@ -219,6 +219,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		disputeAdmin.GET("", disputeHandler.AdminListDisputes)
 		disputeAdmin.GET("/:id", disputeHandler.AdminGetDispute)
 		disputeAdmin.PUT("/:id/resolve", disputeHandler.AdminResolveDispute)
+		disputeAdmin.POST("/:id/refund", disputeHandler.AdminRefundDispute)
 	}
 
 	promoAdmin := router.Group("/api/v1/admin/promotions", middleware.AdminOnly()...)

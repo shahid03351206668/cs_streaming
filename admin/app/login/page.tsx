@@ -40,11 +40,12 @@ export default function LoginPage() {
       });
       router.push("/dashboard");
     } catch (error: unknown) {
-      const axiosError = error as { response?: { data?: { message?: string } } };
+      const axiosError = error as { response?: { data?: { message?: string; error?: string } } };
       toast({
         variant: "destructive",
         title: "Login failed",
         description:
+          axiosError.response?.data?.error ||
           axiosError.response?.data?.message ||
           "Invalid credentials. Please try again.",
       });

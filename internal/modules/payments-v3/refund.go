@@ -47,6 +47,9 @@ func (s *Service) AdminRefundContract(contractID, adminID, reason string, amount
 	if escrow.Status == escrowRefunded {
 		return nil, ErrAlreadyRefunded
 	}
+	if escrow.Status == escrowChargeback {
+		return nil, ErrChargebackOpen
+	}
 	if escrow.Status != escrowHeld && escrow.Status != escrowReleased {
 		return nil, ErrRefundStateChanged
 	}

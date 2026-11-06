@@ -17,6 +17,8 @@ const (
 	escrowReleasing = "releasing"
 	escrowReleased  = "released"
 	escrowRefunded  = "refunded"
+	// Frozen while the client's bank disputes the card payment (a chargeback).
+	escrowChargeback = "chargeback"
 )
 
 var (
@@ -43,6 +45,11 @@ func (s *Service) ReleaseContractFunds(contractID string) (int, error) {
 		return 0, err
 	}
 	if len(escrows) == 0 {
+		var frozen int64
+		s.db.Model(&models.EscrowTransactionV3{}).Where("contract_id = ? AND status = ?", contractID, escrowChargeback).Count(&frozen)
+		if frozen > 0 {
+			return 0, ErrChargebackOpen
+		}
 		return 0, ErrNothingToRelease
 	}
 

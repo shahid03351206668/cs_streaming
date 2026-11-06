@@ -17,6 +17,7 @@ import (
 	"github.com/stripe/stripe-go/v84/customer"
 	"github.com/stripe/stripe-go/v84/paymentintent"
 	"github.com/stripe/stripe-go/v84/token"
+	"github.com/stripe/stripe-go/v84/transferreversal"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -31,15 +32,19 @@ type TypeWalletTransaction struct {
 	Amount      float64   `json:"amount"`
 	Type        string    `json:"type"`
 	Description string    `json:"description"`
+	Status      string    `json:"status"`
 	Date        time.Time `json:"date"`
 	ID          string    `json:"id"`
 }
 
 type UserWalletVal struct {
 	Balance           float64
-	TotalBalance      float64
+	InProcess         float64
 	PendingSettlement float64
 	EscrowAmount      float64
+	TotalBalance      float64
+	TotalEarned       float64
+	TotalWithdrawn    float64
 	Transactions      []TypeWalletTransaction
 }
 
@@ -69,10 +74,13 @@ var (
 	ErrBidBelowFees        = errors.New("bid amount is too low to cover the freelancer commission and platform fee")
 	ErrAlreadyPaid         = errors.New("this proposal has already been paid for")
 	ErrProposalNotAccepted = errors.New("only an accepted proposal can be paid for")
+	ErrProposalClosed      = errors.New("this proposal was rejected or withdrawn and can't be paid for")
 )
 
 func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposal *models.Proposal) (*stripe.PaymentIntent, *FeeBreakdown, error) {
-
+	if proposal.Status == models.ProposalStatusRejected || proposal.Status == models.ProposalStatusWithdrawn {
+		return nil, nil, ErrProposalClosed
+	}
 	if freelancer.StripeConnectAccountID == "" {
 		return nil, nil, errors.New("freelancer does not have a stripe account")
 	}
@@ -81,7 +89,7 @@ func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposal 
 	if err := s.db.Where("proposal_id = ?", proposal.ID).First(&contract).Error; err == nil {
 		var existing int64
 		s.db.Model(&models.PaymentTransactionV3{}).
-			Where("contract_id = ? AND status IN ?", contract.ID, []string{escrowHeld, escrowReleasing, escrowReleased}).
+			Where("contract_id = ? AND status IN ?", contract.ID, []string{escrowHeld, escrowReleasing, escrowReleased, escrowChargeback}).
 			Count(&existing)
 		if existing > 0 {
 			return nil, nil, ErrAlreadyPaid
@@ -96,6 +104,27 @@ func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposal 
 	fees := CalculateFees(proposal.BidAmount, settings)
 	if !fees.FreelancerNet.IsPositive() {
 		return nil, nil, ErrBidBelowFees
+	}
+
+	// The intent saved on the proposal is the source of truth: a paid one blocks
+	// a second charge (even before a contract exists), an unpaid one is reused.
+	if proposal.StripePaymentIntentID != "" {
+		existing, err := paymentintent.Get(proposal.StripePaymentIntentID, nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to check the existing payment: %w", err)
+		}
+		switch existing.Status {
+		case stripe.PaymentIntentStatusSucceeded, stripe.PaymentIntentStatusProcessing, stripe.PaymentIntentStatusRequiresCapture:
+			return nil, nil, ErrAlreadyPaid
+		case stripe.PaymentIntentStatusCanceled:
+		default:
+			if existing.Amount == ToPence(fees.ClientTotal) {
+				return existing, &fees, nil
+			}
+			if _, err := paymentintent.Cancel(existing.ID, nil); err != nil {
+				return nil, nil, fmt.Errorf("failed to replace the outdated payment: %w", err)
+			}
+		}
 	}
 
 	customerID, err := s.ensureStripeCustomer(client)
@@ -116,9 +145,9 @@ func (s *Service) CreatePaymentIntent(client, freelancer *models.User, proposal 
 		Metadata: metadata,
 	}
 
-	params.IdempotencyKey = stripe.String("v3-intent-" + proposal.ID)
+	// Keyed on the intent being replaced, so concurrent taps share one key.
+	params.IdempotencyKey = stripe.String("v3-intent-" + proposal.ID + "-" + proposal.StripePaymentIntentID)
 	intent, err := paymentintent.New(params)
-	// Concurrent double taps share a key; retry until the first request finishes and returns its intent.
 	for wait := 300 * time.Millisecond; isIdempotencyKeyInUse(err) && wait <= 2400*time.Millisecond; wait *= 2 {
 		time.Sleep(wait)
 		intent, err = paymentintent.New(params)
@@ -334,129 +363,151 @@ func (s *Service) GetBankAccounts(user *models.User) ([]models.UserBankAccount, 
 }
 
 func (s *Service) GetUserWallet(user *models.User) (*UserWalletVal, error) {
-	transactions := make([]TypeWalletTransaction, 0)
+	s.syncWithdrawalStatuses(user.ID)
 
-	totalPending := decimal.Zero
-	if err := s.db.Model(&models.EscrowTransactionV3{}).
-		Where("user_id = ? AND status = ?", user.ID, escrowHeld).
-		Select("COALESCE(SUM(amount::numeric), 0)").
-		Scan(&totalPending).Error; err != nil {
-		return nil, fmt.Errorf("failed to sum held escrows: %w", err)
+	var escrows []models.EscrowTransactionV3
+	if err := s.db.Where("user_id = ?", user.ID).Find(&escrows).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch escrows: %w", err)
 	}
-
-	balance := 0.0
-	if err := s.db.Model(&models.EscrowTransactionV3{}).
-		Where("user_id = ? AND status = ?", user.ID, escrowReleased).
-		Select("COALESCE(SUM(amount::numeric), 0)").
-		Scan(&balance).Error; err != nil {
-		return nil, fmt.Errorf("failed to sum released escrows: %w", err)
+	var paid []models.PaymentTransactionV3
+	if err := s.db.Where("from_user_id = ?", user.ID).Find(&paid).Error; err != nil {
+		return nil, fmt.Errorf("failed to fetch payments: %w", err)
 	}
-
-	var paymentTxns []models.PaymentTransactionV3
-	if err := s.db.Where("from_user_id = ? OR to_user_id = ?", user.ID, user.ID).
-		Find(&paymentTxns).Error; err != nil {
-		return nil, fmt.Errorf("failed to fetch payment transactions: %w", err)
-	}
-
-	for _, p := range paymentTxns {
-		gross, _ := p.GrossAmount.Float64()
-		net, _ := p.NetAmount.Float64()
-
-		if p.FromUserID == user.ID {
-			desc := "Contract payment sent"
-			if p.Status == escrowRefunded {
-				desc = "Contract payment sent (refunded)"
-			}
-			transactions = append(transactions, TypeWalletTransaction{
-				Amount:      gross,
-				Type:        "debit",
-				Description: desc,
-				Date:        p.CreatedAt,
-				ID:          p.ID,
-			})
-		} else if p.ToUserID == user.ID && p.Status == escrowHeld {
-
-			transactions = append(transactions, TypeWalletTransaction{
-				Amount:      net,
-				Type:        "credit",
-				Description: "Payment received (held in escrow)",
-				Date:        p.CreatedAt,
-				ID:          p.ID,
-			})
-		}
-	}
-
-	var releasedEscrows []models.EscrowTransactionV3
-	if err := s.db.Where("user_id = ? AND status = ?", user.ID, escrowReleased).
-		Find(&releasedEscrows).Error; err != nil {
-		return nil, fmt.Errorf("failed to fetch escrow transactions: %w", err)
-	}
-	for _, e := range releasedEscrows {
-		amt, _ := e.Amount.Float64()
-		date := e.HeldAt
-		if e.ReleasedAt != nil {
-			date = *e.ReleasedAt
-		}
-		transactions = append(transactions, TypeWalletTransaction{
-			Amount:      amt,
-			Type:        "credit",
-			Description: "Escrow released",
-			Date:        date,
-			ID:          e.ID,
-		})
-	}
-
 	var withdrawals []models.WithdrawalV3
-	if err := s.db.Where("user_id = ? AND status NOT IN ?", user.ID,
-		[]string{string(stripe.PayoutStatusFailed), string(stripe.PayoutStatusCanceled)}).
-		Find(&withdrawals).Error; err != nil {
+	if err := s.db.Where("user_id = ?", user.ID).Find(&withdrawals).Error; err != nil {
 		return nil, fmt.Errorf("failed to fetch withdrawals: %w", err)
 	}
-	for _, w := range withdrawals {
-		amt, _ := w.Amount.Float64()
-		balance -= amt
+
+	paymentIDs := make([]string, 0, len(escrows))
+	for _, e := range escrows {
+		paymentIDs = append(paymentIDs, e.PaymentTransactionID)
+	}
+	received := make(map[string]models.PaymentTransactionV3, len(escrows))
+	if len(paymentIDs) > 0 {
+		var rows []models.PaymentTransactionV3
+		if err := s.db.Where("id IN ?", paymentIDs).Find(&rows).Error; err != nil {
+			return nil, fmt.Errorf("failed to fetch received payments: %w", err)
+		}
+		for _, p := range rows {
+			received[p.ID] = p
+		}
+	}
+
+	transactions := make([]TypeWalletTransaction, 0, len(escrows)+len(paid)+len(withdrawals))
+	line := func(id, kind, desc, status string, amount decimal.Decimal, date time.Time) {
 		transactions = append(transactions, TypeWalletTransaction{
-			Amount:      amt,
-			Type:        "debit",
-			Description: "Withdrawal to bank",
-			Date:        w.CreatedAt,
-			ID:          w.ID,
+			ID: id, Type: kind, Description: desc, Status: status, Amount: amount.InexactFloat64(), Date: date,
 		})
+	}
+
+	// Money earned as a freelancer, driven by the escrow rows that credit this user.
+	held, earned := decimal.Zero, decimal.Zero
+	for _, e := range escrows {
+		p := received[e.PaymentTransactionID]
+		switch e.Status {
+		case escrowHeld, escrowReleasing, escrowChargeback:
+			held = held.Add(e.Amount)
+			line(e.PaymentTransactionID, "credit", "Payment received (held in escrow)", e.Status, e.Amount, p.CreatedAt)
+		case escrowReleased:
+			earned = earned.Add(e.Amount)
+			line(e.PaymentTransactionID, "credit", "Escrow released", escrowReleased, e.Amount, releasedAt(e))
+		case escrowRefunded:
+			if e.StripeTransferID == "" {
+				continue
+			}
+			line(e.PaymentTransactionID, "credit", "Escrow released", escrowReleased, e.Amount, releasedAt(e))
+			reversedAt := p.CreatedAt
+			if p.RefundedAt != nil {
+				reversedAt = *p.RefundedAt
+			}
+			line(e.PaymentTransactionID+"-reversal", "debit", "Payment reversed (refunded)", escrowRefunded, e.Amount, reversedAt)
+		}
+	}
+
+	// Money paid as a client. A refund is its own credit line, so a refunded
+	// payment shows the debit and the money coming back, not just a debit.
+	for _, p := range paid {
+		line(p.ID, "debit", "Contract payment sent", p.Status, p.GrossAmount, p.CreatedAt)
+		if p.Status == escrowRefunded && p.RefundedAmount.IsPositive() {
+			refundedAt := p.CreatedAt
+			if p.RefundedAt != nil {
+				refundedAt = *p.RefundedAt
+			}
+			line(p.ID+"-refund", "credit", "Refund received", escrowRefunded, p.RefundedAmount, refundedAt)
+		}
+	}
+
+	withdrawn := decimal.Zero
+	for _, w := range withdrawals {
+		desc := "Withdrawal to bank"
+		if w.Status == string(stripe.PayoutStatusFailed) || w.Status == string(stripe.PayoutStatusCanceled) {
+			desc += " (" + w.Status + ")"
+		} else {
+			withdrawn = withdrawn.Add(w.Amount)
+		}
+		line(w.ID, "debit", desc, w.Status, w.Amount, w.CreatedAt)
 	}
 
 	sort.Slice(transactions, func(i, j int) bool {
 		return transactions[i].Date.After(transactions[j].Date)
 	})
 
-	escrowAmount, _ := totalPending.Float64()
-
-	// Stripe holds released money until the card payment settles; if it can't be reached, claim nothing as withdrawable.
-	available, pending := 0.0, balance
+	// Our ledger is the source of truth for what the user has earned. Stripe
+	// only decides how much of it can leave right now: money released to the
+	// freelancer but still settling stays "in process" instead of vanishing.
+	ledger := earned.Sub(withdrawn)
+	available := decimal.Zero
 	if user.StripeConnectAccountID != "" {
 		if bal, err := s.connectBalance(user.StripeConnectAccountID); err == nil {
-			available, pending = bal.Available.InexactFloat64(), bal.Pending.InexactFloat64()
+			available = withdrawableNow(ledger, bal.Available)
 		}
 	}
+	pending := decimal.Max(ledger.Sub(available), decimal.Zero)
 
 	return &UserWalletVal{
-		Balance:           available,
-		TotalBalance:      balance,
-		PendingSettlement: pending,
-		EscrowAmount:      escrowAmount,
+		Balance:           available.InexactFloat64(),
+		InProcess:         held.Add(pending).InexactFloat64(),
+		PendingSettlement: pending.InexactFloat64(),
+		EscrowAmount:      held.InexactFloat64(),
+		TotalBalance:      ledger.InexactFloat64(),
+		TotalEarned:       earned.InexactFloat64(),
+		TotalWithdrawn:    withdrawn.InexactFloat64(),
 		Transactions:      transactions,
 	}, nil
 }
 
+// withdrawableNow is the part of what the user has earned that Stripe will let out right now.
+func withdrawableNow(ledger, stripeAvailable decimal.Decimal) decimal.Decimal {
+	if !ledger.IsPositive() || !stripeAvailable.IsPositive() {
+		return decimal.Zero
+	}
+	return decimal.Min(ledger, stripeAvailable)
+}
+
+func ledgerBalance(db *gorm.DB, userID string) (decimal.Decimal, error) {
+	var earned, withdrawn decimal.Decimal
+	if err := db.Model(&models.EscrowTransactionV3{}).
+		Where("user_id = ? AND status = ?", userID, escrowReleased).
+		Select("COALESCE(SUM(amount::numeric), 0)").Scan(&earned).Error; err != nil {
+		return decimal.Zero, err
+	}
+	if err := db.Model(&models.WithdrawalV3{}).
+		Where("user_id = ? AND status NOT IN ?", userID, []string{string(stripe.PayoutStatusFailed), string(stripe.PayoutStatusCanceled)}).
+		Select("COALESCE(SUM(amount::numeric), 0)").Scan(&withdrawn).Error; err != nil {
+		return decimal.Zero, err
+	}
+	return earned.Sub(withdrawn), nil
+}
+
+func releasedAt(e models.EscrowTransactionV3) time.Time {
+	if e.ReleasedAt != nil {
+		return *e.ReleasedAt
+	}
+	return e.HeldAt
+}
+
 func (s *Service) handleChargeSucceededV3(event *stripe.Event) error {
 	var charge stripe.Charge
-
-	var existingPayment *models.PaymentTransactionV3
-	if err := s.db.Where("stripe_event_id = ?", event.ID).First(&existingPayment).Error; err == nil {
-		return nil
-	}
-	//  else if !errors.Is(err, gorm.ErrRecordNotFound) {
-	// 	return err
-	// }
 
 	if err := json.Unmarshal(event.Data.Raw, &charge); err != nil {
 		return err
@@ -473,7 +524,6 @@ func (s *Service) paymentRecorded(paymentIntentID string) bool {
 	return n > 0
 }
 
-// Records a payment made before the contract existed (the webhook couldn't); no-op if absent or already recorded.
 func (s *Service) RecordProposalPayment(proposalID string) error {
 	var proposal models.Proposal
 	if err := s.db.Select("id", "stripe_payment_intent_id").First(&proposal, "id = ?", proposalID).Error; err != nil {
@@ -501,7 +551,7 @@ func (s *Service) RecordProposalPayment(proposalID string) error {
 func (s *Service) recordCharge(charge *stripe.Charge, eventID string) error {
 	proposalID := charge.Metadata["proposal_id"]
 	if proposalID == "" {
-		return fmt.Errorf("proposal id is not found in the meta data")
+		return nil
 	}
 
 	stripePaymentIntentID := ""
@@ -512,15 +562,19 @@ func (s *Service) recordCharge(charge *stripe.Charge, eventID string) error {
 		return nil
 	}
 
-	fromUserID := charge.Metadata["from_user_id"]
-	toUserID := charge.Metadata["to_user_id"]
-
 	var contract models.Contract
 	if err := s.db.Where("proposal_id = ?", proposalID).First(&contract).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrContractNotCreatedYet
 		}
 		return err
+	}
+
+	// The contract decides who pays and who is paid; metadata is only a cross-check.
+	fromUserID, toUserID := contract.ClientID, contract.FreelancerID
+	if charge.Metadata["from_user_id"] != fromUserID || charge.Metadata["to_user_id"] != toUserID {
+		logger.Log.Warn("charge metadata disagrees with the contract; using the contract's parties",
+			zap.String("charge_id", charge.ID), zap.String("contract_id", contract.ID))
 	}
 
 	fees, ok := FeesFromMetadata(charge.Metadata)
@@ -609,7 +663,7 @@ func (s *Service) handleTransferPaidV3(event *stripe.Event) error {
 		return nil
 	}
 
-	if escrow.Status == escrowReleased || escrow.Status == "refunded" {
+	if escrow.Status != escrowHeld && escrow.Status != escrowReleasing {
 		return nil
 	}
 
@@ -659,6 +713,32 @@ func (s *Service) handleChargeRefundedV3(event *stripe.Event) error {
 		return nil
 	}
 
+	var escrow models.EscrowTransactionV3
+	if err := s.db.Where("payment_transaction_id = ?", transaction.ID).First(&escrow).Error; err != nil {
+		return err
+	}
+	if escrow.Status == escrowReleasing {
+		return errors.New("release in progress; retry once it settles")
+	}
+
+	// Refunded straight from the Stripe Dashboard after the freelancer was paid:
+	// pull the transfer back, or the freelancer keeps money the client got back.
+	reversalID := ""
+	if escrow.Status == escrowReleased && escrow.StripeTransferID != "" {
+		params := &stripe.TransferReversalParams{ID: stripe.String(escrow.StripeTransferID)}
+		params.SetIdempotencyKey("v3-reversal-" + escrow.ID)
+		rev, err := transferreversal.New(params)
+		if err != nil {
+			logger.Log.Error("client refunded in Stripe but the freelancer's transfer could not be reversed; escrow left released",
+				zap.String("transaction_id", transaction.ID), zap.String("transfer_id", escrow.StripeTransferID), zap.Error(err))
+			return s.db.Model(&transaction).Updates(map[string]any{
+				"refunded_amount": fromPence(charge.AmountRefunded),
+				"refund_reason":   "refunded in Stripe; transfer reversal failed: " + err.Error(),
+			}).Error
+		}
+		reversalID = rev.ID
+	}
+
 	tx := s.db.Begin()
 	defer func() {
 		if r := recover(); r != nil {
@@ -666,10 +746,16 @@ func (s *Service) handleChargeRefundedV3(event *stripe.Event) error {
 		}
 	}()
 
-	if err := tx.Model(&transaction).Updates(map[string]any{
+	now := time.Now()
+	updates := map[string]any{
 		"status":          escrowRefunded,
-		"refunded_amount": transaction.GrossAmount,
-	}).Error; err != nil {
+		"refunded_amount": fromPence(charge.AmountRefunded),
+		"refunded_at":     &now,
+	}
+	if reversalID != "" {
+		updates["stripe_reversal_id"] = reversalID
+	}
+	if err := tx.Model(&transaction).Updates(updates).Error; err != nil {
 		tx.Rollback()
 		return err
 	}

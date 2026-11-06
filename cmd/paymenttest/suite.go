@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"net/url"
 	"sort"
@@ -29,6 +30,7 @@ type Suite struct {
 
 	inProgressJobID string // a job whose proposal was accepted; must refuse new proposals
 	webhookSecret   string // the server's webhook signing secret; enables signed replay checks
+	extraFlows      []*Flow
 }
 
 type TestUser struct {
@@ -59,6 +61,7 @@ type Flow struct {
 	EscrowID        string
 	TransferID      string
 	FinalStatus     string // expected escrow/payment status at the end of the run
+	CardDisputed    bool   // paid with a card that opens a chargeback, so a held escrow may already be frozen
 }
 
 func newUser(label string, run int64) *TestUser {
@@ -432,7 +435,7 @@ func (s *Suite) checkPaymentRow(f *Flow, wantStatus string) {
 		if p.Status != wantStatus {
 			problems = append(problems, "payment.status="+p.Status)
 		}
-		if e.Status != wantStatus {
+		if e.Status != wantStatus && !(f.CardDisputed && wantStatus == "held" && e.Status == "chargeback") {
 			problems = append(problems, "escrow.status="+e.Status)
 		}
 		if e.PaymentTransactionID != p.ID {
@@ -473,6 +476,7 @@ func (s *Suite) checkPaymentRow(f *Flow, wantStatus string) {
 type Ledger struct {
 	held        map[string]float64 // contract -> freelancer net, still in escrow
 	released    map[string]float64 // contract -> freelancer net, transferred
+	reversed    map[string]float64 // contract -> freelancer net, transferred and later reversed by a refund
 	withdrawals []float64
 	paid        map[string]float64 // transaction -> client total (client side)
 	refunded    map[string]bool    // transaction -> refunded (client side)
@@ -480,7 +484,7 @@ type Ledger struct {
 }
 
 func newLedger() *Ledger {
-	return &Ledger{held: map[string]float64{}, released: map[string]float64{}, paid: map[string]float64{}, refunded: map[string]bool{}, kept: map[string]float64{}}
+	return &Ledger{held: map[string]float64{}, released: map[string]float64{}, reversed: map[string]float64{}, paid: map[string]float64{}, refunded: map[string]bool{}, kept: map[string]float64{}}
 }
 
 func (l *Ledger) hold(contract string, net float64) { l.held[contract] = net }
@@ -488,8 +492,11 @@ func (l *Ledger) release(contract string) {
 	l.released[contract] = l.held[contract]
 	delete(l.held, contract)
 }
-func (l *Ledger) dropHeld(contract string)       { delete(l.held, contract) }
-func (l *Ledger) dropReleased(contract string)   { delete(l.released, contract) }
+func (l *Ledger) dropHeld(contract string) { delete(l.held, contract) }
+func (l *Ledger) dropReleased(contract string) {
+	l.reversed[contract] = l.released[contract]
+	delete(l.released, contract)
+}
 func (l *Ledger) withdraw(amount float64)        { l.withdrawals = append(l.withdrawals, amount) }
 func (l *Ledger) pay(tx string, total float64)   { l.paid[tx] = total }
 func (l *Ledger) refund(tx string)               { l.refunded[tx] = true }
@@ -566,27 +573,45 @@ func (s *Suite) checkWallet(u *TestUser, when string) {
 			seen[id] = true
 			lines[getStr(t, "description")] = append(lines[getStr(t, "description")], getNum(t, "amount"))
 		}
-		var paidOpen, paidRefunded []float64
+		var paidAll, refundsBack []float64
 		for tx, total := range l.paid {
+			paidAll = append(paidAll, total)
 			if l.refunded[tx] {
-				paidRefunded = append(paidRefunded, total)
-			} else {
-				paidOpen = append(paidOpen, total)
+				refundsBack = append(refundsBack, round2(total-l.kept[tx]))
 			}
+		}
+		everReleased := map[string]float64{}
+		for c, v := range l.released {
+			everReleased[c] = v
+		}
+		for c, v := range l.reversed {
+			everReleased[c] = v
 		}
 		for _, c := range []struct {
 			desc string
 			want []float64
 		}{
 			{"Payment received (held in escrow)", sortedValues(l.held)},
-			{"Escrow released", sortedValues(l.released)},
+			{"Escrow released", sortedValues(everReleased)},
+			{"Payment reversed (refunded)", sortedValues(l.reversed)},
 			{"Withdrawal to bank", append([]float64{}, l.withdrawals...)},
-			{"Contract payment sent", paidOpen},
-			{"Contract payment sent (refunded)", paidRefunded},
+			{"Contract payment sent", paidAll},
+			{"Refund received", refundsBack},
 		} {
 			if want := c.want; !sameAmounts(append([]float64{}, lines[c.desc]...), want) {
 				problems = append(problems, fmt.Sprintf("%q lines=%v want %v", c.desc, lines[c.desc], want))
 			}
+		}
+		for _, t := range getRows(wallet, "transactions") {
+			if getStr(t, "status") == "" {
+				problems = append(problems, "line without a status: "+getStr(t, "description"))
+			}
+		}
+		if got, want := getNum(wallet, "total_earned"), sum(l.released); !eq(got, want) {
+			problems = append(problems, fmt.Sprintf("total_earned=%.2f want %.2f", got, want))
+		}
+		if got, want := getNum(wallet, "total_withdrawn"), l.withdrawn(); !eq(got, want) {
+			problems = append(problems, fmt.Sprintf("total_withdrawn=%.2f want %.2f", got, want))
 		}
 		if len(problems) > 0 {
 			return "", fmt.Errorf("%s", strings.Join(problems, "; "))
@@ -605,21 +630,24 @@ func (s *Suite) checkWallet(u *TestUser, when string) {
 		if err := expect(status, resp, 200); err != nil {
 			return "", err
 		}
-		pbAvail, pbPending := getNum(resp, "data", "available"), getNum(resp, "data", "pending")
-		if _, ok := wallet["available_to_withdraw"]; !ok {
-			return "", fmt.Errorf("wallet response has no available_to_withdraw field")
-		}
+		pbAvail := getNum(resp, "data", "available")
 		wAvail, wPending := getNum(wallet, "available_to_withdraw"), getNum(wallet, "pending_settlement")
+		ledger := l.balance()
 		if !eq(getNum(wallet, "balance"), wAvail) {
 			return "", fmt.Errorf("balance=%.2f but available_to_withdraw=%.2f: balance must be the withdrawable amount only", getNum(wallet, "balance"), wAvail)
 		}
-		if !eq(wAvail, pbAvail) || !eq(wPending, pbPending) {
-			return "", fmt.Errorf("wallet says available=%.2f pending=%.2f, payout-balance says %.2f/%.2f", wAvail, wPending, pbAvail, pbPending)
+		wantAvail := 0.0
+		if ledger > 0 {
+			wantAvail = math.Max(math.Min(pbAvail, ledger), 0)
 		}
-		if total := round2(wAvail + wPending); !eq(total, l.balance()) {
-			return "", fmt.Errorf("stripe holds %.2f (available %.2f + pending %.2f) but ledger balance is %.2f", total, wAvail, wPending, l.balance())
+		wantPending := math.Max(round2(ledger-wantAvail), 0)
+		if !eq(wAvail, wantAvail) || !eq(wPending, wantPending) {
+			return "", fmt.Errorf("available=%.2f pending=%.2f, want %.2f/%.2f (earned-and-kept %.2f, stripe available %.2f)", wAvail, wPending, wantAvail, wantPending, ledger, pbAvail)
 		}
-		return fmt.Sprintf("balance=available=%.2f, in process=%.2f, total=%.2f", wAvail, wPending, l.balance()), nil
+		if got, want := getNum(wallet, "in_process"), round2(getNum(wallet, "escrow_amount")+wPending); !eq(got, want) {
+			return "", fmt.Errorf("in_process=%.2f, want escrow %.2f + settling %.2f = %.2f", got, getNum(wallet, "escrow_amount"), wPending, want)
+		}
+		return fmt.Sprintf("balance=%.2f, in process=%.2f (escrow %.2f + settling %.2f), total=%.2f", wAvail, getNum(wallet, "in_process"), getNum(wallet, "escrow_amount"), wPending, l.balance()), nil
 	})
 }
 

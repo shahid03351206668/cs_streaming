@@ -176,6 +176,13 @@ func (s *Suite) payBeforeContractFlow(client, freelancer *TestUser) *Flow {
 		time.Sleep(5 * time.Second) // let the charge.succeeded webhook arrive while there is no contract
 		return "paid " + f.PaymentIntentID + ", no contract yet", nil
 	})
+	s.r.Check("F: paying again before the contract exists is refused (no second charge)", func() (string, error) {
+		status, resp, err := s.createIntent(client.AccessToken, f.ProposalID, nil)
+		if err != nil {
+			return "", err
+		}
+		return errMsg(resp), expect(status, resp, 409)
+	})
 	s.r.MustCheck("F: client creates the contract after paying", func() (string, error) {
 		status, resp, err := s.createContract(client.AccessToken, f.ProposalID, 6, time.Now(), time.Now().Add(24*time.Hour))
 		if err != nil {
@@ -201,6 +208,7 @@ func (s *Suite) payBeforeContractFlow(client, freelancer *TestUser) *Flow {
 	s.checkWallet(freelancer, "after pay-before-contract")
 	s.checkWallet(client, "after pay-before-contract")
 
+	inProcessBefore, _ := s.walletNumber(freelancer, "in_process")
 	s.r.MustCheck("F: both complete; escrow releases", func() (string, error) {
 		if status, resp, err := s.complete(freelancer, f.ContractID); err != nil || status != 200 {
 			return "", fmt.Errorf("freelancer complete: %d %v %s", status, err, errMsg(resp))
@@ -221,6 +229,17 @@ func (s *Suite) payBeforeContractFlow(client, freelancer *TestUser) *Flow {
 	f.FinalStatus = "released"
 	s.checkPaymentRow(f, "released")
 	s.verifyTransfer(f)
+	s.r.Check("F: funds stay in process after completion (they don't vanish while Stripe settles)", func() (string, error) {
+		after, err := s.walletNumber(freelancer, "in_process")
+		if err != nil {
+			return "", err
+		}
+		avail, _ := s.walletNumber(freelancer, "balance")
+		if !eq(after, inProcessBefore) {
+			return "", fmt.Errorf("in_process was %.2f before completion and %.2f after; the %.2f just released disappeared", inProcessBefore, after, f.Fees.FreelancerNet)
+		}
+		return fmt.Sprintf("in_process %.2f before and after, withdrawable balance %.2f", after, avail), nil
+	})
 	s.checkWallet(freelancer, "after pay-before-contract release")
 	return f
 }
@@ -688,4 +707,12 @@ func (s *Suite) finalInvariants(client, f1, f2 *TestUser, flows []*Flow) {
 	s.checkWallet(f1, "final")
 	s.checkWallet(f2, "final")
 	s.checkWallet(client, "final")
+}
+
+func (s *Suite) walletNumber(u *TestUser, field string) (float64, error) {
+	status, resp, err := s.api.Do("GET", "/api/v3/wallet", u.AccessToken, nil, nil)
+	if err != nil {
+		return 0, err
+	}
+	return getNum(resp, "data", field), expect(status, resp, 200)
 }

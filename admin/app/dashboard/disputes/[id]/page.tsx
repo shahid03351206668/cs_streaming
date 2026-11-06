@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft, CheckCircle, Clock, User, FileText, Loader2,
-  Paperclip, Download, Image, File as FileIcon,
+  Paperclip, Download, Image, File as FileIcon, Wallet,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,8 +18,8 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
 import {
-  adminGetDispute, adminResolveDispute,
-  type Dispute, type DisputeStatus, type DisputeAttachment,
+  adminGetDispute, adminResolveDispute, adminRefundDispute,
+  type Dispute, type DisputeStatus, type DisputeAttachment, type DisputePayment,
 } from "@/lib/api";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -41,6 +41,21 @@ const ROLE_BADGE: Record<string, string> = {
   client: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
   freelancer: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
 };
+
+type ResolveChoice = "refund_all" | "refund_bid" | "refund_custom" | "pay_freelancer" | "remarks_only";
+
+const PAYOUT_LABEL: Record<string, string> = {
+  refunded_in_full: "Client refunded in full",
+  refunded_excluding_fees: "Client refunded the job amount; fees kept as a penalty",
+  refunded_custom_amount: "Client refunded a custom amount",
+  already_refunded: "Client had already been refunded",
+  released_to_freelancer: "Payment released to the freelancer",
+  already_released: "Payment had already been released to the freelancer",
+  none: "No money moved",
+};
+
+const money = (n: number, currency = "gbp") =>
+  new Intl.NumberFormat("en-GB", { style: "currency", currency: currency.toUpperCase() }).format(n);
 
 function fmtBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -116,31 +131,66 @@ export default function DisputeDetailPage() {
   const { toast } = useToast();
 
   const [dispute, setDispute] = useState<Dispute | null>(null);
+  const [payment, setPayment] = useState<DisputePayment | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [resolveOpen, setResolveOpen] = useState(false);
   const [resolution, setResolution] = useState("");
   const [resolving, setResolving] = useState(false);
+  const [choice, setChoice] = useState<ResolveChoice>("remarks_only");
+  const [customAmount, setCustomAmount] = useState("");
 
   const fetchDispute = () => {
     setLoading(true);
     adminGetDispute(id)
-      .then((res) => setDispute(res.data.data))
+      .then((res) => {
+        setDispute(res.data.data);
+        setPayment(res.data.payment ?? null);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   };
 
   useEffect(() => { fetchDispute(); }, [id]);
 
+  const canRefund = !!payment?.can_refund;
+  const canPayFreelancer = payment?.has_payment && payment.escrow_status === "held";
+  const customValue = parseFloat(customAmount);
+  const customValid =
+    !isNaN(customValue) && customValue > 0 && customValue <= (payment?.max_refundable ?? 0);
+
+  const openResolve = () => {
+    setChoice(canRefund ? "refund_all" : "remarks_only");
+    setCustomAmount("");
+    setResolveOpen(true);
+  };
+
+  const closeResolve = () => {
+    setResolveOpen(false);
+    setResolution("");
+    setCustomAmount("");
+  };
+
   const handleResolve = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!resolution.trim() || resolution.length < 5) return;
+    const remarks = resolution.trim();
+    if (remarks.length < 5) return;
+    if (choice === "refund_custom" && !customValid) return;
     setResolving(true);
     try {
-      await adminResolveDispute(id, resolution.trim());
-      toast({ title: "Dispute resolved", description: "The dispute has been marked as resolved." });
-      setResolveOpen(false);
-      setResolution("");
+      if (choice === "refund_all") {
+        await adminResolveDispute(id, { resolution: remarks, outcome: "client", refund_fees: true });
+      } else if (choice === "refund_bid") {
+        await adminResolveDispute(id, { resolution: remarks, outcome: "client", refund_fees: false });
+      } else if (choice === "refund_custom") {
+        await adminRefundDispute(id, remarks, customValue);
+      } else if (choice === "pay_freelancer") {
+        await adminResolveDispute(id, { resolution: remarks, outcome: "freelancer" });
+      } else {
+        await adminResolveDispute(id, { resolution: remarks, outcome: "none" });
+      }
+      toast({ title: "Dispute resolved", description: "The decision has been applied and both parties notified." });
+      closeResolve();
       fetchDispute();
     } catch (err: unknown) {
       const msg =
@@ -151,6 +201,41 @@ export default function DisputeDetailPage() {
       setResolving(false);
     }
   };
+
+  const choices: { value: ResolveChoice; title: string; detail: string; disabled: boolean }[] = payment
+    ? [
+        {
+          value: "refund_all",
+          title: `Refund customer in full — ${money(payment.client_paid, payment.currency)}`,
+          detail: "The job amount plus all commission and fees go back to the customer. The contract is cancelled.",
+          disabled: !canRefund,
+        },
+        {
+          value: "refund_bid",
+          title: `Refund the job amount only — ${money(payment.bid, payment.currency)}`,
+          detail: `The platform keeps the ${money(payment.client_paid - payment.bid, payment.currency)} of fees as a penalty. The contract is cancelled.`,
+          disabled: !canRefund || payment.bid >= payment.client_paid,
+        },
+        {
+          value: "refund_custom",
+          title: "Refund a custom amount",
+          detail: `Up to ${money(payment.max_refundable, payment.currency)}. The rest stays with the platform and the freelancer is not paid.`,
+          disabled: !canRefund,
+        },
+        {
+          value: "pay_freelancer",
+          title: `Pay the freelancer — ${money(payment.freelancer_net, payment.currency)}`,
+          detail: "The held payment is released to the freelancer and the contract is completed.",
+          disabled: !canPayFreelancer,
+        },
+        {
+          value: "remarks_only",
+          title: "Close with remarks only",
+          detail: "No money moves. The contract is reopened.",
+          disabled: false,
+        },
+      ]
+    : [];
 
   const attachments = dispute?.attachments ?? [];
 
@@ -171,7 +256,7 @@ export default function DisputeDetailPage() {
         </div>
         {!loading && dispute && dispute.status === "open" && (
           <Button
-            onClick={() => setResolveOpen(true)}
+            onClick={openResolve}
             className="gap-2 bg-green-600 hover:bg-green-700 text-white"
           >
             <CheckCircle className="h-4 w-4" />
@@ -278,6 +363,11 @@ export default function DisputeDetailPage() {
                       <p className="text-sm leading-relaxed whitespace-pre-wrap bg-muted rounded-md p-3">
                         {dispute.resolution}
                       </p>
+                      {dispute.payout_action && (
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Outcome: {PAYOUT_LABEL[dispute.payout_action] ?? dispute.payout_action}
+                        </p>
+                      )}
                     </div>
                   </>
                 )}
@@ -310,6 +400,42 @@ export default function DisputeDetailPage() {
                       value={<span className="font-mono text-xs break-all">{dispute.contract_id}</span>}
                     />
                   </div>
+                </CardContent>
+              </Card>
+
+              {/* Payment */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Wallet className="h-4 w-4" /> Payment
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {!payment?.has_payment ? (
+                    <p className="text-sm text-muted-foreground">
+                      The client has not paid for this contract, so there is nothing to refund.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4">
+                      <InfoRow label="Customer paid" value={money(payment.client_paid, payment.currency)} />
+                      <InfoRow label="Job amount" value={money(payment.bid, payment.currency)} />
+                      <InfoRow label="Freelancer would receive" value={money(payment.freelancer_net, payment.currency)} />
+                      <InfoRow label="Platform fees" value={money(payment.client_paid - payment.bid, payment.currency)} />
+                      <InfoRow label="Already refunded" value={money(payment.already_refunded, payment.currency)} />
+                      <InfoRow
+                        label="Money is"
+                        value={
+                          <Badge variant="outline" className="capitalize">
+                            {payment.escrow_status === "held"
+                              ? "held in escrow"
+                              : payment.escrow_status === "released"
+                              ? "paid to freelancer"
+                              : payment.escrow_status ?? payment.status}
+                          </Badge>
+                        }
+                      />
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -428,25 +554,68 @@ export default function DisputeDetailPage() {
       )}
 
       {/* ─── Resolve Dialog ───────────────────────────────────────────────── */}
-      <Dialog
-        open={resolveOpen}
-        onOpenChange={(open) => { if (!open) { setResolveOpen(false); setResolution(""); } }}
-      >
+      <Dialog open={resolveOpen} onOpenChange={(open) => { if (!open) closeResolve(); }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Resolve Dispute</DialogTitle>
             <DialogDescription>
-              Provide a resolution for this dispute. Both parties will be notified.
+              Choose whose favour the dispute is resolved in. Money moves immediately and both parties are notified.
             </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleResolve} className="space-y-4">
+            {choices.length > 0 && (
+              <div className="space-y-2">
+                {choices.map((c) => (
+                  <label
+                    key={c.value}
+                    className={`flex gap-3 rounded-lg border p-3 text-left ${
+                      c.disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:bg-muted"
+                    } ${choice === c.value ? "border-primary bg-muted" : ""}`}
+                  >
+                    <input
+                      type="radio"
+                      name="resolve-choice"
+                      className="mt-1"
+                      checked={choice === c.value}
+                      disabled={c.disabled}
+                      onChange={() => setChoice(c.value)}
+                    />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium">{c.title}</p>
+                      <p className="text-xs text-muted-foreground">{c.detail}</p>
+                      {c.value === "refund_custom" && choice === "refund_custom" && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="text-sm">£</span>
+                          <input
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            max={payment?.max_refundable}
+                            value={customAmount}
+                            onChange={(e) => setCustomAmount(e.target.value)}
+                            placeholder="Amount"
+                            className="h-8 w-32 rounded-md border border-input bg-background px-2 text-sm"
+                          />
+                          {customAmount !== "" && !customValid && (
+                            <span className="text-xs text-red-600">
+                              Enter an amount up to {money(payment?.max_refundable ?? 0, payment?.currency)}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+
             <div className="space-y-2">
-              <Label htmlFor="resolution">Resolution *</Label>
+              <Label htmlFor="resolution">Remarks *</Label>
               <textarea
                 id="resolution"
-                rows={5}
-                placeholder="Describe how the dispute is resolved (min. 5 characters)..."
+                rows={4}
+                placeholder="Explain the decision (min. 5 characters)..."
                 value={resolution}
                 onChange={(e) => setResolution(e.target.value)}
                 required
@@ -457,16 +626,20 @@ export default function DisputeDetailPage() {
             </div>
 
             <DialogFooter className="gap-2">
-              <Button type="button" variant="outline" onClick={() => setResolveOpen(false)}>
+              <Button type="button" variant="outline" onClick={closeResolve}>
                 Cancel
               </Button>
               <Button
                 type="submit"
-                disabled={resolving || resolution.trim().length < 5}
+                disabled={
+                  resolving ||
+                  resolution.trim().length < 5 ||
+                  (choice === "refund_custom" && !customValid)
+                }
                 className="bg-green-600 hover:bg-green-700 text-white"
               >
                 {resolving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Confirm Resolution
+                {choice === "remarks_only" ? "Confirm Resolution" : "Confirm and Apply"}
               </Button>
             </DialogFooter>
           </form>

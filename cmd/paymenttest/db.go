@@ -28,6 +28,10 @@ func (d *DB) revokeAdmin(userID string) error {
 	return d.g.Exec(`DELETE FROM user_roles WHERE user_id = ? AND role_name = 'admin'`, userID).Error
 }
 
+func (d *DB) setWithdrawalStatus(payoutID, status string) error {
+	return d.g.Exec(`UPDATE withdrawals_v3 SET status = ? WHERE stripe_payout_id = ?`, status, payoutID).Error
+}
+
 func (d *DB) setProfilePhoto(userID, url string) error {
 	return d.g.Exec(`UPDATE users SET profile_photo = ? WHERE id = ?`, url, userID).Error
 }

@@ -396,6 +396,32 @@ func (s *Suite) withdrawalRules(f1, client *TestUser, a *Flow) {
 		}
 		return fmt.Sprintf("%v", amounts), nil
 	})
+	if s.db != nil && w1 != "" {
+		s.r.Check("a withdrawal stuck as pending (webhook missed) is corrected from Stripe when the wallet is read", func() (string, error) {
+			if _, err := pollUntil(90*time.Second, func() (string, bool, error) {
+				p, err := s.sc.Get("/payouts/"+w1, f1.StripeAccountID)
+				return getStr(p, "status"), getStr(p, "status") == "paid", err
+			}); err != nil {
+				return "", fmt.Errorf("stripe never marked the payout paid: %w", err)
+			}
+			if err := s.db.setWithdrawalStatus(w1, "pending"); err != nil {
+				return "", err
+			}
+			status, resp, err := s.api.Do("GET", "/api/v3/wallet", f1.AccessToken, nil, nil)
+			if err != nil {
+				return "", err
+			}
+			if err := expect(status, resp, 200); err != nil {
+				return "", err
+			}
+			for _, t := range getRows(getMap(resp, "data"), "transactions") {
+				if getStr(t, "description") == "Withdrawal to bank" && eq(getNum(t, "amount"), 1) {
+					return "line status=" + getStr(t, "status"), expectEqual("withdrawal line status", getStr(t, "status"), "paid")
+				}
+			}
+			return "", fmt.Errorf("withdrawal line not found")
+		})
+	}
 	s.r.Warn("payout webhooks update withdrawal status", func() (string, error) {
 		return pollUntil(60*time.Second, func() (string, bool, error) {
 			status, resp, err := s.api.Do("GET", "/api/v3/wallet/withdrawals", f1.AccessToken, nil, nil)
