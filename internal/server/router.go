@@ -78,7 +78,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 	}
 	router.Group("/api/v1/admin", middleware.AdminOnly()...).POST("/email/test", emailHandler.SendTestEmail)
 
-	emailSend := router.Group("/api/v1/email", middleware.AdminOnly()...)
+	emailSend := router.Group("/api/v1/email")
 	{
 		emailSend.POST("/send", emailHandler.SendEmail)
 	}
