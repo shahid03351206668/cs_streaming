@@ -242,6 +242,7 @@ func MakeRouter(db *gorm.DB, appConfig *config.Config, fcmClient *fcm.FCMClient,
 		authRoutes.POST("/verify-user", userHandler.VerifyUser)
 		authRoutes.POST("/refresh", controllers.RefreshTokenController)
 		authRoutes.POST("/google-auth", controllers.GoogleSignInFirebaseController)
+		authRoutes.POST("/apple-auth", controllers.AppleSignInController)
 	}
 
 	proposalRoutes := router.Group("/api/proposals")

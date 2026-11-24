@@ -2,10 +2,15 @@ package email
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
+	"html"
+	"mime"
 	"net"
 	"net/smtp"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +18,9 @@ import (
 	"gorm.io/gorm"
 
 	"tasksy/models"
+	"tasksy/pkg/logger"
+
+	"go.uber.org/zap"
 )
 
 const fromEmail = "noreply@tasksy.co.uk"
@@ -87,12 +95,13 @@ func (s *Service) SendMail(email, to, subject, htmlBody string) error {
 		return err
 	}
 
-	from := fmt.Sprintf("%s <%s>", acc.FromName, acc.Email)
+	from := fmt.Sprintf("%s <%s>", headerSafe(acc.FromName), acc.Email)
 	auth := &loginAuth{username: acc.Email, password: acc.Password}
 
 	headers := fmt.Sprintf(
-		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n",
-		from, to, subject,
+		"From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\nMessage-ID: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n",
+		from, headerSafe(to), mime.QEncoding.Encode("UTF-8", headerSafe(subject)),
+		time.Now().Format(time.RFC1123Z), messageID(acc.Email),
 	)
 	msg := []byte(headers + htmlBody)
 
@@ -104,6 +113,22 @@ func (s *Service) SendMail(email, to, subject, htmlBody string) error {
 
 	addr := fmt.Sprintf("%s:%d", acc.Host, acc.Port)
 	return smtp.SendMail(addr, auth, acc.Email, []string{to}, msg)
+}
+
+// headerSafe keeps user-supplied text on one line, so it can't add headers or
+// start the message body.
+func headerSafe(v string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ").Replace(v)
+}
+
+func messageID(from string) string {
+	b := make([]byte, 12)
+	_, _ = rand.Read(b)
+	domain := "tasksy.co.uk"
+	if i := strings.LastIndex(from, "@"); i >= 0 {
+		domain = from[i+1:]
+	}
+	return "<" + hex.EncodeToString(b) + "@" + domain + ">"
 }
 
 func sendMailImplicitTLS(host string, port int, auth smtp.Auth, from, to string, msg []byte) error {
@@ -146,20 +171,42 @@ func sendMailImplicitTLS(host string, port int, auth smtp.Auth, from, to string,
 	return c.Quit()
 }
 
-// SendTemplatedEmail fetches a template by name, substitutes {{key}} vars, and sends from noreply@tasksy.co.uk.
+var placeholderRE = regexp.MustCompile(`\{\{\s*\.?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
+
+// Names match however they are written: job_title, JobTitle and .JobTitle are the same.
+func normalizeKey(k string) string { return strings.ToLower(strings.ReplaceAll(k, "_", "")) }
+
+// fillTemplate replaces {{job_title}} and {{.JobTitle}} style placeholders. One
+// that has no value is dropped, so a customer never sees raw template syntax.
+func fillTemplate(template, name string, vars map[string]string, clean func(string) string) string {
+	values := make(map[string]string, len(vars))
+	for k, v := range vars {
+		values[normalizeKey(k)] = v
+	}
+	return placeholderRE.ReplaceAllStringFunc(template, func(m string) string {
+		key := placeholderRE.FindStringSubmatch(m)[1]
+		v, ok := values[normalizeKey(key)]
+		if !ok {
+			if logger.Log != nil {
+				logger.Log.Warn("email template uses a placeholder the app doesn't fill in",
+					zap.String("template", name), zap.String("placeholder", key))
+			}
+			return ""
+		}
+		return clean(v)
+	})
+}
+
+// SendTemplatedEmail fetches a template by name, fills in its placeholders, and sends from noreply@tasksy.co.uk.
 func (s *Service) SendTemplatedEmail(templateName, to string, vars map[string]string) error {
 	var tmpl models.EmailTemplate
 	if err := s.db.Where("name = ?", templateName).First(&tmpl).Error; err != nil {
 		return fmt.Errorf("email template %q not found: %w", templateName, err)
 	}
 
-	subject := tmpl.Subject
-	body := tmpl.Body
-	for k, v := range vars {
-		placeholder := "{{" + k + "}}"
-		subject = strings.ReplaceAll(subject, placeholder, v)
-		body = strings.ReplaceAll(body, placeholder, v)
-	}
+	subject := fillTemplate(tmpl.Subject, templateName, vars, headerSafe)
+	// Values such as job titles come from users and the body is HTML.
+	body := fillTemplate(tmpl.Body, templateName, vars, html.EscapeString)
 
 	return s.SendMail(fromEmail, to, subject, body)
 }

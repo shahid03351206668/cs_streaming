@@ -236,6 +236,11 @@ func (s *Service) CreateJobPost(user models.User, data JobPostData, media []*mul
 	s.InvalidateJobFeedCache()
 
 	if s.notifier != nil && jobPost.Status == models.JobStatusOpen {
+		go func(post models.JobPost, loc models.JobPostLocation) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = s.notifier.NotifyNewJobPostedToInterestedUsers(ctx, &post, &loc)
+		}(jobPost, jobLocation)
 	}
 
 	for _, f := range videos {

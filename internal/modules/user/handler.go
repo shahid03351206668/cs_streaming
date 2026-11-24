@@ -428,21 +428,39 @@ func (h *Handler) GetUserProfile(c *gin.Context) {
 func (h *Handler) ResetUserPassword(c *gin.Context) {
 	var data struct {
 		PhoneNumber string `json:"phone_number"`
+		Email       string `json:"email"`
 		Password    string `json:"password"`
 	}
 
 	if err := c.ShouldBindJSON(&data); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "error",
 			"error":   err.Error(),
 		})
 		return
-
 	}
-	var user models.User
-	if err := h.service.db.Where("phone_number = ? ", data.PhoneNumber).First(&user).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": "user not found"})
+
+	if data.Email == "" && data.PhoneNumber == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "error",
+			"error":   "email or phone no is missing",
+		})
 		return
+	}
+
+	var user models.User
+
+	if data.PhoneNumber != "" {
+		if err := h.service.db.Where("phone_number = ? ", data.PhoneNumber).First(&user).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": "user not found"})
+			return
+		}
+	} else {
+		if err := h.service.db.Where("email = ? ", data.Email).First(&user).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"message": "error", "error": "user not found"})
+			return
+		}
+
 	}
 
 	if middleware.HasRole(user.ID, "admin") {

@@ -23,7 +23,13 @@ func (h *Handler) GetPreferences(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "error", "error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": pref})
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": pref, "meta": preferenceMeta(pref)})
+}
+
+// radius_active is false when the city's centre isn't known, in which case new
+// jobs are matched by city name only.
+func preferenceMeta(pref *models.NotificationPreference) gin.H {
+	return gin.H{"radius_active": pref != nil && RadiusActive(pref)}
 }
 
 func (h *Handler) ListNotifications(c *gin.Context) {
@@ -100,5 +106,5 @@ func (h *Handler) UpsertPreferences(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": updated})
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": updated, "meta": preferenceMeta(updated)})
 }

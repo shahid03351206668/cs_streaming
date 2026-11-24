@@ -243,6 +243,13 @@ func LoginControllerV1(c *gin.Context) {
 		return
 	}
 
+	if user.Password == "" && user.AppleID != "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "This account uses Sign in with Apple. Please login with Apple.",
+		})
+		return
+	}
+
 	err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(body.Password))
 
 	if err != nil {
@@ -322,6 +329,13 @@ func LoginController(c *gin.Context) {
 	if user.Password == "" && user.GoogleID != "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "This account uses Google Sign-In. Please login with Google.",
+		})
+		return
+	}
+
+	if user.Password == "" && user.AppleID != "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "This account uses Sign in with Apple. Please login with Apple.",
 		})
 		return
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"tasksy/db"
@@ -226,8 +227,10 @@ func CreateProposal(c *gin.Context) {
 		if emailService != nil && p.JobPost.CreatedBy.Email != "" {
 			_ = emailService.SendTemplatedEmail("proposal_received", p.JobPost.CreatedBy.Email, map[string]string{
 				"first_name":      p.JobPost.CreatedBy.FirstName,
+				"client_name":     p.JobPost.CreatedBy.FirstName,
 				"freelancer_name": actor.FirstName + " " + actor.LastName,
 				"job_title":       p.JobPost.Title,
+				"proposal_amount": fmt.Sprintf("£%.2f", p.BidAmount),
 			})
 		}
 	}(proposal, user)

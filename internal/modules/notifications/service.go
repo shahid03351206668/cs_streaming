@@ -1,6 +1,7 @@
 package notifications
 
 import (
+	"fmt"
 	"context"
 	"encoding/json"
 	"errors"
@@ -89,8 +90,8 @@ func (s *Service) UpsertNotificationPreferences(userID string, input UpsertPrefe
 	if input.Longitude != nil && input.Latitude == nil {
 		return nil, errors.New("latitude is required when longitude is provided")
 	}
-	if input.JobRadiusKM != nil && *input.JobRadiusKM < 0 {
-		return nil, errors.New("job_radius_km must be non-negative")
+	if err := validateLocationInput(input.Latitude, input.Longitude, input.JobRadiusKM); err != nil {
+		return nil, err
 	}
 
 	tx := s.db.Begin()
@@ -110,14 +111,26 @@ func (s *Service) UpsertNotificationPreferences(userID string, input UpsertPrefe
 	if input.JobRadiusKM != nil {
 		updates["job_radius_km"] = *input.JobRadiusKM
 	}
-	if input.City != nil {
-		updates["city"] = strings.TrimSpace(*input.City)
-	}
 	if input.Latitude != nil {
 		updates["latitude"] = *input.Latitude
 	}
 	if input.Longitude != nil {
 		updates["longitude"] = *input.Longitude
+	}
+	if input.City != nil {
+		city := strings.TrimSpace(*input.City)
+		updates["city"] = city
+
+		// A new city makes the old centre wrong. Unless the app sent the new
+		// centre, drop it and look the city up, so the radius never measures
+		// from the previous city.
+		sentCentre := input.Latitude != nil && input.Longitude != nil
+		if !sentCentre && (!sameCity(city, pref.City) || (pref.Latitude == nil && city != "")) {
+			updates["latitude"], updates["longitude"] = nil, nil
+			if lat, lng, ok := cityCentre(s.db, city); city != "" && ok {
+				updates["latitude"], updates["longitude"] = lat, lng
+			}
+		}
 	}
 
 	if len(updates) > 0 {
@@ -405,7 +418,7 @@ func haversineKM(lat1, lon1, lat2, lon2 float64) float64 {
 }
 
 func (s *Service) NotifyNewJobPostedToInterestedUsers(ctx context.Context, job *models.JobPost, loc *models.JobPostLocation) error {
-	if s.db == nil || s.fcm == nil || job == nil || loc == nil {
+	if s.db == nil || job == nil || loc == nil {
 		return nil
 	}
 
@@ -414,12 +427,9 @@ func (s *Service) NotifyNewJobPostedToInterestedUsers(ctx context.Context, job *
 		return err
 	}
 
-	for _, pref := range prefs {
+	for i := range prefs {
+		pref := &prefs[i]
 		if pref.UserID == job.CreatedByID {
-			continue
-		}
-
-		if pref.City != "" && !strings.EqualFold(strings.TrimSpace(pref.City), strings.TrimSpace(loc.City)) {
 			continue
 		}
 
@@ -436,22 +446,19 @@ func (s *Service) NotifyNewJobPostedToInterestedUsers(ctx context.Context, job *
 			}
 		}
 
-		if pref.Latitude != nil && pref.Longitude != nil && pref.JobRadiusKM > 0 {
-			distance := haversineKM(*pref.Latitude, *pref.Longitude, loc.Latitude, loc.Longitude)
-			if distance > pref.JobRadiusKM {
-				continue
-			}
+		inside, distance := matchJobLocation(pref, loc)
+		if !inside {
+			continue
 		}
 
-		_ = s.notifyUser(
-			ctx,
-			pref.UserID,
-			"New Job Posted",
-			job.Title,
-			"new_job",
-			"/job",
-			map[string]string{"job_post_id": job.ID, "category_id": job.CategoryID, "city": loc.City},
-		)
+		body := job.Title
+		record := map[string]string{"job_post_id": job.ID, "category_id": job.CategoryID, "city": loc.City}
+		if distance != nil {
+			body = fmt.Sprintf("%s · %.1f km away", job.Title, *distance)
+			record["distance_km"] = fmt.Sprintf("%.1f", *distance)
+		}
+
+		_ = s.notifyUser(ctx, pref.UserID, "New Job Posted", body, "new_job", "/job", record)
 	}
 
 	return nil

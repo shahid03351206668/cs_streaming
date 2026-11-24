@@ -32,6 +32,7 @@ type User struct {
 	ProfilePhoto           string     `gorm:"size:255;column:profile_photo" json:"profile_photo"`
 	IdentityVerfied        bool       `gorm:"default:false;column:identity_verified" json:"identity_verified"`
 	GoogleID               string     `json:"-"`
+	AppleID                string     `gorm:"column:apple_id;index:idx_users_apple_id,unique,where:apple_id <> ''" json:"-"`
 	Roles                  []Role     `gorm:"many2many:user_roles;" json:"roles"`
 	ReferralRewardBalance  int64      `gorm:"default:0" json:"referral_reward_balance"`
 	WalletBalance          int64      `gorm:"default:0" json:"wallet_balance"`
